@@ -167,8 +167,13 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
         await navigator.mediaDevices.getUserMedia({ audio: true });
       }
       const overrides = { agent: { language: lang }, conversation: { textOnly: m === "text" } } as const;
-      // EU data-residency workspaces live on a different host; the API tells the widget which one.
-      const origin = wsOrigin ? { origin: wsOrigin } : {};
+      // EU/IN data-residency workspaces live on a different host; the API tells the widget which one.
+      const serverLocation = /eu\.residency/.test(wsOrigin ?? "")
+        ? "eu-residency"
+        : /in\.residency/.test(wsOrigin ?? "")
+          ? "in-residency"
+          : "us";
+      const origin = { serverLocation };
       if (signedUrl)
         await conversation.startSession({ signedUrl, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never);
       else await conversation.startSession({ agentId, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never);
