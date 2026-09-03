@@ -5,7 +5,7 @@
  */
 import { EventEmitter } from "node:events";
 import type { WidgetEvent } from "@voxi/contracts";
-import type { Db } from "@voxi/db";
+import type { Db, Sql } from "@voxi/db";
 import { schema as S, prefixedId } from "@voxi/db";
 import { and, asc, eq, gt, sql } from "drizzle-orm";
 
@@ -13,6 +13,62 @@ export type EventBus = {
   publish(conversationId: string, ev: WidgetEvent): void;
   subscribe(conversationId: string, fn: (ev: WidgetEvent) => void): () => void;
 };
+
+/**
+ * Cross-process bus on Postgres LISTEN/NOTIFY: the worker publishes, API instances fan out to SSE.
+ * Only {conversationId, seq} travels on the channel; subscribers re-read the persisted event row.
+ */
+export function createPgEventBus(
+  sql: Sql,
+  db: Db,
+  channel = "voxi_events",
+): EventBus & { close: () => Promise<void> } {
+  const local = createEventBus();
+  const subscribers = new Map<string, number>();
+  let listener: { unlisten: () => Promise<void> } | null = null;
+  const ensureListening = async () => {
+    if (listener) return;
+    listener = await sql.listen(channel, async (payload) => {
+      try {
+        const { conversationId, seq } = JSON.parse(payload) as { conversationId: string; seq: number };
+        if (!subscribers.get(conversationId)) return;
+        const row = (
+          await db
+            .select()
+            .from(S.conversationEvents)
+            .where(
+              and(eq(S.conversationEvents.conversationId, conversationId), eq(S.conversationEvents.seq, seq)),
+            )
+        )[0];
+        if (!row) return;
+        const ev = toWidgetEvent(row.type, row.seq, row.payload);
+        if (ev) local.publish(conversationId, ev);
+      } catch {
+        /* ignore malformed notifications */
+      }
+    });
+  };
+  return {
+    publish: (conversationId, ev) => {
+      void sql.notify(channel, JSON.stringify({ conversationId, seq: ev.seq })).catch(() => undefined);
+    },
+    subscribe: (conversationId, fn) => {
+      subscribers.set(conversationId, (subscribers.get(conversationId) ?? 0) + 1);
+      void ensureListening();
+      const off = local.subscribe(conversationId, fn);
+      return () => {
+        off();
+        const n = (subscribers.get(conversationId) ?? 1) - 1;
+        if (n <= 0) subscribers.delete(conversationId);
+        else subscribers.set(conversationId, n);
+      };
+    },
+    close: async () => {
+      await listener?.unlisten();
+      listener = null;
+    },
+  };
+}
 
 export function createEventBus(): EventBus {
   const em = new EventEmitter();

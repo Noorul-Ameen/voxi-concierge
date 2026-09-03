@@ -1,0 +1,1 @@
+{ "name": "voxi-e2e", "private": true, "type": "module", "scripts": { "smoke": "node smoke.mjs", "cards": "node cards.mjs", "booking": "node booking.mjs" }, "dependencies": { "playwright": "1.49.1" } }

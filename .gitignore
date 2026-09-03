@@ -8,3 +8,4 @@ dist
 coverage
 apps/scraper/out/chunks
 apps/scraper/out/*.bak
+infra/e2e/node_modules

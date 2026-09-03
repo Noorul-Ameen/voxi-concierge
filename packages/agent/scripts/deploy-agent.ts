@@ -16,7 +16,11 @@ const KEY = process.env.ELEVENLABS_API_KEY;
 if (!KEY) throw new Error("ELEVENLABS_API_KEY is required");
 
 async function api<T>(method: string, p: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${API}${p}`, { method, headers: { "xi-api-key": KEY!, "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+  const res = await fetch(`${API}${p}`, {
+    method,
+    headers: { "xi-api-key": KEY!, "content-type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
   const text = await res.text();
   if (!res.ok) throw new Error(`${method} ${p} → ${res.status}: ${text.slice(0, 500)}`);
   return (text ? JSON.parse(text) : {}) as T;
@@ -25,7 +29,10 @@ async function api<T>(method: string, p: string, body?: unknown): Promise<T> {
 async function upsertKb() {
   const dir = path.resolve(here, "../kb");
   const files = (await readdir(dir)).filter((f) => f.endsWith(".md"));
-  const existing = await api<{ documents: { id: string; name: string; type: string }[] }>("GET", "/v1/convai/knowledge-base?page_size=100");
+  const existing = await api<{ documents: { id: string; name: string; type: string }[] }>(
+    "GET",
+    "/v1/convai/knowledge-base?page_size=100",
+  );
   const out: { id: string; name: string; type: "text" }[] = [];
   for (const f of files) {
     const name = `voxi/${f.replace(/\.md$/, "")}`;
@@ -44,7 +51,10 @@ async function upsertKb() {
 
 async function upsertTools(opts: Parameters<typeof buildWebhookTools>[0]) {
   const defs = [...buildWebhookTools(opts), ...buildClientTools()];
-  const existing = await api<{ tools: { id: string; tool_config: { name: string } }[] }>("GET", "/v1/convai/tools?page_size=100");
+  const existing = await api<{ tools: { id: string; tool_config: { name: string } }[] }>(
+    "GET",
+    "/v1/convai/tools?page_size=100",
+  );
   const ids: string[] = [];
   for (const def of defs) {
     const found = existing.tools.find((t) => t.tool_config.name === def.name);
@@ -62,7 +72,12 @@ async function upsertTools(opts: Parameters<typeof buildWebhookTools>[0]) {
 }
 
 async function main() {
-  const opts = { conciergeUrl: process.env.CONCIERGE_PUBLIC_URL ?? "https://voxi-concierge.example.com", toolSecretHeader: { value: process.env.TOOL_HMAC_SECRET ?? "change-me-tool-secret" }, voiceIdEn: process.env.ELEVENLABS_VOICE_ID_EN, llm: process.env.ELEVENLABS_LLM };
+  const opts = {
+    conciergeUrl: process.env.CONCIERGE_PUBLIC_URL ?? "https://voxi-concierge.example.com",
+    toolSecretHeader: { value: process.env.TOOL_HMAC_SECRET ?? "change-me-tool-secret" },
+    voiceIdEn: process.env.ELEVENLABS_VOICE_ID_EN,
+    llm: process.env.ELEVENLABS_LLM,
+  };
   const knowledgeBase = await upsertKb();
   const toolIds = await upsertTools(opts);
   const config = buildAgentConfig({ ...opts, knowledgeBase, toolIds });

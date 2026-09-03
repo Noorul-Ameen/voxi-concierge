@@ -1,9 +1,9 @@
-import type { Db } from "@voxi/db";
+import type { Db, Sql } from "@voxi/db";
 import { DEFAULT_POLICY, type PolicyConfig } from "@voxi/domain";
 import { VistaClient, loadVistaConfig } from "@voxi/vista-client";
 import pino from "pino";
 import type { EventBus } from "./events.js";
-import { createEventBus } from "./events.js";
+import { createEventBus, createPgEventBus } from "./events.js";
 import { GenesysHandover } from "./handover/genesys.js";
 import type { HandoverPort } from "./handover/port.js";
 import { SimulatedHandover } from "./handover/simulated.js";
@@ -79,7 +79,7 @@ export type AppContext = {
 
 export function createContext(
   db: Db,
-  overrides: Partial<Omit<AppContext, "db">> & { env?: NodeJS.ProcessEnv } = {},
+  overrides: Partial<Omit<AppContext, "db">> & { env?: NodeJS.ProcessEnv; sql?: Sql } = {},
 ): AppContext {
   const cfg = overrides.cfg ?? loadConciergeConfig(overrides.env);
   const log =
@@ -88,7 +88,7 @@ export function createContext(
       level: process.env.LOG_LEVEL ?? "info",
       redact: ["*.email", "*.phone", "*.Email", "*.Phone"],
     });
-  const events = overrides.events ?? createEventBus();
+  const events = overrides.events ?? (overrides.sql ? createPgEventBus(overrides.sql, db) : createEventBus());
   const vista = overrides.vista ?? new VistaClient(loadVistaConfig(overrides.env));
   const handover =
     overrides.handover ??

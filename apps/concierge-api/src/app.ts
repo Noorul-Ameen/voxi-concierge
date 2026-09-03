@@ -589,6 +589,56 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
   // ---------- reporting ----------
   api.route("/reporting", reportingRoutes(app));
 
+  /** Signed URL for private agents (requires ELEVENLABS_API_KEY); falls back to the public agent id. */
+  api.get("/widget/signed-url", async (c) => {
+    const w = await verifyWidget(c);
+    if (!w) return c.json({ error: "unauthorized" }, 401);
+    if (!app.cfg.elevenLabsApiKey || !app.cfg.elevenLabsAgentId)
+      return c.json({ agentId: app.cfg.elevenLabsAgentId });
+    const base = process.env.ELEVENLABS_BASE_URL ?? "https://api.elevenlabs.io";
+    const res = await fetch(
+      `${base}/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(app.cfg.elevenLabsAgentId)}`,
+      { headers: { "xi-api-key": app.cfg.elevenLabsApiKey } },
+    );
+    if (!res.ok) return c.json({ agentId: app.cfg.elevenLabsAgentId, error: `signed url ${res.status}` });
+    const j = (await res.json()) as { signed_url: string };
+    return c.json({ agentId: app.cfg.elevenLabsAgentId, signedUrl: j.signed_url });
+  });
+
+  /**
+   * Dev bridge: lets the widget invoke a tool directly (no ElevenLabs) for UI development and demo rehearsal.
+   * Enabled only with DEV_TOOL_BRIDGE=true; authenticated with the widget token.
+   */
+  api.post("/widget/dev-tool", async (c) => {
+    if (process.env.DEV_TOOL_BRIDGE !== "true") return c.json({ error: "disabled" }, 404);
+    const w = await verifyWidget(c);
+    if (!w) return c.json({ error: "unauthorized" }, 401);
+    const { name, input } = (await c.req.json()) as { name: ToolName; input: Record<string, unknown> };
+    if (input.userSessionId === "__ACTIVE__") {
+      const conv = (
+        await app.db.select().from(S.conversations).where(eq(S.conversations.id, w.conversationId))
+      )[0];
+      input.userSessionId = (conv?.metadata as { activeOrder?: string })?.activeOrder ?? "";
+    }
+    const res = await api.request(`/tools/${name}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-voxi-key": app.cfg.toolHmacSecret },
+      body: JSON.stringify({ conversationId: w.conversationId, ...input }),
+    });
+    return new Response(await res.text(), {
+      status: res.status,
+      headers: { "content-type": "application/json" },
+    });
+  });
+
+  /** Public: now-showing films for the demo backdrop. */
+  api.get("/demo/films", async (c) => {
+    const films = (await catalog.films())
+      .filter((f) => f.status === "now_showing" && f.posterUrl)
+      .map((f) => ({ hoCode: f.hoCode, title: f.title, posterUrl: f.posterUrl, rating: f.rating }));
+    return c.json({ films });
+  });
+
   // ---------- demo helpers (protected by tool secret) ----------
   api.post("/demo/mark-collected", toolAuth, async (c) => {
     const { bookingId } = (await c.req.json()) as { bookingId: string };

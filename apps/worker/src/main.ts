@@ -16,8 +16,8 @@ import { createDb } from "@voxi/db";
 import { schema as S } from "@voxi/db";
 import { eq } from "drizzle-orm";
 
-const { db, close } = createDb();
-const ctx = createContext(db);
+const { db, sql, close } = createDb();
+const ctx = createContext(db, { sql });
 const catalog = new Catalog(ctx.vista);
 const workerId = `${hostname()}-${process.pid}`;
 const concurrency = Number(process.env.WORKER_CONCURRENCY ?? 4);

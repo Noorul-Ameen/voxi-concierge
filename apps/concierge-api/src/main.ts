@@ -4,8 +4,8 @@ import { createContext } from "@voxi/concierge-core";
 import { createDb } from "@voxi/db";
 import { createApp } from "./app.js";
 
-const { db, close } = createDb();
-const ctx = createContext(db);
+const { db, sql, close } = createDb();
+const ctx = createContext(db, { sql });
 const app = createApp(ctx, { logging: process.env.NODE_ENV !== "test" });
 const port = Number(process.env.CONCIERGE_PORT ?? 4020);
 const server = serve({ fetch: app.fetch, port }, (i) =>
