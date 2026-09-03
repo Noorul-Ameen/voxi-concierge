@@ -8,7 +8,7 @@ import { expireAbandonedOrders } from "./services/orders.js";
 const cfg = loadConfig();
 const { db, close } = createDb(cfg.databaseUrl);
 const app = createApp(db, cfg);
-const server = serve({ fetch: app.fetch, port: cfg.port }, (info) =>
+const server = serve({ fetch: app.fetch, port: cfg.port, hostname: process.env.HOST ?? "::" }, (info) =>
   console.log(`vista-mock listening on http://localhost:${info.port}`),
 );
 const sweep = setInterval(

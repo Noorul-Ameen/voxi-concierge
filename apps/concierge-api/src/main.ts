@@ -8,7 +8,7 @@ const { db, sql, close } = createDb();
 const ctx = createContext(db, { sql });
 const app = createApp(ctx, { logging: process.env.NODE_ENV !== "test" });
 const port = Number(process.env.CONCIERGE_PORT ?? 4020);
-const server = serve({ fetch: app.fetch, port }, (i) =>
+const server = serve({ fetch: app.fetch, port, hostname: process.env.HOST ?? "::" }, (i) =>
   ctx.log.info(
     `concierge-api listening on http://localhost:${i.port} (vista: ${process.env.VISTA_BASE_URL ?? "local mock"}, handover: ${ctx.handover.name})`,
   ),

@@ -13,7 +13,7 @@ services:
 
   migrate:
     build: { context: .., dockerfile: infra/Dockerfile, target: runtime }
-    command: ["node", "packages/db/dist/migrate.js"]
+    command: ["node", "packages/db/dist/bootstrap.js"]
     environment: { DATABASE_URL: postgres://voxi:voxi@postgres:5432/voxi }
     depends_on: { postgres: { condition: service_healthy } }
 
@@ -62,6 +62,7 @@ services:
 
   web:
     build: { context: .., dockerfile: infra/Dockerfile.web }
+    environment: { PORT: "80", API_UPSTREAM: http://concierge-api:4020 }
     ports: ["8080:80"]
     depends_on: [concierge-api]
     profiles: ["web"]
