@@ -593,16 +593,19 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
   api.get("/widget/signed-url", async (c) => {
     const w = await verifyWidget(c);
     if (!w) return c.json({ error: "unauthorized" }, 401);
-    if (!app.cfg.elevenLabsApiKey || !app.cfg.elevenLabsAgentId)
-      return c.json({ agentId: app.cfg.elevenLabsAgentId });
     const base = process.env.ELEVENLABS_BASE_URL ?? "https://api.elevenlabs.io";
+    // EU/IN data-residency workspaces use a different host; the widget must open its socket there too.
+    const wsOrigin = base.replace(/^http/, "ws");
+    if (!app.cfg.elevenLabsApiKey || !app.cfg.elevenLabsAgentId)
+      return c.json({ agentId: app.cfg.elevenLabsAgentId, wsOrigin });
     const res = await fetch(
       `${base}/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(app.cfg.elevenLabsAgentId)}`,
       { headers: { "xi-api-key": app.cfg.elevenLabsApiKey } },
     );
-    if (!res.ok) return c.json({ agentId: app.cfg.elevenLabsAgentId, error: `signed url ${res.status}` });
+    if (!res.ok)
+      return c.json({ agentId: app.cfg.elevenLabsAgentId, wsOrigin, error: `signed url ${res.status}` });
     const j = (await res.json()) as { signed_url: string };
-    return c.json({ agentId: app.cfg.elevenLabsAgentId, signedUrl: j.signed_url });
+    return c.json({ agentId: app.cfg.elevenLabsAgentId, signedUrl: j.signed_url, wsOrigin });
   });
 
   /**

@@ -160,15 +160,18 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
     setMode(m);
     const s = session ?? (await createSession({ language: lang, modality: m }));
     setSession(s);
-    const { signedUrl, agentId } = await getSignedUrl(s);
+    const { signedUrl, agentId, wsOrigin } = await getSignedUrl(s);
     const dyn = { ...s.dynamicVariables, language: lang, channel: "web" };
     try {
       if (m === "voice") {
         await navigator.mediaDevices.getUserMedia({ audio: true });
       }
       const overrides = { agent: { language: lang }, conversation: { textOnly: m === "text" } } as const;
-      if (signedUrl) await conversation.startSession({ signedUrl, connectionType: "websocket", dynamicVariables: dyn, overrides } as never);
-      else await conversation.startSession({ agentId, connectionType: "websocket", dynamicVariables: dyn, overrides } as never);
+      // EU data-residency workspaces live on a different host; the API tells the widget which one.
+      const origin = wsOrigin ? { origin: wsOrigin } : {};
+      if (signedUrl)
+        await conversation.startSession({ signedUrl, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never);
+      else await conversation.startSession({ agentId, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never);
     } catch (e) {
       if (m === "voice" && String(e).match(/NotAllowed|Permission|denied/i)) {
         push({ kind: "note", text: t(lang, "micDenied") });

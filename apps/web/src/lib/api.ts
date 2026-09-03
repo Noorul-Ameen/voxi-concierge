@@ -39,10 +39,17 @@ export async function getState(session: Session) {
   return json<{ conversation: Record<string, any>; transfer?: Record<string, any> }>(await fetch(`${API_BASE}/widget/state`, { headers: { authorization: `Bearer ${session.token}` } }));
 }
 
-export async function getSignedUrl(session: Session): Promise<{ signedUrl?: string; agentId: string }> {
+export async function getSignedUrl(session: Session): Promise<{ signedUrl?: string; agentId: string; wsOrigin?: string }> {
   const res = await fetch(`${API_BASE}/widget/signed-url`, { headers: { authorization: `Bearer ${session.token}` } });
-  if (!res.ok) return { agentId: session.agentId };
-  return (await res.json()) as { signedUrl?: string; agentId: string };
+  if (!res.ok) {
+    try {
+      const j = (await res.json()) as { wsOrigin?: string };
+      return { agentId: session.agentId, wsOrigin: j.wsOrigin };
+    } catch {
+      return { agentId: session.agentId };
+    }
+  }
+  return (await res.json()) as { signedUrl?: string; agentId: string; wsOrigin?: string };
 }
 
 /** Subscribe to widget events (SSE). Returns an unsubscribe function. Reconnects with backoff. */
