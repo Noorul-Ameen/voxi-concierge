@@ -174,3 +174,6 @@ table.grid th, table.grid td { text-align: start; padding: 6px 8px; border-botto
 table.grid th { color: rgba(255,255,255,0.6); font-weight: 600; }
 .pill { padding: 2px 8px; border-radius: 999px; font-size: 11px; background: rgba(255,255,255,0.12); }
 .pill.resolved { background: rgba(31,138,76,0.35); } .pill.transferred { background: rgba(199,119,0,0.35); } .pill.dropped, .pill.failed { background: rgba(200,16,46,0.35); } .pill.succeeded { background: rgba(31,138,76,0.35); }
+
+.iconbtn.mic { font-size: 18px; padding: 6px 10px; border-radius: 10px; }
+.iconbtn.mic.on { background: #e4002b; color: #fff; }

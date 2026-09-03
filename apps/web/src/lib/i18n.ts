@@ -13,6 +13,8 @@ const STR = {
   unmute: { en: "Unmute", ar: "إلغاء الكتم" },
   end: { en: "End", ar: "إنهاء" },
   send: { en: "Send", ar: "إرسال" },
+  switchToVoice: { en: "Switch to voice", ar: "التحويل إلى الصوت" },
+  switchToText: { en: "Switch to text", ar: "التحويل إلى النص" },
   you: { en: "You", ar: "أنت" },
   agent: { en: "Voxi", ar: "فوكسي" },
   human: { en: "Customer Care", ar: "خدمة العملاء" },

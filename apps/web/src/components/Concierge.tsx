@@ -187,6 +187,12 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
     }
   };
 
+  /** Switch between voice and text without losing the concierge session (same conversation, cards, order). */
+  const switchMode = async (m: "voice" | "text") => {
+    if (connected) await conversation.endSession();
+    await start(m);
+  };
+
   const say = useCallback(
     (text: string) => {
       if (!text.trim()) return;
@@ -307,6 +313,15 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
               <i style={{ width: `${Math.round(level * 100)}%` }} />
             </div>
           </div>
+        ) : null}
+        {!humanMode ? (
+          <button
+            className={`iconbtn mic ${mode === "voice" ? "on" : ""}`}
+            title={mode === "voice" ? t(lang, "switchToText") : t(lang, "switchToVoice")}
+            onClick={() => switchMode(mode === "voice" ? "text" : "voice")}
+          >
+            {mode === "voice" ? "💬" : "🎙"}
+          </button>
         ) : null}
         <input value={input} placeholder={t(lang, "placeholder")} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { say(input); setInput(""); } }} onFocus={() => connected && conversation.sendUserActivity()} disabled={mode === "idle" && !humanMode} />
         <button className="btn primary" disabled={(!connected && !humanMode) || !input.trim()} onClick={() => { say(input); setInput(""); }}>
