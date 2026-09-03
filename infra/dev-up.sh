@@ -3,6 +3,7 @@
 set -a; . "$(dirname "$0")/../.env"; set +a
 export DEV_TOOL_BRIDGE=${DEV_TOOL_BRIDGE:-true}
 cd "$(dirname "$0")/.."
+pnpm build:packages >/dev/null
 mkdir -p /tmp/voxi
 nohup pnpm --filter @voxi/vista-mock dev > /tmp/voxi/vista.log 2>&1 &
 nohup pnpm --filter @voxi/concierge-api dev > /tmp/voxi/api.log 2>&1 &

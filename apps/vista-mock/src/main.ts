@@ -8,7 +8,21 @@ import { expireAbandonedOrders } from "./services/orders.js";
 const cfg = loadConfig();
 const { db, close } = createDb(cfg.databaseUrl);
 const app = createApp(db, cfg);
-const server = serve({ fetch: app.fetch, port: cfg.port, hostname: process.env.HOST ?? "::" }, (info) =>
+/** Bind dual-stack ("::") where available, falling back to IPv4 on hosts without IPv6. */
+function listen(port: number, onListen: (info: { port: number }) => void) {
+  const host = process.env.HOST;
+  const hosts = host ? [host] : ["::", "0.0.0.0"];
+  const tryHost = (i: number): ReturnType<typeof serve> => {
+    const s = serve({ fetch: app.fetch, port, hostname: hosts[i] }, onListen);
+    s.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "EAFNOSUPPORT" && i + 1 < hosts.length) tryHost(i + 1);
+      else throw err;
+    });
+    return s;
+  };
+  return tryHost(0);
+}
+const server = listen(cfg.port, (info) =>
   console.log(`vista-mock listening on http://localhost:${info.port}`),
 );
 const sweep = setInterval(
