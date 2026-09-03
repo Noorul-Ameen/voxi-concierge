@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 /**
  * Seed the database: real VOX UAE reference data (from the scraper snapshot) + deterministic dummy
  * commerce/customer data. Idempotent — re-running upserts reference data and recreates demo bookings.
@@ -9,23 +10,75 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createHash } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createDb } from "../client.js";
 import * as s from "../schema/index.js";
 import { generateSeatState, pickAdjacentSeats, seatKey } from "../seats.js";
-import { AGE_RULES, CINEMA_EXTRAS, CONCESSIONS, DEFAULT_EXTRA, EXPERIENCE_AGE_RULES, EXPERIENCE_PRICING, OFFERS, ticketTypesFor } from "./catalog.js";
+import {
+  AGE_RULES,
+  CINEMA_EXTRAS,
+  CONCESSIONS,
+  DEFAULT_EXTRA,
+  EXPERIENCE_AGE_RULES,
+  EXPERIENCE_PRICING,
+  OFFERS,
+  ticketTypesFor,
+} from "./catalog.js";
 import { LAYOUTS, layoutForExperience } from "./layouts.js";
-import { PERSONAS, type BookingScenario } from "./personas.js";
+import { type BookingScenario, PERSONAS } from "./personas.js";
 import { EXPERIENCE_CODE, EXPERIENCE_NAME_AR, addDaysIso, addMinutesIso, nowLocalIso, prng } from "./util.js";
 
 type Dataset = {
   capturedAt: string;
   cinemas: {
-    id: string; name: string; nameAlt: string; slug: string; shortCode: string; mallName: string; emirate: string; city: string; address1: string; latitude: string; longitude: string; parkingInfo: string; cinemaLocation: string; description: string; experiences: string[]; websiteUrl: string;
+    id: string;
+    name: string;
+    nameAlt: string;
+    slug: string;
+    shortCode: string;
+    mallName: string;
+    emirate: string;
+    city: string;
+    address1: string;
+    latitude: string;
+    longitude: string;
+    parkingInfo: string;
+    cinemaLocation: string;
+    description: string;
+    experiences: string[];
+    websiteUrl: string;
   }[];
-  films: { hoCode: string; title: string; titleAlt: string; rating: string; synopsis: string; openingDate: string | null; runTime: number; trailerUrl: string; genreNames: string[]; cast: string[]; director: string; language: string; subtitles: string; posterUrl: string; heroUrl: string; slug: string; websiteUrl: string; status: "now_showing" | "coming_soon" | "advance" }[];
-  sessions: { cinemaId: string; sessionId: string; hoCode: string; showtime: string; date: string; experience: string; experienceLabel: string; soldOut: boolean; bookingUrl: string }[];
+  films: {
+    hoCode: string;
+    title: string;
+    titleAlt: string;
+    rating: string;
+    synopsis: string;
+    openingDate: string | null;
+    runTime: number;
+    trailerUrl: string;
+    genreNames: string[];
+    cast: string[];
+    director: string;
+    language: string;
+    subtitles: string;
+    posterUrl: string;
+    heroUrl: string;
+    slug: string;
+    websiteUrl: string;
+    status: "now_showing" | "coming_soon" | "advance";
+  }[];
+  sessions: {
+    cinemaId: string;
+    sessionId: string;
+    hoCode: string;
+    showtime: string;
+    date: string;
+    experience: string;
+    experienceLabel: string;
+    soldOut: boolean;
+    bookingUrl: string;
+  }[];
   genres: string[];
   experiences: string[];
 };
@@ -53,10 +106,16 @@ async function main() {
   const firstDay = data.sessions.map((x) => x.date).sort()[0]!;
   let shiftDays = 0;
   if ((process.env.SEED_SHIFT ?? "weeks") !== "none") {
-    const diff = Math.round((new Date(`${nowLocal.slice(0, 10)}T00:00:00Z`).getTime() - new Date(`${firstDay}T00:00:00Z`).getTime()) / 86400000);
+    const diff = Math.round(
+      (new Date(`${nowLocal.slice(0, 10)}T00:00:00Z`).getTime() -
+        new Date(`${firstDay}T00:00:00Z`).getTime()) /
+        86400000,
+    );
     shiftDays = Math.round(diff / 7) * 7;
   }
-  log(`dataset captured ${data.capturedAt}; first day ${firstDay}; now ${nowLocal}; shifting by ${shiftDays} days`);
+  log(
+    `dataset captured ${data.capturedAt}; first day ${firstDay}; now ${nowLocal}; shifting by ${shiftDays} days`,
+  );
   const shift = (iso: string) => (shiftDays ? addDaysIso(iso, shiftDays) : iso);
 
   // ---- genres ----
@@ -109,7 +168,11 @@ async function main() {
           mallName: c.mallName,
           emirate: c.emirate,
           shortCode: c.shortCode,
-          openingHours: [0, 1, 2, 3, 4, 5, 6].map((day) => ({ day, open: "10:00", close: late || day === 4 || day === 5 ? "02:00" : "01:00" })),
+          openingHours: [0, 1, 2, 3, 4, 5, 6].map((day) => ({
+            day,
+            open: "10:00",
+            close: late || day === 4 || day === 5 ? "02:00" : "01:00",
+          })),
           accessibilityInfo: extra.accessibility,
           inMallDirections: extra.directions,
           inMallDirectionsAlt: extra.directionsAlt,
@@ -123,7 +186,15 @@ async function main() {
     )
     .onConflictDoUpdate({
       target: s.cinemas.id,
-      set: { name: sql`excluded.name`, nameAlt: sql`excluded.name_alt`, latitude: sql`excluded.latitude`, longitude: sql`excluded.longitude`, experiences: sql`excluded.experiences`, description: sql`excluded.description`, updatedAt: new Date() },
+      set: {
+        name: sql`excluded.name`,
+        nameAlt: sql`excluded.name_alt`,
+        latitude: sql`excluded.latitude`,
+        longitude: sql`excluded.longitude`,
+        experiences: sql`excluded.experiences`,
+        description: sql`excluded.description`,
+        updatedAt: new Date(),
+      },
     });
   log(`cinemas: ${data.cinemas.length}`);
 
@@ -156,9 +227,27 @@ async function main() {
     cast: [
       ...f.cast.map((n, i) => {
         const [first, ...rest] = n.split(" ");
-        return { ID: `${f.hoCode}-A${i}`, FirstName: first ?? n, LastName: rest.join(" "), UrlToDetails: "", UrlToPicture: "", PersonType: "Actor" as const };
+        return {
+          ID: `${f.hoCode}-A${i}`,
+          FirstName: first ?? n,
+          LastName: rest.join(" "),
+          UrlToDetails: "",
+          UrlToPicture: "",
+          PersonType: "Actor" as const,
+        };
       }),
-      ...(f.director ? [{ ID: `${f.hoCode}-D0`, FirstName: f.director.split(" ")[0]!, LastName: f.director.split(" ").slice(1).join(" "), UrlToDetails: "", UrlToPicture: "", PersonType: "Director" as const }] : []),
+      ...(f.director
+        ? [
+            {
+              ID: `${f.hoCode}-D0`,
+              FirstName: f.director.split(" ")[0]!,
+              LastName: f.director.split(" ").slice(1).join(" "),
+              UrlToDetails: "",
+              UrlToPicture: "",
+              PersonType: "Director" as const,
+            },
+          ]
+        : []),
     ],
     language: f.language,
     subtitles: f.subtitles,
@@ -175,15 +264,37 @@ async function main() {
     await db
       .insert(s.films)
       .values(c)
-      .onConflictDoUpdate({ target: s.films.hoCode, set: { title: sql`excluded.title`, synopsis: sql`excluded.synopsis`, status: sql`excluded.status`, genreNames: sql`excluded.genre_names`, cast: sql`excluded.cast`, posterUrl: sql`excluded.poster_url`, updatedAt: new Date() } });
+      .onConflictDoUpdate({
+        target: s.films.hoCode,
+        set: {
+          title: sql`excluded.title`,
+          synopsis: sql`excluded.synopsis`,
+          status: sql`excluded.status`,
+          genreNames: sql`excluded.genre_names`,
+          cast: sql`excluded.cast`,
+          posterUrl: sql`excluded.poster_url`,
+          updatedAt: new Date(),
+        },
+      });
   }
   log(`films: ${filmRows.length}`);
 
   // ---- seat layout templates ----
   await db
     .insert(s.seatLayoutTemplates)
-    .values(LAYOUTS.map((l) => ({ id: l.id, experience: l.experience, name: l.name, totalSeats: l.totalSeats, layout: l.template })))
-    .onConflictDoUpdate({ target: s.seatLayoutTemplates.id, set: { layout: sql`excluded.layout`, totalSeats: sql`excluded.total_seats` } });
+    .values(
+      LAYOUTS.map((l) => ({
+        id: l.id,
+        experience: l.experience,
+        name: l.name,
+        totalSeats: l.totalSeats,
+        layout: l.template,
+      })),
+    )
+    .onConflictDoUpdate({
+      target: s.seatLayoutTemplates.id,
+      set: { layout: sql`excluded.layout`, totalSeats: sql`excluded.total_seats` },
+    });
 
   // ---- sessions (+ scheduled films) ----
   await db.delete(s.sessions).where(sql`${s.sessions.sessionId} not like 'SW%'`); // keep sessions created by swaps? (none on fresh seed)
@@ -205,7 +316,9 @@ async function main() {
     const showtime = shift(x.showtime);
     const businessDate = shift(`${x.date}T00:00:00`).slice(0, 10);
     const total = layout.totalSeats;
-    const occupancy = x.soldOut ? 1 : Math.min(0.95, 0.1 + rnd.next() * 0.5 + (showtime.slice(11, 13) >= "18" ? 0.15 : 0));
+    const occupancy = x.soldOut
+      ? 1
+      : Math.min(0.95, 0.1 + rnd.next() * 0.5 + (showtime.slice(11, 13) >= "18" ? 0.15 : 0));
     const is3D = /3d/i.test(x.experienceLabel) || (x.experience === "IMAX" && rnd.chance(0.4));
     return {
       cinemaId: x.cinemaId,
@@ -218,7 +331,11 @@ async function main() {
       cinemaOperatorCode: `${cinema.shortCode}${EXPERIENCE_CODE[x.experience] ?? "OTH"}`,
       experience: x.experience,
       formatCode: is3D ? "0000000002" : "0000000001",
-      attributeIds: [is3D ? "0000000007" : "0000000006", "0000000010", ...(x.experience === "MAX" || x.experience === "IMAX" ? ["0000000020", "0000000021"] : [])],
+      attributeIds: [
+        is3D ? "0000000007" : "0000000006",
+        "0000000010",
+        ...(x.experience === "MAX" || x.experience === "IMAX" ? ["0000000020", "0000000021"] : []),
+      ],
       areaCategoryCodes: layout.template.areas.map((a) => a.areaCategoryCode),
       seatsAvailable: Math.max(0, Math.round(total * (1 - occupancy))),
       totalSeats: total,
@@ -246,7 +363,16 @@ async function main() {
       if (r.showtime > cur.last) cur.last = r.showtime;
     }
   }
-  await db.insert(s.scheduledFilms).values([...sf].map(([k, v]) => ({ cinemaId: k.split("|")[0]!, hoCode: k.split("|")[1]!, firstShowtime: v.first, lastShowtime: v.last })));
+  await db
+    .insert(s.scheduledFilms)
+    .values(
+      [...sf].map(([k, v]) => ({
+        cinemaId: k.split("|")[0]!,
+        hoCode: k.split("|")[1]!,
+        firstShowtime: v.first,
+        lastShowtime: v.last,
+      })),
+    );
   log(`sessions: ${sessionRows.length}; scheduled films: ${sf.size}`);
 
   // ---- ticket types ----
@@ -289,7 +415,8 @@ async function main() {
       extendedDescription: c.extended,
       priceInCents: c.price,
       taxInCents: Math.round(c.price * 0.05),
-      itemClassCode: c.tab === "Drinks" ? "DRK" : c.tab === "Hot Food" || c.tab === "GOLD Menu" ? "HOT" : "BOX",
+      itemClassCode:
+        c.tab === "Drinks" ? "DRK" : c.tab === "Hot Food" || c.tab === "GOLD Menu" ? "HOT" : "BOX",
       imageUrl: c.image,
       dietaryTags: c.dietary,
       allergens: c.allergens ?? [],
@@ -352,23 +479,41 @@ async function main() {
       demoPin: p.pin,
     })),
   );
-  await db.insert(s.loyaltyAccounts).values(
-    PERSONAS.filter((p) => p.memberId).map((p) => ({ memberId: p.memberId!, customerId: p.id, tier: p.tier ?? "Blue", sharePointsBalance: p.sharePoints ?? 0, voxRewardsBalanceCents: p.voxRewardsCents ?? 0 })),
-  );
+  await db
+    .insert(s.loyaltyAccounts)
+    .values(
+      PERSONAS.filter((p) => p.memberId).map((p) => ({
+        memberId: p.memberId!,
+        customerId: p.id,
+        tier: p.tier ?? "Blue",
+        sharePointsBalance: p.sharePoints ?? 0,
+        voxRewardsBalanceCents: p.voxRewardsCents ?? 0,
+      })),
+    );
 
   // ---- bookings on real sessions ----
   const allSessions = sessionRows;
   const now = new Date(`${nowLocal}Z`);
   const bookingRows: (typeof s.bookings.$inferInsert)[] = [];
-  const tt = (cinemaId: string, exp: string, code: string) => ttRows.find((t) => t.cinemaId === cinemaId && t.experience === exp && t.ticketTypeCode.endsWith(code));
+  const tt = (cinemaId: string, exp: string, code: string) =>
+    ttRows.find((t) => t.cinemaId === cinemaId && t.experience === exp && t.ticketTypeCode.endsWith(code));
   const pickSession = (sc: BookingScenario, preferredCinemas: string[]) => {
     const exp = sc.experience ?? "Standard";
     const film = (r: (typeof sessionRows)[number]) => data.films.find((f) => f.hoCode === r.hoCode)!;
     let cands = allSessions.filter((r) => r.experience === exp && r.soldoutStatus !== 2);
     if (sc.cinemaId) cands = cands.filter((r) => r.cinemaId === sc.cinemaId);
-    else cands = cands.filter((r) => preferredCinemas.includes(r.cinemaId)).length ? cands.filter((r) => preferredCinemas.includes(r.cinemaId)) : cands;
-    if (sc.genreHint) cands = cands.filter((r) => film(r).genreNames.includes(sc.genreHint!)).length ? cands.filter((r) => film(r).genreNames.includes(sc.genreHint!)) : cands;
-    if (sc.languageHint) cands = cands.filter((r) => film(r).language === sc.languageHint).length ? cands.filter((r) => film(r).language === sc.languageHint) : cands;
+    else
+      cands = cands.filter((r) => preferredCinemas.includes(r.cinemaId)).length
+        ? cands.filter((r) => preferredCinemas.includes(r.cinemaId))
+        : cands;
+    if (sc.genreHint)
+      cands = cands.filter((r) => film(r).genreNames.includes(sc.genreHint!)).length
+        ? cands.filter((r) => film(r).genreNames.includes(sc.genreHint!))
+        : cands;
+    if (sc.languageHint)
+      cands = cands.filter((r) => film(r).language === sc.languageHint).length
+        ? cands.filter((r) => film(r).language === sc.languageHint)
+        : cands;
     const ms = (d: Date) => d.getTime();
     switch (sc.when) {
       case "soon":
@@ -380,15 +525,23 @@ async function main() {
         if (!cands.length) cands = allSessions.filter((r) => r.experience === exp).slice(0, 20); // fallback: will be shifted back
         break;
       case "tomorrow_evening":
-        cands = cands.filter((r) => ms(r.showtime) > ms(now) + 20 * 3600000 && ms(r.showtime) < ms(now) + 44 * 3600000 && r.showtime.getUTCHours() >= 18);
+        cands = cands.filter(
+          (r) =>
+            ms(r.showtime) > ms(now) + 20 * 3600000 &&
+            ms(r.showtime) < ms(now) + 44 * 3600000 &&
+            r.showtime.getUTCHours() >= 18,
+        );
         break;
       case "weekend":
-        cands = cands.filter((r) => ms(r.showtime) > ms(now) + 3 * 3600000 && [5, 6].includes(r.showtime.getUTCDay()));
+        cands = cands.filter(
+          (r) => ms(r.showtime) > ms(now) + 3 * 3600000 && [5, 6].includes(r.showtime.getUTCDay()),
+        );
         break;
       default:
         cands = cands.filter((r) => ms(r.showtime) > ms(now) + 3 * 3600000);
     }
-    if (!cands.length) cands = allSessions.filter((r) => r.experience === exp && ms(r.showtime) > ms(now) + 3 * 3600000);
+    if (!cands.length)
+      cands = allSessions.filter((r) => r.experience === exp && ms(r.showtime) > ms(now) + 3 * 3600000);
     // prefer films not yet used by another demo booking so the demo shows variety
     const used = new Set(bookingRows.map((b) => b.hoCode));
     const fresh = cands.filter((r) => !used.has(r.hoCode));
@@ -405,24 +558,47 @@ async function main() {
       let sess = pickSession(sc, p.preferences.cinemas ?? [p.homeCinemaId]);
       if (!sess) {
         // synthesise a session that starts in 20 minutes (cut-off demo) by cloning a real one
-        const base = allSessions.find((r) => r.cinemaId === (sc.cinemaId ?? p.homeCinemaId) && r.experience === (sc.experience ?? "Standard")) ?? allSessions[0]!;
-        sess = { ...base, sessionId: `SW${String(9000 + bookingRows.length)}`, showtime: new Date(`${addMinutesIso(nowLocal, 20)}Z`), sessionBusinessDate: nowLocal.slice(0, 10) };
+        const base =
+          allSessions.find(
+            (r) =>
+              r.cinemaId === (sc.cinemaId ?? p.homeCinemaId) &&
+              r.experience === (sc.experience ?? "Standard"),
+          ) ?? allSessions[0]!;
+        sess = {
+          ...base,
+          sessionId: `SW${String(9000 + bookingRows.length)}`,
+          showtime: new Date(`${addMinutesIso(nowLocal, 20)}Z`),
+          sessionBusinessDate: nowLocal.slice(0, 10),
+        };
         await db.insert(s.sessions).values(sess).onConflictDoNothing();
       }
       const film = data.films.find((f) => f.hoCode === sess.hoCode)!;
       const cinema = data.cinemas.find((c) => c.id === sess.cinemaId)!;
       const layout = LAYOUTS.find((l) => l.id === sess.seatLayoutTemplateId)!;
       const key = `${sess.cinemaId}-${sess.sessionId}`;
-      const state = seatStates.get(key) ?? generateSeatState(sess.cinemaId, sess.sessionId, layout.template, { soldOut: sess.soldoutStatus === 2 });
+      const state =
+        seatStates.get(key) ??
+        generateSeatState(sess.cinemaId, sess.sessionId, layout.template, {
+          soldOut: sess.soldoutStatus === 2,
+        });
       const qty = sc.tickets.reduce((a, t) => a + t.qty, 0);
       const wantsPremium = sc.tickets.some((t) => t.code.startsWith("013"));
-      const seats = pickAdjacentSeats(layout.template, state, qty, p.preferences.seatPreference ?? "middle", wantsPremium ? "0000000001" : undefined);
-      const bookingId = sc.bookingId ?? `${p.firstName.slice(0, 2).toUpperCase()}${String(bookingNo).slice(-5)}`;
+      const seats = pickAdjacentSeats(
+        layout.template,
+        state,
+        qty,
+        p.preferences.seatPreference ?? "middle",
+        wantsPremium ? "0000000001" : undefined,
+      );
+      const bookingId =
+        sc.bookingId ?? `${p.firstName.slice(0, 2).toUpperCase()}${String(bookingNo).slice(-5)}`;
       const tickets: (typeof s.bookings.$inferInsert)["tickets"] = [];
       let i = 0;
       let ticketTotal = 0;
       for (const t of sc.tickets) {
-        const type = tt(sess.cinemaId, sess.experience, t.code) ?? ttRows.find((x) => x.cinemaId === sess.cinemaId && x.experience === sess.experience)!;
+        const type =
+          tt(sess.cinemaId, sess.experience, t.code) ??
+          ttRows.find((x) => x.cinemaId === sess.cinemaId && x.experience === sess.experience)!;
         for (let q = 0; q < t.qty; q++) {
           const seat = seats[i];
           const discount = sc.offerId?.includes("BOGO") && i % 2 === 1 ? type.priceInCents : 0;
@@ -443,7 +619,7 @@ async function main() {
             SeatRowIndex: seat?.rowIndex ?? null,
             SeatColumnIndex: seat?.columnIndex ?? null,
             SeatAreaNumber: seat?.areaNumber ?? null,
-            DealDescription: sc.offerId ? OFFERS.find((o) => o.id === sc.offerId)?.title ?? null : null,
+            DealDescription: sc.offerId ? (OFFERS.find((o) => o.id === sc.offerId)?.title ?? null) : null,
             DealDefinitionId: sc.offerId ?? null,
             LoyaltyRecognitionId: null,
             Barcode: `${bookingId}${String(i + 1).padStart(2, "0")}`,
@@ -490,18 +666,54 @@ async function main() {
         showtime: sess.showtime,
         status,
         customerId: p.id,
-        customer: { FirstName: p.firstName, LastName: p.lastName, Email: p.email, Phone: p.phone, ...(p.memberId ? { MemberId: p.memberId } : {}) },
+        customer: {
+          FirstName: p.firstName,
+          LastName: p.lastName,
+          Email: p.email,
+          Phone: p.phone,
+          ...(p.memberId ? { MemberId: p.memberId } : {}),
+        },
         tickets,
         concessions,
-        appliedOffers: sc.offerId ? [{ offerId: sc.offerId, title: OFFERS.find((o) => o.id === sc.offerId)!.title, type: "bank", discountCents: tickets.reduce((a, t) => a + t.DiscountPriceCents, 0) }] : [],
+        appliedOffers: sc.offerId
+          ? [
+              {
+                offerId: sc.offerId,
+                title: OFFERS.find((o) => o.id === sc.offerId)!.title,
+                type: "bank",
+                discountCents: tickets.reduce((a, t) => a + t.DiscountPriceCents, 0),
+              },
+            ]
+          : [],
         payments: [
           sc.payment === "CREDIT"
-            ? { PaymentTenderCategory: "CREDIT", PaymentValueCents: total + fee, CardNumberMasked: sc.offerId ? "4555 33** **** 1029" : "4111 11** **** 1111", CardType: "VISA", BankReference: `BR${transNo}`, Reference: `PAY${transNo}` }
+            ? {
+                PaymentTenderCategory: "CREDIT",
+                PaymentValueCents: total + fee,
+                CardNumberMasked: sc.offerId ? "4555 33** **** 1029" : "4111 11** **** 1111",
+                CardType: "VISA",
+                BankReference: `BR${transNo}`,
+                Reference: `PAY${transNo}`,
+              }
             : sc.payment === "EWALLET"
-              ? { PaymentTenderCategory: "EWALLET", PaymentValueCents: total + fee, Reference: `WAL${transNo}` }
+              ? {
+                  PaymentTenderCategory: "EWALLET",
+                  PaymentValueCents: total + fee,
+                  Reference: `WAL${transNo}`,
+                }
               : sc.payment === "APPLEPAY"
-                ? { PaymentTenderCategory: "APPLEPAY", PaymentValueCents: total + fee, CardNumberMasked: "5200 00** **** 0007", Reference: `APL${transNo}` }
-                : { PaymentTenderCategory: "LOYALTY", PaymentValueCents: total, PointsRedeemed: total, Reference: `PTS${transNo}` },
+                ? {
+                    PaymentTenderCategory: "APPLEPAY",
+                    PaymentValueCents: total + fee,
+                    CardNumberMasked: "5200 00** **** 0007",
+                    Reference: `APL${transNo}`,
+                  }
+                : {
+                    PaymentTenderCategory: "LOYALTY",
+                    PaymentValueCents: total,
+                    PointsRedeemed: total,
+                    Reference: `PTS${transNo}`,
+                  },
         ],
         totalValueCents: total + fee,
         taxValueCents: Math.round(total * 0.05),
@@ -541,12 +753,20 @@ async function main() {
     const prefGenres = p.preferences.genres ?? ["Action"];
     const prefExp = p.preferences.experiences ?? ["Standard"];
     for (let k = 0; k < 6; k++) {
-      const filmsOfGenre = data.films.filter((f) => f.genreNames.some((g) => prefGenres.includes(g)) && (!p.preferences.languages || p.preferences.languages.includes(f.language)));
+      const filmsOfGenre = data.films.filter(
+        (f) =>
+          f.genreNames.some((g) => prefGenres.includes(g)) &&
+          (!p.preferences.languages || p.preferences.languages.includes(f.language)),
+      );
       const film = rnd.pick(filmsOfGenre.length ? filmsOfGenre : data.films);
       const exp = rnd.pick(prefExp);
       const cinemaId = rnd.pick(p.preferences.cinemas ?? [p.homeCinemaId]);
       const daysAgo = 20 + k * 25 + rnd.int(0, 10);
-      const hour = (p.preferences.timeOfDay ?? ["evening"]).includes("late") ? 22 : (p.preferences.timeOfDay ?? ["evening"]).includes("afternoon") ? 15 : 19;
+      const hour = (p.preferences.timeOfDay ?? ["evening"]).includes("late")
+        ? 22
+        : (p.preferences.timeOfDay ?? ["evening"]).includes("afternoon")
+          ? 15
+          : 19;
       const showtime = new Date(now.getTime() - daysAgo * 86400000);
       showtime.setUTCHours(hour, rnd.pick([0, 15, 30, 45]), 0, 0);
       const price = EXPERIENCE_PRICING[exp]?.adult ?? 4500;
@@ -563,7 +783,9 @@ async function main() {
         experience: exp,
         showtime,
         ticketCount: qty,
-        concessionItemIds: rnd.chance(0.6) ? [rnd.pick(CONCESSIONS.filter((c) => !c.experiences?.length || c.experiences.includes(exp))).id] : [],
+        concessionItemIds: rnd.chance(0.6)
+          ? [rnd.pick(CONCESSIONS.filter((c) => !c.experiences?.length || c.experiences.includes(exp))).id]
+          : [],
         spendCents: price * qty + (rnd.chance(0.6) ? 4500 : 0),
       });
     }
@@ -571,8 +793,19 @@ async function main() {
   await db.insert(s.purchaseHistory).values(extraHistory);
   // persist seat states touched by bookings
   await db.delete(s.sessionSeatState);
-  await db.insert(s.sessionSeatState).values([...seatStates].map(([k, seats]) => ({ cinemaId: k.split("-")[0]!, sessionId: k.split("-")[1]!, seats, version: 1 })));
-  log(`bookings: ${bookingRows.length}; purchase history: ${historyRows.length + extraHistory.length}; seat states: ${seatStates.size}`);
+  await db
+    .insert(s.sessionSeatState)
+    .values(
+      [...seatStates].map(([k, seats]) => ({
+        cinemaId: k.split("-")[0]!,
+        sessionId: k.split("-")[1]!,
+        seats,
+        version: 1,
+      })),
+    );
+  log(
+    `bookings: ${bookingRows.length}; purchase history: ${historyRows.length + extraHistory.length}; seat states: ${seatStates.size}`,
+  );
 
   // ---- knowledge base documents (optional) ----
   const kbDir = process.env.SEED_KB_DIR ?? path.resolve(here, "../../../agent/kb");
@@ -599,7 +832,18 @@ async function main() {
       });
     }
     if (rows.length) {
-      await db.insert(s.kbDocuments).values(rows).onConflictDoUpdate({ target: s.kbDocuments.id, set: { contentMarkdown: sql`excluded.content_markdown`, contentHash: sql`excluded.content_hash`, title: sql`excluded.title`, updatedAt: new Date() } });
+      await db
+        .insert(s.kbDocuments)
+        .values(rows)
+        .onConflictDoUpdate({
+          target: s.kbDocuments.id,
+          set: {
+            contentMarkdown: sql`excluded.content_markdown`,
+            contentHash: sql`excluded.content_hash`,
+            title: sql`excluded.title`,
+            updatedAt: new Date(),
+          },
+        });
       log(`kb documents: ${rows.length}`);
     }
   } catch {
@@ -607,11 +851,30 @@ async function main() {
   }
 
   // ---- age rule docs are also stored as KB text for RAG (generated) ----
-  const ageDoc = ["# Age restrictions and movie ratings (UAE)", "", ...AGE_RULES.map((r) => `- **${r.rating}** — ${r.text}`), "", "## Experience-specific rules", ...Object.entries(EXPERIENCE_AGE_RULES).map(([k, v]) => `- **${k}** — ${v}`)].join("\n");
+  const ageDoc = [
+    "# Age restrictions and movie ratings (UAE)",
+    "",
+    ...AGE_RULES.map((r) => `- **${r.rating}** — ${r.text}`),
+    "",
+    "## Experience-specific rules",
+    ...Object.entries(EXPERIENCE_AGE_RULES).map(([k, v]) => `- **${k}** — ${v}`),
+  ].join("\n");
   await db
     .insert(s.kbDocuments)
-    .values({ id: "age-restrictions-generated", title: "Age restrictions and movie ratings", language: "en", category: "age_restrictions", sourceUrl: "https://uae.voxcinemas.com/faq", contentMarkdown: ageDoc, contentHash: createHash("sha256").update(ageDoc).digest("hex"), updatedAt: new Date() })
-    .onConflictDoUpdate({ target: s.kbDocuments.id, set: { contentMarkdown: ageDoc, updatedAt: new Date() } });
+    .values({
+      id: "age-restrictions-generated",
+      title: "Age restrictions and movie ratings",
+      language: "en",
+      category: "age_restrictions",
+      sourceUrl: "https://uae.voxcinemas.com/faq",
+      contentMarkdown: ageDoc,
+      contentHash: createHash("sha256").update(ageDoc).digest("hex"),
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: s.kbDocuments.id,
+      set: { contentMarkdown: ageDoc, updatedAt: new Date() },
+    });
 
   log("done");
   await close();

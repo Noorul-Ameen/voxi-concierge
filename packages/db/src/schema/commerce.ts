@@ -2,9 +2,20 @@
  * Commerce: ticket types, seat layouts, concessions, orders, bookings, payments, refunds.
  * Shapes follow Vista Connect V1 so the mock can serialise them faithfully.
  */
-import { boolean, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
-import { cinemas } from "./reference.js";
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  uniqueIndex,
+  varchar,
+} from "drizzle-orm/pg-core";
 import { customers } from "./customer.js";
+import { cinemas } from "./reference.js";
 
 /** Ticket types per cinema + experience + area category (Vista GetTicketsForSession). */
 export const ticketTypes = pgTable(
@@ -30,7 +41,9 @@ export const ticketTypes = pgTable(
     quantityAvailablePerOrder: integer("qty_per_order").default(10),
     displaySequence: integer("display_sequence").default(1),
     priceGroupCode: text("price_group_code").default(""),
-    salesChannels: jsonb("sales_channels").$type<string[]>().default(["CALL", "CELL", "KIOSK", "POS", "POSBK", "WWW"]),
+    salesChannels: jsonb("sales_channels")
+      .$type<string[]>()
+      .default(["CALL", "CELL", "KIOSK", "POS", "POSBK", "WWW"]),
   },
   (t) => [index("ticket_types_cinema_exp_idx").on(t.cinemaId, t.experience)],
 );
@@ -77,14 +90,20 @@ export const sessionSeatState = pgTable(
   {
     cinemaId: varchar("cinema_id", { length: 8 }).notNull(),
     sessionId: varchar("session_id", { length: 16 }).notNull(),
-    seats: jsonb("seats").$type<Record<string, { status: number; orderId?: string; bookingId?: string }>>().notNull(),
+    seats: jsonb("seats")
+      .$type<Record<string, { status: number; orderId?: string; bookingId?: string }>>()
+      .notNull(),
     version: integer("version").notNull().default(1),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.cinemaId, t.sessionId] })],
 );
 
-export type ModifierGroup = { name: string; required: boolean; options: { id: string; name: string; priceInCents: number }[] };
+export type ModifierGroup = {
+  name: string;
+  required: boolean;
+  options: { id: string; name: string; priceInCents: number }[];
+};
 
 export const concessionItems = pgTable(
   "concession_items",
@@ -106,7 +125,9 @@ export const concessionItems = pgTable(
     allergens: jsonb("allergens").$type<string[]>().default([]),
     calories: integer("calories"),
     isCombo: boolean("is_combo").default(false),
-    packageChildItems: jsonb("package_child_items").$type<{ itemId: string; quantity: number }[]>().default([]),
+    packageChildItems: jsonb("package_child_items")
+      .$type<{ itemId: string; quantity: number }[]>()
+      .default([]),
     modifierGroups: jsonb("modifier_groups").$type<ModifierGroup[]>().default([]),
     experiences: jsonb("experiences").$type<string[]>().default([]), // empty = all
     isAvailableForInSeatDelivery: boolean("in_seat_delivery").default(false),
@@ -188,7 +209,13 @@ export const orders = pgTable(
     discountValueCents: integer("discount_value_cents").notNull().default(0),
     loyaltyPointsPayableValueInCents: integer("loyalty_points_payable_cents").notNull().default(0),
     customerId: varchar("customer_id", { length: 32 }).references(() => customers.id),
-    customer: jsonb("customer").$type<{ FirstName: string; LastName: string; Email: string; Phone: string; MemberId?: string }>(),
+    customer: jsonb("customer").$type<{
+      FirstName: string;
+      LastName: string;
+      Email: string;
+      Phone: string;
+      MemberId?: string;
+    }>(),
     conversationId: varchar("conversation_id", { length: 64 }),
     optionalClientClass: varchar("client_class", { length: 8 }).default("WWW"),
     seatsAllocated: boolean("seats_allocated").notNull().default(false),
@@ -198,10 +225,19 @@ export const orders = pgTable(
     expiryAt: timestamp("expiry_at", { withTimezone: true }).notNull(),
     completedBookingId: varchar("completed_booking_id", { length: 16 }),
   },
-  (t) => [index("orders_state_expiry_idx").on(t.state, t.expiryAt), index("orders_conversation_idx").on(t.conversationId)],
+  (t) => [
+    index("orders_state_expiry_idx").on(t.state, t.expiryAt),
+    index("orders_conversation_idx").on(t.conversationId),
+  ],
 );
 
-export type BookingStatus = "confirmed" | "cancelled" | "refunded" | "partially_refunded" | "swapped" | "collected";
+export type BookingStatus =
+  | "confirmed"
+  | "cancelled"
+  | "refunded"
+  | "partially_refunded"
+  | "swapped"
+  | "collected";
 export type BookingTicket = OrderTicketLine & { Barcode: string; Status: "valid" | "refunded" | "used" };
 export type BookingPayment = {
   PaymentTenderCategory: "CREDIT" | "EWALLET" | "LOYALTY" | "VOUCHER" | "APPLEPAY" | "GOOGLEPAY";

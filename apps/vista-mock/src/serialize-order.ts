@@ -81,7 +81,11 @@ export function concessionLineJson(c: Order["concessions"][number]) {
   };
 }
 
-export function orderJson(o: Order, session: Session | null, film: { title: string; titleAlt: string | null; rating: string | null } | null) {
+export function orderJson(
+  o: Order,
+  session: Session | null,
+  film: { title: string; titleAlt: string | null; rating: string | null } | null,
+) {
   return {
     UserSessionId: o.userSessionId,
     CinemaId: o.cinemaId,
@@ -95,7 +99,9 @@ export function orderJson(o: Order, session: Session | null, film: { title: stri
       ? [
           {
             CinemaId: o.cinemaId,
-            SessionId: Number.isNaN(Number(session.sessionId)) ? session.sessionId : Number(session.sessionId),
+            SessionId: Number.isNaN(Number(session.sessionId))
+              ? session.sessionId
+              : Number(session.sessionId),
             AllocatedSeating: true,
             SeatsAllocated: o.seatsAllocated,
             Tickets: o.tickets.map(ticketLineJson),
@@ -112,7 +118,9 @@ export function orderJson(o: Order, session: Session | null, film: { title: stri
         ]
       : [],
     Concessions: o.concessions.length ? o.concessions.map(concessionLineJson) : null,
-    BookingFees: o.bookingFeeValueCents ? [{ Description: "Booking fee", ValueCents: o.bookingFeeValueCents }] : [],
+    BookingFees: o.bookingFeeValueCents
+      ? [{ Description: "Booking fee", ValueCents: o.bookingFeeValueCents }]
+      : [],
     Customer: {
       FirstName: o.customer?.FirstName ?? "",
       LastName: o.customer?.LastName ?? "",
@@ -122,7 +130,15 @@ export function orderJson(o: Order, session: Session | null, film: { title: stri
       MobilePhone: null,
       Gender: "",
       DateOfBirth: null,
-      Address: { State: null, ZipCode: "", Suburb: null, Address1: null, Address2: null, City: null, ValidationReference: null },
+      Address: {
+        State: null,
+        ZipCode: "",
+        Suburb: null,
+        Address1: null,
+        Address2: null,
+        City: null,
+        ValidationReference: null,
+      },
     },
     VistaTransactionNumber: 0,
     VistaBookingNumber: 0,
@@ -134,7 +150,9 @@ export function orderJson(o: Order, session: Session | null, film: { title: stri
     TotalTicketFeeValueInCents: o.bookingFeeValueCents,
     LoyaltyPointsCost: null,
     LoyaltyPointsPayableValueInCents: o.loyaltyPointsPayableValueInCents,
-    AppliedLoyaltyPointsPayments: o.appliedOffers.filter((a) => a.pointsRedeemed).map((a) => ({ PointsRedeemed: a.pointsRedeemed, ValueCents: a.discountCents })),
+    AppliedLoyaltyPointsPayments: o.appliedOffers
+      .filter((a) => a.pointsRedeemed)
+      .map((a) => ({ PointsRedeemed: a.pointsRedeemed, ValueCents: a.discountCents })),
     AppliedGiftCards: [],
     AppliedPaymentVouchers: [],
     SuggestedDeals: [],
@@ -163,11 +181,26 @@ export function bookingJson(b: Booking) {
     ShowingRealDateTimeOffset: offsetIso(b.showtime),
     Status: b.status,
     BookingStatus: b.status === "confirmed" ? 0 : b.status === "collected" ? 1 : 2,
-    Customer: { FirstName: b.customer.FirstName, LastName: b.customer.LastName, Email: b.customer.Email, Phone: b.customer.Phone, MemberId: b.customer.MemberId ?? null, ID: b.customerId },
+    Customer: {
+      FirstName: b.customer.FirstName,
+      LastName: b.customer.LastName,
+      Email: b.customer.Email,
+      Phone: b.customer.Phone,
+      MemberId: b.customer.MemberId ?? null,
+      ID: b.customerId,
+    },
     Tickets: b.tickets.map(ticketLineJson),
     Concessions: b.concessions.map(concessionLineJson),
     AppliedOffers: b.appliedOffers,
-    PaymentInfoCollection: b.payments.map((p) => ({ PaymentTenderCategory: p.PaymentTenderCategory, PaymentValueCents: p.PaymentValueCents, CardNumber: p.CardNumberMasked ?? "", CardType: p.CardType ?? "", BankReference: p.BankReference ?? null, PointsRedeemed: p.PointsRedeemed ?? null, Reference: p.Reference })),
+    PaymentInfoCollection: b.payments.map((p) => ({
+      PaymentTenderCategory: p.PaymentTenderCategory,
+      PaymentValueCents: p.PaymentValueCents,
+      CardNumber: p.CardNumberMasked ?? "",
+      CardType: p.CardType ?? "",
+      BankReference: p.BankReference ?? null,
+      PointsRedeemed: p.PointsRedeemed ?? null,
+      Reference: p.Reference,
+    })),
     TotalValueCents: b.totalValueCents,
     TaxValueCents: b.taxValueCents,
     BookingFeeValueCents: b.bookingFeeValueCents,
@@ -186,7 +219,11 @@ export function bookingJson(b: Booking) {
 }
 
 /** Vista GetSessionSeatPlan shape from a template + occupancy map. */
-export function seatPlanJson(layout: SeatLayoutTemplate, seats: Record<string, { status: number; orderId?: string }>, forUserSessionId?: string) {
+export function seatPlanJson(
+  layout: SeatLayoutTemplate,
+  seats: Record<string, { status: number; orderId?: string }>,
+  forUserSessionId?: string,
+) {
   let rowIndexGlobal = 0;
   const areas = layout.areas.map((a) => {
     const rows = a.rows.map((r) => {
@@ -197,8 +234,23 @@ export function seatPlanJson(layout: SeatLayoutTemplate, seats: Record<string, {
         Seats: r.seats.map((s) => {
           const st = seats[`${r.name}:${s.id}`] ?? { status: 0 };
           // Vista: 0 empty, 1 sold, 2 selected by this session, 3 unavailable/held by others
-          const Status = st.status === 0 ? 0 : st.status === 1 ? 1 : st.status === 2 && st.orderId === forUserSessionId ? 2 : 3;
-          return { Position: { AreaNumber: a.number, RowIndex: ri, ColumnIndex: s.columnIndex }, Priority: 1, Id: s.id, Status, SeatStyle: s.style ?? 0, SeatsInGroup: null, OriginalStatus: st.status === 1 ? 1 : 0 };
+          const Status =
+            st.status === 0
+              ? 0
+              : st.status === 1
+                ? 1
+                : st.status === 2 && st.orderId === forUserSessionId
+                  ? 2
+                  : 3;
+          return {
+            Position: { AreaNumber: a.number, RowIndex: ri, ColumnIndex: s.columnIndex },
+            Priority: 1,
+            Id: s.id,
+            Status,
+            SeatStyle: s.style ?? 0,
+            SeatsInGroup: null,
+            OriginalStatus: st.status === 1 ? 1 : 0,
+          };
         }),
       };
     });
@@ -222,7 +274,17 @@ export function seatPlanJson(layout: SeatLayoutTemplate, seats: Record<string, {
   return {
     SeatLayoutData: {
       Areas: areas,
-      AreaCategories: layout.areas.map((a) => ({ AreaCategoryCode: a.areaCategoryCode, Name: a.description, NameTranslations: [], Hopk: a.description, SeatsToAllocate: 0, SeatsAllocatedCount: 0, SeatsNotAllocatedCount: 0, SelectedSeats: [], IsInSeatDeliveryEnabled: true })),
+      AreaCategories: layout.areas.map((a) => ({
+        AreaCategoryCode: a.areaCategoryCode,
+        Name: a.description,
+        NameTranslations: [],
+        Hopk: a.description,
+        SeatsToAllocate: 0,
+        SeatsAllocatedCount: 0,
+        SeatsNotAllocatedCount: 0,
+        SelectedSeats: [],
+        IsInSeatDeliveryEnabled: true,
+      })),
       BoundaryRight: 100,
       BoundaryLeft: 0,
       BoundaryTop: 20,

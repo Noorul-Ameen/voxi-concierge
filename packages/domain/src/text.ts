@@ -37,10 +37,19 @@ export function similarity(a: string, b: string): number {
   return Math.max(dice, tok / Math.max(ta.size, tb.size));
 }
 
-export function bestMatch<T>(query: string, items: T[], keys: (t: T) => string[], threshold = 0.45): { item: T; score: number } | null {
+export function bestMatch<T>(
+  query: string,
+  items: T[],
+  keys: (t: T) => string[],
+  threshold = 0.45,
+): { item: T; score: number } | null {
   let best: { item: T; score: number } | null = null;
   for (const it of items) {
-    const score = Math.max(...keys(it).filter(Boolean).map((k) => similarity(query, k)));
+    const score = Math.max(
+      ...keys(it)
+        .filter(Boolean)
+        .map((k) => similarity(query, k)),
+    );
     if (score >= threshold && (!best || score > best.score)) best = { item: it, score };
   }
   return best;

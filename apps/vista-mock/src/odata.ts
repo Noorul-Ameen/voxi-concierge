@@ -185,7 +185,8 @@ function getField(obj: Record<string, unknown>, name: string): unknown {
 }
 
 function norm(v: unknown): unknown {
-  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) return new Date(v.endsWith("Z") ? v : `${v}Z`).getTime();
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v))
+    return new Date(v.endsWith("Z") ? v : `${v}Z`).getTime();
   return v;
 }
 
@@ -199,7 +200,9 @@ function evalNode(n: Node, row: Record<string, unknown>): unknown {
       return !evalNode(n.e, row);
     case "bin": {
       const l = evalNode(n.l, row);
-      return n.op === "and" ? Boolean(l) && Boolean(evalNode(n.r, row)) : Boolean(l) || Boolean(evalNode(n.r, row));
+      return n.op === "and"
+        ? Boolean(l) && Boolean(evalNode(n.r, row))
+        : Boolean(l) || Boolean(evalNode(n.r, row));
     }
     case "cmp": {
       let l = norm(evalNode(n.l, row));
@@ -253,9 +256,21 @@ export function compileFilter(filter: string | undefined): (row: Record<string, 
   return (row) => Boolean(evalNode(ast, row));
 }
 
-export type ODataQuery = { filter?: string; select?: string; expand?: string; top?: string; skip?: string; orderby?: string; format?: string };
+export type ODataQuery = {
+  filter?: string;
+  select?: string;
+  expand?: string;
+  top?: string;
+  skip?: string;
+  orderby?: string;
+  format?: string;
+};
 
-export function applyQuery<T extends Record<string, unknown>>(rows: T[], q: ODataQuery, opts: { expandable?: string[] } = {}): Record<string, unknown>[] {
+export function applyQuery<T extends Record<string, unknown>>(
+  rows: T[],
+  q: ODataQuery,
+  opts: { expandable?: string[] } = {},
+): Record<string, unknown>[] {
   let out: Record<string, unknown>[] = rows.filter(compileFilter(q.filter));
   if (q.orderby) {
     const [field, dir] = q.orderby.trim().split(/\s+/);
@@ -270,7 +285,12 @@ export function applyQuery<T extends Record<string, unknown>>(rows: T[], q: ODat
   if (q.top) out = out.slice(0, Number(q.top));
   // $expand: navigation properties are inlined by default in this mock; without $expand we strip the heavy ones
   const expandable = opts.expandable ?? [];
-  const expanded = new Set((q.expand ?? "").split(",").map((x) => x.trim()).filter(Boolean));
+  const expanded = new Set(
+    (q.expand ?? "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean),
+  );
   if (expandable.length) {
     out = out.map((r) => {
       const copy = { ...r };
@@ -279,8 +299,18 @@ export function applyQuery<T extends Record<string, unknown>>(rows: T[], q: ODat
     });
   }
   if (q.select) {
-    const fields = q.select.split(",").map((x) => x.trim()).filter(Boolean);
-    out = out.map((r) => Object.fromEntries(fields.map((f) => [Object.keys(r).find((k) => k.toLowerCase() === f.toLowerCase()) ?? f, getField(r, f)])));
+    const fields = q.select
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean);
+    out = out.map((r) =>
+      Object.fromEntries(
+        fields.map((f) => [
+          Object.keys(r).find((k) => k.toLowerCase() === f.toLowerCase()) ?? f,
+          getField(r, f),
+        ]),
+      ),
+    );
   }
   return out;
 }
@@ -288,5 +318,13 @@ export function applyQuery<T extends Record<string, unknown>>(rows: T[], q: ODat
 /** Hono's query parser gives us `$filter` etc. as keys; normalise to ODataQuery. */
 export function readQuery(q: Record<string, string | undefined>): ODataQuery {
   const g = (k: string) => q[`$${k}`] ?? q[k];
-  return { filter: g("filter"), select: g("select"), expand: g("expand"), top: g("top"), skip: g("skip"), orderby: g("orderby"), format: g("format") };
+  return {
+    filter: g("filter"),
+    select: g("select"),
+    expand: g("expand"),
+    top: g("top"),
+    skip: g("skip"),
+    orderby: g("orderby"),
+    format: g("format"),
+  };
 }

@@ -11,14 +11,27 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pLimit from "p-limit";
-import { normalize, type RawCapture } from "./normalize.js";
-import { type RawCinema, type RawFilm, parseCinemaPage, parseMovieList, parseMovieMeta, parseShowtimes } from "./parse.js";
+import { type RawCapture, normalize } from "./normalize.js";
+import {
+  type RawCinema,
+  type RawFilm,
+  parseCinemaPage,
+  parseMovieList,
+  parseMovieMeta,
+  parseShowtimes,
+} from "./parse.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const args = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i++) {
   const a = process.argv[i]!;
-  if (a.startsWith("--")) args.set(a.slice(2), process.argv[i + 1]?.startsWith("--") || process.argv[i + 1] === undefined ? "true" : process.argv[++i]!);
+  if (a.startsWith("--"))
+    args.set(
+      a.slice(2),
+      process.argv[i + 1]?.startsWith("--") || process.argv[i + 1] === undefined
+        ? "true"
+        : process.argv[++i]!,
+    );
 }
 const SITE = args.get("site") ?? "https://uae.voxcinemas.com";
 const MARKET = (args.get("market") ?? "uae").toLowerCase();
@@ -45,8 +58,18 @@ async function liveCapture(): Promise<RawCapture> {
   } as const;
   const queue: (RawFilm["status"] extends infer S ? { status: S } : never)[] = [];
   const seen = new Set<string>();
-  const items: { slug: string; ho: string; title: string; rating: string; language: string; status: RawFilm["status"] }[] = [];
-  for (const [status, arr] of Object.entries(lists) as [RawFilm["status"], ReturnType<typeof parseMovieList>][]) {
+  const items: {
+    slug: string;
+    ho: string;
+    title: string;
+    rating: string;
+    language: string;
+    status: RawFilm["status"];
+  }[] = [];
+  for (const [status, arr] of Object.entries(lists) as [
+    RawFilm["status"],
+    ReturnType<typeof parseMovieList>,
+  ][]) {
     for (const m of arr) {
       if (seen.has(m.slug)) continue;
       seen.add(m.slug);
@@ -65,7 +88,8 @@ async function liveCapture(): Promise<RawCapture> {
         const html = await get(`/movies/${m.slug}`);
         const meta = parseMovieMeta(html);
         let rows = parseShowtimes(html, today);
-        for (const d of meta.dates) rows = rows.concat(parseShowtimes(await get(`/movies/${m.slug}?d=${d}`), d));
+        for (const d of meta.dates)
+          rows = rows.concat(parseShowtimes(await get(`/movies/${m.slug}?d=${d}`), d));
         const ho = m.ho || meta.poster.replace("P_", "");
         const { dates: _d, ...metaNoDates } = meta;
         films.push({ ...m, ho, meta: metaNoDates, sessionCount: rows.length });

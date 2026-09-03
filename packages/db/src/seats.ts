@@ -5,7 +5,15 @@ import { prng } from "./seed/util.js";
 export type SeatStatusMap = Record<string, { status: number; orderId?: string; bookingId?: string }>;
 export const seatKey = (row: string, number: string) => `${row}:${number}`;
 
-export type FlatSeat = { row: string; number: string; rowIndex: number; columnIndex: number; areaNumber: number; areaCategoryCode: string; style: number };
+export type FlatSeat = {
+  row: string;
+  number: string;
+  rowIndex: number;
+  columnIndex: number;
+  areaNumber: number;
+  areaCategoryCode: string;
+  style: number;
+};
 
 export function flattenLayout(layout: SeatLayoutTemplate): FlatSeat[] {
   const out: FlatSeat[] = [];
@@ -13,7 +21,15 @@ export function flattenLayout(layout: SeatLayoutTemplate): FlatSeat[] {
   for (const area of layout.areas) {
     for (const row of area.rows) {
       for (const seat of row.seats) {
-        out.push({ row: row.name, number: seat.id, rowIndex, columnIndex: seat.columnIndex, areaNumber: area.number, areaCategoryCode: area.areaCategoryCode, style: seat.style ?? 0 });
+        out.push({
+          row: row.name,
+          number: seat.id,
+          rowIndex,
+          columnIndex: seat.columnIndex,
+          areaNumber: area.number,
+          areaCategoryCode: area.areaCategoryCode,
+          style: seat.style ?? 0,
+        });
       }
       rowIndex++;
     }
@@ -25,7 +41,12 @@ export function flattenLayout(layout: SeatLayoutTemplate): FlatSeat[] {
  * Generate an initial occupancy for a session. Occupancy grows as the showtime approaches and is
  * higher for weekend evenings; a 'sold out' session is filled completely.
  */
-export function generateSeatState(cinemaId: string, sessionId: string, layout: SeatLayoutTemplate, opts: { soldOut?: boolean; occupancy?: number } = {}): SeatStatusMap {
+export function generateSeatState(
+  cinemaId: string,
+  sessionId: string,
+  layout: SeatLayoutTemplate,
+  opts: { soldOut?: boolean; occupancy?: number } = {},
+): SeatStatusMap {
   const rnd = prng(`seat:${cinemaId}:${sessionId}`);
   const occupancy = opts.soldOut ? 1 : (opts.occupancy ?? 0.15 + rnd.next() * 0.45);
   const seats = flattenLayout(layout);
@@ -55,8 +76,16 @@ export function generateSeatState(cinemaId: string, sessionId: string, layout: S
 }
 
 /** Pick `count` adjacent available seats honouring a preference. Returns [] if none. */
-export function pickAdjacentSeats(layout: SeatLayoutTemplate, state: SeatStatusMap, count: number, preference: "front" | "middle" | "back" | "aisle" = "middle", areaCategoryCode?: string): FlatSeat[] {
-  const seats = flattenLayout(layout).filter((s) => !areaCategoryCode || s.areaCategoryCode === areaCategoryCode);
+export function pickAdjacentSeats(
+  layout: SeatLayoutTemplate,
+  state: SeatStatusMap,
+  count: number,
+  preference: "front" | "middle" | "back" | "aisle" = "middle",
+  areaCategoryCode?: string,
+): FlatSeat[] {
+  const seats = flattenLayout(layout).filter(
+    (s) => !areaCategoryCode || s.areaCategoryCode === areaCategoryCode,
+  );
   const byRow = new Map<string, FlatSeat[]>();
   for (const s of seats) byRow.set(s.row, [...(byRow.get(s.row) ?? []), s]);
   const rows = [...byRow.entries()];

@@ -2,8 +2,24 @@ import { describe, expect, it } from "vitest";
 import { applyQuery, compileFilter } from "../src/odata.js";
 
 const rows = [
-  { ID: "1", Name: "City Centre Deira", CurrencyCode: "AED", Seats: 10, Open: true, OpeningDate: "2026-09-01T00:00:00", Nested: { X: "a" } },
-  { ID: "2", Name: "Riyadh Park", CurrencyCode: "SAR", Seats: 5, Open: false, OpeningDate: "2026-10-01T00:00:00", Nested: { X: "b" } },
+  {
+    ID: "1",
+    Name: "City Centre Deira",
+    CurrencyCode: "AED",
+    Seats: 10,
+    Open: true,
+    OpeningDate: "2026-09-01T00:00:00",
+    Nested: { X: "a" },
+  },
+  {
+    ID: "2",
+    Name: "Riyadh Park",
+    CurrencyCode: "SAR",
+    Seats: 5,
+    Open: false,
+    OpeningDate: "2026-10-01T00:00:00",
+    Nested: { X: "b" },
+  },
 ];
 describe("OData $filter", () => {
   it("eq / and / or / not / parentheses", () => {

@@ -29,7 +29,11 @@ export type RawMeta = {
   dates: string[]; // other selectable dates (YYYYMMDD)
   director: string;
 };
-export type RawFilm = RawMovieCard & { status: "now_showing" | "coming_soon" | "advance"; meta: Omit<RawMeta, "dates">; sessionCount: number };
+export type RawFilm = RawMovieCard & {
+  status: "now_showing" | "coming_soon" | "advance";
+  meta: Omit<RawMeta, "dates">;
+  sessionCount: number;
+};
 export type RawCinema = {
   href: string;
   name: string;
@@ -58,7 +62,8 @@ export function parseMovieList(html: string): RawMovieCard[] {
       ho: ho || prev?.ho || "",
       title: txt(card.find("h3").first().text()) || prev?.title || "",
       rating: txt(card.find(".classification").first().text()) || prev?.rating || "",
-      language: txt(card.find(".language").first().text()).replace(/^Language:\s*/i, "") || prev?.language || "",
+      language:
+        txt(card.find(".language").first().text()).replace(/^Language:\s*/i, "") || prev?.language || "",
     });
   });
   return [...out.values()];
@@ -67,7 +72,9 @@ export function parseMovieList(html: string): RawMovieCard[] {
 export function parseShowtimes(html: string, dateStr: string): RawSession[] {
   const $ = cheerio.load(html);
   const rows: RawSession[] = [];
-  const container = $("#showtimes .dates").first().length ? $("#showtimes .dates").first() : $("#showtimes").first();
+  const container = $("#showtimes .dates").first().length
+    ? $("#showtimes .dates").first()
+    : $("#showtimes").first();
   if (!container.length) return rows;
   let cinema = "";
   container.children().each((_, el) => {
@@ -124,7 +131,12 @@ export function parseMovieMeta(html: string): RawMeta {
   const dates = [
     ...new Set(
       $('#showtimes nav a[href*="d="]')
-        .map((_, a) => $(a).attr("href")?.match(/d=(\d{8})/)?.[1] ?? "")
+        .map(
+          (_, a) =>
+            $(a)
+              .attr("href")
+              ?.match(/d=(\d{8})/)?.[1] ?? "",
+        )
         .get()
         .filter(Boolean),
     ),
@@ -168,9 +180,17 @@ export function parseCinemaPage(href: string, html: string): RawCinema {
     } else paras.push(txt(el.text()));
     el = el.next();
   }
-  const geo = html.match(/(?:maps\?q=|q=|@)(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/) ?? html.match(/"latitude"\s*:\s*"?(-?\d+\.\d+)"?\s*,\s*"longitude"\s*:\s*"?(-?\d+\.\d+)/);
+  const geo =
+    html.match(/(?:maps\?q=|q=|@)(-?\d{1,2}\.\d+),(-?\d{1,3}\.\d+)/) ??
+    html.match(/"latitude"\s*:\s*"?(-?\d+\.\d+)"?\s*,\s*"longitude"\s*:\s*"?(-?\d+\.\d+)/);
   const ids = [...new Set([...html.matchAll(/data-id="(\d{4})-\d+"/g)].map((m) => m[1]!))];
-  const exps = [...new Set($("ol.showtimes > li > strong").map((_, e) => txt($(e).text())).get())];
+  const exps = [
+    ...new Set(
+      $("ol.showtimes > li > strong")
+        .map((_, e) => txt($(e).text()))
+        .get(),
+    ),
+  ];
   return {
     href,
     name: txt(h1.text()).replace(/^VOX Cinemas at\s*/i, ""),

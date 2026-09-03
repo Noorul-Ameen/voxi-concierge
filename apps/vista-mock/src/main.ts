@@ -8,8 +8,13 @@ import { expireAbandonedOrders } from "./services/orders.js";
 const cfg = loadConfig();
 const { db, close } = createDb(cfg.databaseUrl);
 const app = createApp(db, cfg);
-const server = serve({ fetch: app.fetch, port: cfg.port }, (info) => console.log(`vista-mock listening on http://localhost:${info.port}`));
-const sweep = setInterval(() => expireAbandonedOrders(db).catch((e) => console.error("expiry sweep failed", e)), 60_000);
+const server = serve({ fetch: app.fetch, port: cfg.port }, (info) =>
+  console.log(`vista-mock listening on http://localhost:${info.port}`),
+);
+const sweep = setInterval(
+  () => expireAbandonedOrders(db).catch((e) => console.error("expiry sweep failed", e)),
+  60_000,
+);
 const shutdown = async () => {
   clearInterval(sweep);
   server.close();

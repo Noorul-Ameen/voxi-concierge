@@ -10,7 +10,11 @@ export function loadConfig(env = process.env): MockConfig & { port: number; data
       tokenTtlSeconds: Number(env.VISTA_MOCK_TOKEN_TTL_SECONDS ?? 3600),
       signingSecret: env.VISTA_MOCK_SIGNING_SECRET ?? "vista-mock-signing-secret",
     },
-    order: { expiryMinutes: Number(env.VISTA_MOCK_ORDER_EXPIRY_MINUTES ?? 10), bookingFeeCentsPerTicket: Number(env.VISTA_MOCK_BOOKING_FEE_CENTS ?? 250), taxRate: 0.05 },
+    order: {
+      expiryMinutes: Number(env.VISTA_MOCK_ORDER_EXPIRY_MINUTES ?? 10),
+      bookingFeeCentsPerTicket: Number(env.VISTA_MOCK_BOOKING_FEE_CENTS ?? 250),
+      taxRate: 0.05,
+    },
     logging: env.NODE_ENV !== "test",
   };
 }

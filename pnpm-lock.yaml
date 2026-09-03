@@ -26,12 +26,18 @@ importers:
 
   apps/concierge-api:
     dependencies:
+      '@asteasolutions/zod-to-openapi':
+        specifier: 7.3.0
+        version: 7.3.0(zod@3.24.1)
       '@hono/node-server':
         specifier: 1.13.8
         version: 1.13.8(hono@4.7.2)
       '@hono/zod-validator':
         specifier: 0.4.2
         version: 0.4.2(hono@4.7.2)(zod@3.24.1)
+      '@voxi/concierge-core':
+        specifier: workspace:*
+        version: link:../../packages/concierge-core
       '@voxi/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -125,6 +131,9 @@ importers:
       '@hono/zod-validator':
         specifier: 0.4.2
         version: 0.4.2(hono@4.7.2)(zod@3.24.1)
+      '@voxi/concierge-core':
+        specifier: workspace:*
+        version: link:../../packages/concierge-core
       '@voxi/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -158,6 +167,33 @@ importers:
       '@voxi/contracts':
         specifier: workspace:*
         version: link:../contracts
+      zod:
+        specifier: 3.24.1
+        version: 3.24.1
+
+  packages/concierge-core:
+    dependencies:
+      '@voxi/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@voxi/db':
+        specifier: workspace:*
+        version: link:../db
+      '@voxi/domain':
+        specifier: workspace:*
+        version: link:../domain
+      '@voxi/vista-client':
+        specifier: workspace:*
+        version: link:../vista-client
+      drizzle-orm:
+        specifier: 0.39.3
+        version: 0.39.3(postgres@3.4.5)
+      pino:
+        specifier: 9.6.0
+        version: 9.6.0
+      postgres:
+        specifier: 3.4.5
+        version: 3.4.5
       zod:
         specifier: 3.24.1
         version: 3.24.1

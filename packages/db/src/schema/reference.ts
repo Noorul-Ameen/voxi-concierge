@@ -2,7 +2,18 @@
  * Vista reference data (browse layer). Column names follow Vista Connect OData entities so the
  * mock can serialise rows to the exact JSON the VOX partner API returns.
  */
-import { boolean, date, index, integer, jsonb, pgTable, primaryKey, text, timestamp, varchar } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  date,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  primaryKey,
+  text,
+  timestamp,
+  varchar,
+} from "drizzle-orm/pg-core";
 
 export type Translation = { Language: string; Text: string };
 export type CastMember = {
@@ -167,7 +178,9 @@ export const sessions = pgTable(
     allowTicketSales: boolean("allow_ticket_sales").default(true),
     soldoutStatus: integer("soldout_status").default(0),
     priceGroupCode: text("price_group_code").default(""),
-    salesChannels: text("sales_channels").default(";UNO;SAPP;POS;POSBK;IVR;KIOSK;WWW;PDA;CELL;CALL;RSP;GSALE;"),
+    salesChannels: text("sales_channels").default(
+      ";UNO;SAPP;POS;POSBK;IVR;KIOSK;WWW;PDA;CELL;CALL;RSP;GSALE;",
+    ),
     typeCode: varchar("type_code", { length: 4 }).default("01"),
     seatLayoutTemplateId: varchar("seat_layout_template_id", { length: 32 }),
     bookingUrl: text("booking_url").default(""),

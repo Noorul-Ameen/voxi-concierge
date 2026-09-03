@@ -44,7 +44,11 @@ export type RefundMethod = z.infer<typeof RefundMethod>;
 export const PaymentMethod = z.enum(["CARD", "VOX_CREDIT", "SHARE_POINTS", "APPLE_PAY", "GOOGLE_PAY"]);
 export type PaymentMethod = z.infer<typeof PaymentMethod>;
 
-export const Money = z.object({ amountCents: z.number().int(), currency: z.string().default("AED"), display: z.string() });
+export const Money = z.object({
+  amountCents: z.number().int(),
+  currency: z.string().default("AED"),
+  display: z.string(),
+});
 export type Money = z.infer<typeof Money>;
 
 export function money(amountCents: number, currency = "AED"): Money {
@@ -56,7 +60,9 @@ export const ToolResponse = <T extends z.ZodTypeAny>(data: T) =>
   z.object({
     ok: z.boolean(),
     data: data.optional(),
-    error: z.object({ code: z.string(), message: z.string(), retryable: z.boolean().default(false) }).optional(),
+    error: z
+      .object({ code: z.string(), message: z.string(), retryable: z.boolean().default(false) })
+      .optional(),
     speech: z.string().optional(),
     ui: UiHint.optional(),
   });
@@ -84,11 +90,18 @@ export const UiHint = z.object({
   title: z.string().optional(),
   items: z.array(z.record(z.unknown())).default([]),
   actions: z
-    .array(z.object({ label: z.string(), labelAlt: z.string().optional(), value: z.string(), style: z.enum(["primary", "secondary", "danger"]).default("secondary") }))
+    .array(
+      z.object({
+        label: z.string(),
+        labelAlt: z.string().optional(),
+        value: z.string(),
+        style: z.enum(["primary", "secondary", "danger"]).default("secondary"),
+      }),
+    )
     .default([]),
   meta: z.record(z.unknown()).optional(),
 });
-export type UiHint = z.infer<typeof UiHint>;
+export type UiHint = z.input<typeof UiHint>;
 
 export const ActionStatus = z.enum(["queued", "running", "succeeded", "failed", "conflict", "cancelled"]);
 export const ActionRef = z.object({

@@ -2,7 +2,17 @@
  * Concierge-side tables: conversations, events, the Action Ledger (idempotent, serialised actions),
  * confirmations, complaints, feedback, transfers, knowledge base registry, reporting rollups.
  */
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  varchar,
+} from "drizzle-orm/pg-core";
 
 export const conversations = pgTable(
   "conversations",
@@ -21,13 +31,18 @@ export const conversations = pgTable(
     geo: jsonb("geo").$type<{ lat: number; lng: number; accuracyM?: number }>(),
     outcome: varchar("outcome", { length: 24 }), // resolved | transferred | dropped | unknown
     topics: jsonb("topics").$type<string[]>().default([]),
-    journeys: jsonb("journeys").$type<{ name: string; status: "completed" | "abandoned" | "failed"; at: string }[]>().default([]),
+    journeys: jsonb("journeys")
+      .$type<{ name: string; status: "completed" | "abandoned" | "failed"; at: string }[]>()
+      .default([]),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     endedAt: timestamp("ended_at", { withTimezone: true }),
     durationSeconds: integer("duration_seconds"),
     metadata: jsonb("metadata").$type<Record<string, unknown>>().default({}),
   },
-  (t) => [index("conversations_started_idx").on(t.startedAt), index("conversations_customer_idx").on(t.customerId)],
+  (t) => [
+    index("conversations_started_idx").on(t.startedAt),
+    index("conversations_customer_idx").on(t.customerId),
+  ],
 );
 
 /** Append-only event log. Fed to the widget (SSE) and to reporting. */
@@ -46,7 +61,12 @@ export const conversationEvents = pgTable(
 );
 
 export type ActionStatus = "queued" | "running" | "succeeded" | "failed" | "conflict" | "cancelled";
-export type ActionStep = { name: string; status: "done" | "failed" | "compensated"; at: string; detail?: unknown };
+export type ActionStep = {
+  name: string;
+  status: "done" | "failed" | "compensated";
+  at: string;
+  detail?: unknown;
+};
 
 /**
  * ACTION LEDGER — the heart of the concurrency model.
@@ -175,7 +195,9 @@ export const kbDocuments = pgTable("kb_documents", {
 
 export const transcripts = pgTable("transcripts", {
   conversationId: varchar("conversation_id", { length: 64 }).primaryKey(),
-  turns: jsonb("turns").$type<{ role: "user" | "agent"; text: string; at?: number; toolCalls?: unknown[] }[]>().notNull(),
+  turns: jsonb("turns")
+    .$type<{ role: "user" | "agent"; text: string; at?: number; toolCalls?: unknown[] }[]>()
+    .notNull(),
   analysis: jsonb("analysis").$type<Record<string, unknown>>().default({}),
   summary: text("summary").default(""),
   callSuccessful: varchar("call_successful", { length: 12 }),

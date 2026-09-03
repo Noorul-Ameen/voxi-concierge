@@ -29,7 +29,16 @@ export type OfferBenefit =
   | { type: "points_multiplier"; multiplier: number }
   | { type: "free_item"; itemId: string };
 
-export type Offer = { id: string; title: string; type: string; rules: OfferRules; benefit: OfferBenefit; remainingBudget?: number | null; perMemberLimit?: number | null; active: boolean };
+export type Offer = {
+  id: string;
+  title: string;
+  type: string;
+  rules: OfferRules;
+  benefit: OfferBenefit;
+  remainingBudget?: number | null;
+  perMemberLimit?: number | null;
+  active: boolean;
+};
 
 export type OfferContext = {
   cinemaId?: string;
@@ -47,7 +56,11 @@ export type OfferContext = {
   now?: string; // local ISO
 };
 
-export type Eligibility = { eligible: boolean; reasons: string[]; requires: ("member" | "card" | "promo_code")[] };
+export type Eligibility = {
+  eligible: boolean;
+  reasons: string[];
+  requires: ("member" | "card" | "promo_code")[];
+};
 
 function dayOf(iso: string): number {
   return new Date(`${iso}Z`).getUTCDay();
@@ -66,38 +79,82 @@ export function evaluateOffer(offer: Offer, ctx: OfferContext): Eligibility {
   const now = ctx.now ?? new Date().toISOString().slice(0, 19);
   if (r.validFrom && now < r.validFrom) reasons.push(`Offer starts on ${r.validFrom.slice(0, 10)}`);
   if (r.validTo && now > r.validTo) reasons.push(`Offer ended on ${r.validTo.slice(0, 10)}`);
-  if (r.cinemaIds?.length && ctx.cinemaId && !r.cinemaIds.includes(ctx.cinemaId)) reasons.push("Not valid at this cinema");
-  if (r.experiences?.length && ctx.experience && !r.experiences.includes(ctx.experience)) reasons.push(`Valid only for ${r.experiences.join(", ")}`);
-  if (r.hoCodes?.length && ctx.hoCode && !r.hoCodes.includes(ctx.hoCode)) reasons.push("Not valid for this movie");
-  if (r.days?.length && ctx.showtime && !r.days.includes(dayOf(ctx.showtime))) reasons.push(`Valid only on ${r.days.map((d) => ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d]).join(", ")}`);
+  if (r.cinemaIds?.length && ctx.cinemaId && !r.cinemaIds.includes(ctx.cinemaId))
+    reasons.push("Not valid at this cinema");
+  if (r.experiences?.length && ctx.experience && !r.experiences.includes(ctx.experience))
+    reasons.push(`Valid only for ${r.experiences.join(", ")}`);
+  if (r.hoCodes?.length && ctx.hoCode && !r.hoCodes.includes(ctx.hoCode))
+    reasons.push("Not valid for this movie");
+  if (r.days?.length && ctx.showtime && !r.days.includes(dayOf(ctx.showtime)))
+    reasons.push(
+      `Valid only on ${r.days.map((d) => ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d]).join(", ")}`,
+    );
   if (r.timeFrom && ctx.showtime && hm(ctx.showtime) < r.timeFrom) reasons.push(`Valid from ${r.timeFrom}`);
   if (r.timeTo && ctx.showtime && hm(ctx.showtime) > r.timeTo) reasons.push(`Valid until ${r.timeTo}`);
-  if (r.minTickets && ctx.ticketCount != null && ctx.ticketCount < r.minTickets) reasons.push(`Requires at least ${r.minTickets} tickets`);
-  if (r.ticketTypeCodes?.length && ctx.ticketTypeCodes?.length && !ctx.ticketTypeCodes.some((c) => r.ticketTypeCodes!.some((x) => c.endsWith(x)))) reasons.push("Not valid for these ticket types");
+  if (r.minTickets && ctx.ticketCount != null && ctx.ticketCount < r.minTickets)
+    reasons.push(`Requires at least ${r.minTickets} tickets`);
+  if (
+    r.ticketTypeCodes?.length &&
+    ctx.ticketTypeCodes?.length &&
+    !ctx.ticketTypeCodes.some((c) => r.ticketTypeCodes!.some((x) => c.endsWith(x)))
+  )
+    reasons.push("Not valid for these ticket types");
   if (r.membersOnly) {
     if (!ctx.memberId) {
       requires.push("member");
       reasons.push("SHARE membership required — please log in");
-    } else if (r.tiers?.length && ctx.tier && !r.tiers.includes(ctx.tier)) reasons.push(`Valid for ${r.tiers.join("/")} members`);
+    } else if (r.tiers?.length && ctx.tier && !r.tiers.includes(ctx.tier))
+      reasons.push(`Valid for ${r.tiers.join("/")} members`);
   }
   if (r.bankBins?.length) {
     if (!ctx.cardBin) requires.push("card");
-    else if (!r.bankBins.some((b) => ctx.cardBin!.startsWith(b))) reasons.push(`Requires an eligible ${r.bankName ?? "bank"} card`);
+    else if (!r.bankBins.some((b) => ctx.cardBin!.startsWith(b)))
+      reasons.push(`Requires an eligible ${r.bankName ?? "bank"} card`);
   }
   if (r.promoCode) {
     if (!ctx.promoCode) requires.push("promo_code");
-    else if (ctx.promoCode.toUpperCase() !== r.promoCode.toUpperCase()) reasons.push("Promo code does not match");
+    else if (ctx.promoCode.toUpperCase() !== r.promoCode.toUpperCase())
+      reasons.push("Promo code does not match");
   }
-  if (offer.perMemberLimit != null && ctx.memberRedemptions != null && ctx.memberRedemptions >= offer.perMemberLimit) reasons.push("Per-member limit reached");
-  if (r.channels?.length && ctx.channel && !r.channels.includes(ctx.channel)) reasons.push("Not available on this channel");
+  if (
+    offer.perMemberLimit != null &&
+    ctx.memberRedemptions != null &&
+    ctx.memberRedemptions >= offer.perMemberLimit
+  )
+    reasons.push("Per-member limit reached");
+  if (r.channels?.length && ctx.channel && !r.channels.includes(ctx.channel))
+    reasons.push("Not available on this channel");
   return { eligible: reasons.length === 0 && requires.length === 0, reasons, requires };
 }
 
-export type PricedTicket = { Id: string; PriceCents: number; DiscountPriceCents: number; FinalPriceCents: number; TicketTypeCode: string };
-export type PricedConcession = { Id: string; ItemId: string; PriceCents: number; Quantity: number; FinalPriceCents: number };
+export type PricedTicket = {
+  Id: string;
+  PriceCents: number;
+  DiscountPriceCents: number;
+  FinalPriceCents: number;
+  TicketTypeCode: string;
+};
+export type PricedConcession = {
+  Id: string;
+  ItemId: string;
+  PriceCents: number;
+  Quantity: number;
+  FinalPriceCents: number;
+};
 
 /** Apply a benefit to an order snapshot; returns new lines + total discount. Pure. */
-export function applyBenefit(benefit: OfferBenefit, tickets: PricedTicket[], concessions: PricedConcession[], maxTickets?: number): { tickets: PricedTicket[]; concessions: PricedConcession[]; discountCents: number; freeItemId?: string; pointsMultiplier?: number } {
+export function applyBenefit(
+  benefit: OfferBenefit,
+  tickets: PricedTicket[],
+  concessions: PricedConcession[],
+  maxTickets?: number,
+): {
+  tickets: PricedTicket[];
+  concessions: PricedConcession[];
+  discountCents: number;
+  freeItemId?: string;
+  pointsMultiplier?: number;
+} {
   const t = tickets.map((x) => ({ ...x, DiscountPriceCents: 0, FinalPriceCents: x.PriceCents }));
   const c = concessions.map((x) => ({ ...x, FinalPriceCents: x.PriceCents * x.Quantity }));
   let discount = 0;
@@ -124,7 +181,8 @@ export function applyBenefit(benefit: OfferBenefit, tickets: PricedTicket[], con
     }
     case "amount_off_cents": {
       let remaining = benefit.amountCents;
-      const pool = benefit.appliesTo === "tickets" ? t : benefit.appliesTo === "concessions" ? c : [...t, ...c];
+      const pool =
+        benefit.appliesTo === "tickets" ? t : benefit.appliesTo === "concessions" ? c : [...t, ...c];
       for (const x of pool) {
         if (remaining <= 0) break;
         const d = Math.min(remaining, x.FinalPriceCents);
@@ -180,13 +238,19 @@ export function describeBenefit(b: OfferBenefit, lang: "en" | "ar" = "en"): stri
   const ar = lang === "ar";
   switch (b.type) {
     case "percent_off":
-      return ar ? `خصم ${b.percent}% على ${b.appliesTo === "tickets" ? "التذاكر" : b.appliesTo === "concessions" ? "المأكولات والمشروبات" : "الطلب"}` : `${b.percent}% off ${b.appliesTo === "order" ? "your order" : b.appliesTo === "tickets" ? "tickets" : "food & drinks"}`;
+      return ar
+        ? `خصم ${b.percent}% على ${b.appliesTo === "tickets" ? "التذاكر" : b.appliesTo === "concessions" ? "المأكولات والمشروبات" : "الطلب"}`
+        : `${b.percent}% off ${b.appliesTo === "order" ? "your order" : b.appliesTo === "tickets" ? "tickets" : "food & drinks"}`;
     case "amount_off_cents":
-      return ar ? `خصم ${(b.amountCents / 100).toFixed(0)} درهم` : `AED ${(b.amountCents / 100).toFixed(0)} off ${b.appliesTo === "concessions" ? "food & drinks" : b.appliesTo === "tickets" ? "tickets" : "your order"}`;
+      return ar
+        ? `خصم ${(b.amountCents / 100).toFixed(0)} درهم`
+        : `AED ${(b.amountCents / 100).toFixed(0)} off ${b.appliesTo === "concessions" ? "food & drinks" : b.appliesTo === "tickets" ? "tickets" : "your order"}`;
     case "bogo":
       return ar ? `اشترِ ${b.buy} واحصل على ${b.get} مجاناً` : `Buy ${b.buy} get ${b.get} free`;
     case "fixed_price_cents":
-      return ar ? `تذاكر بـ ${(b.priceCents / 100).toFixed(0)} درهم` : `Tickets for AED ${(b.priceCents / 100).toFixed(0)}`;
+      return ar
+        ? `تذاكر بـ ${(b.priceCents / 100).toFixed(0)} درهم`
+        : `Tickets for AED ${(b.priceCents / 100).toFixed(0)}`;
     case "points_multiplier":
       return ar ? `نقاط شير مضاعفة ×${b.multiplier}` : `${b.multiplier}x Share Points`;
     case "free_item":

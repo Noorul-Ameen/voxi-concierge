@@ -1,0 +1,822 @@
+import { ErrorCodes } from "@voxi/contracts";
+import { describeBenefit } from "@voxi/domain";
+import { VistaClientError } from "@voxi/vista-client";
+import { enqueue, idem, toRef } from "../actions/ledger.js";
+import { createConfirmation } from "../services/confirmations.js";
+import { updateConversation } from "../services/conversation.js";
+import { fmtDateTime, joinList, money, seatLabels, t } from "../services/format.js";
+import { experienceLabel } from "./movies.js";
+import { type ToolCtx, type ToolHandlers, err, ok } from "./types.js";
+
+export type VistaOrder = Record<string, any>;
+
+export function orderSummary(o: VistaOrder, lang: "en" | "ar", nowLocal: string, cinemaName?: string) {
+  const sess = o.Sessions?.[0];
+  const tickets = (sess?.Tickets ?? []) as any[];
+  const concessions = (o.Concessions ?? []) as any[];
+  return {
+    userSessionId: o.UserSessionId,
+    state: o.State,
+    cinemaId: o.CinemaId,
+    cinemaName,
+    sessionId: sess?.SessionId != null ? String(sess.SessionId) : undefined,
+    filmTitle: sess ? (lang === "ar" && sess.AltFilmTitle ? sess.AltFilmTitle : sess.FilmTitle) : undefined,
+    showtime: sess?.ShowingRealDateTimeOffset?.slice(0, 19),
+    showtimeLabel: sess?.ShowingRealDateTimeOffset
+      ? fmtDateTime(sess.ShowingRealDateTimeOffset.slice(0, 19), lang, nowLocal)
+      : undefined,
+    experience: sess?.Experience,
+    screenName: sess?.ScreenName,
+    tickets: tickets.map((t) => ({
+      id: t.Id,
+      description: t.Description,
+      seat: t.SeatData,
+      priceCents: t.PriceCents,
+      discountCents: t.DiscountPriceCents,
+      finalCents: t.FinalPriceCents,
+      deal: t.DealDescription,
+    })),
+    seats: seatLabels(tickets),
+    seatsAllocated: !!sess?.SeatsAllocated,
+    concessions: concessions.map((c) => ({
+      id: c.Id,
+      itemId: c.ItemId,
+      description: c.Description,
+      quantity: c.Quantity,
+      unitCents: c.UnitPriceCents ?? c.PriceCents,
+      finalCents: c.FinalPriceCents,
+      modifiers: (c.Modifiers ?? []).map((m: any) => m.Description),
+    })),
+    offers: (o.AppliedOffers ?? []).map((a: any) => ({
+      id: a.offerId,
+      title: a.title,
+      discountCents: a.discountCents,
+      type: a.type,
+    })),
+    subtotalCents:
+      tickets.reduce((a, t) => a + t.PriceCents, 0) +
+      concessions.reduce((a, c) => a + (c.UnitPriceCents ?? c.PriceCents) * c.Quantity, 0),
+    discountCents: o.DiscountValueCents ?? 0,
+    loyaltyRedeemedCents: o.LoyaltyPointsPayableValueInCents ?? 0,
+    bookingFeeCents: o.BookingFeeValueCents ?? 0,
+    taxCents: o.TaxValueCents ?? 0,
+    totalCents: o.TotalValueCents ?? 0,
+    total: money(o.TotalValueCents ?? 0, lang),
+    expiresAtUtc: o.ExpiryDateUtc,
+  };
+}
+
+const activeOrder = (ctx: ToolCtx): string | undefined =>
+  (ctx.conversation.metadata as { activeOrder?: string })?.activeOrder;
+
+async function cinemaName(ctx: ToolCtx, id?: string) {
+  if (!id) return undefined;
+  const c = await ctx.catalog.cinema(id);
+  return c ? (ctx.lang === "ar" ? c.nameAlt || c.name : c.name) : id;
+}
+
+async function enqueueOrderAction(
+  ctx: ToolCtx,
+  type: string,
+  userSessionId: string,
+  payload: Record<string, unknown>,
+  key: string,
+  speech: string,
+  journey?: string,
+) {
+  const { action, created } = await enqueue(ctx.db, ctx.events, {
+    conversationId: ctx.conversation.id,
+    type,
+    resourceKey: `order:${userSessionId}`,
+    idempotencyKey: idem(ctx.conversation.id, key),
+    payload: { userSessionId, ...payload },
+    toolCallId: ctx.toolCallId,
+    correlationId: ctx.correlationId,
+  });
+  return ok(
+    { action: toRef(action), created, userSessionId },
+    speech,
+    undefined,
+    journey ? { name: journey, status: "started" } : undefined,
+  );
+}
+
+export const orderingTools: Pick<
+  ToolHandlers,
+  | "browse_menu"
+  | "get_ticket_types"
+  | "get_seat_plan"
+  | "start_order"
+  | "add_tickets"
+  | "select_seats"
+  | "add_concessions"
+  | "apply_offer"
+  | "redeem_points"
+  | "get_order"
+  | "prepare_payment"
+  | "pay_order"
+  | "cancel_order"
+> = {
+  async browse_menu(ctx, input) {
+    const cinemaId =
+      input.cinemaId ?? (await orderCinema(ctx)) ?? ctx.conversation.metadata?.lastCinemaId ?? "0002";
+    const { ConcessionTabs } = await ctx.vista.concessions(String(cinemaId), activeOrder(ctx));
+    let items: Record<string, any>[] = ConcessionTabs.flatMap((tab) =>
+      tab.Items.map((i) => ({ ...i, Tab: tab.Name })),
+    );
+    const exp = input.experience ?? (await orderExperience(ctx));
+    items = items.filter(
+      (i) => !(i.Experiences ?? []).length || (exp && (i.Experiences ?? []).includes(exp)),
+    );
+    if (input.tab) items = items.filter((i) => i.Tab.toLowerCase().includes(input.tab!.toLowerCase()));
+    if (input.dietary?.length)
+      items = items.filter((i) => input.dietary!.every((d) => (i.DietaryTags ?? []).includes(d)));
+    if (input.query) {
+      const q = input.query.toLowerCase();
+      items = items.filter((i) =>
+        `${i.Description} ${i.DescriptionAlt} ${i.ExtendedDescription} ${i.Tab}`.toLowerCase().includes(q),
+      );
+    }
+    items = items.sort((a, b) => Number(b.IsBestSeller) - Number(a.IsBestSeller)).slice(0, input.limit);
+    const cards = items.map((i) => ({
+      itemId: i.Id,
+      name: ctx.lang === "ar" && i.DescriptionAlt ? i.DescriptionAlt : i.Description,
+      nameEn: i.Description,
+      description: i.ExtendedDescription,
+      priceCents: i.PriceInCents,
+      price: money(i.PriceInCents, ctx.lang),
+      imageUrl: i.ImageUrl,
+      tab: i.Tab,
+      dietaryTags: i.DietaryTags ?? [],
+      allergens: i.Allergens ?? [],
+      calories: i.Calories,
+      isCombo: i.IsCombo,
+      isBestSeller: i.IsBestSeller,
+      modifiers: (i.ModifierGroups ?? []).map((g: any) => ({
+        name: g.Name,
+        required: g.IsRequired,
+        options: g.Modifiers.map((m: any) => ({ id: m.Id, name: m.Description, priceCents: m.PriceInCents })),
+      })),
+    }));
+    if (!cards.length)
+      return ok(
+        { items: [] },
+        t(
+          ctx.lang,
+          "I couldn't find anything matching that on the menu. Want to see combos, popcorn, hot food or desserts?",
+          "لم أجد شيئاً مطابقاً في القائمة. هل تريد رؤية الكومبو أو الفشار أو الأطباق الساخنة أو الحلويات؟",
+        ),
+      );
+    const tabs = [...new Set(cards.map((c) => c.tab))];
+    const speech =
+      input.tab || input.query || input.dietary?.length
+        ? t(
+            ctx.lang,
+            `Here's what I found: ${joinList(cards.slice(0, 4).map((c) => `${c.name} at ${c.price}`))}${cards.length > 4 ? ` and ${cards.length - 4} more` : ""}. Want to add any to your order?`,
+            `إليك ما وجدت: ${joinList(
+              cards.slice(0, 4).map((c) => `${c.name} بـ ${c.price}`),
+              "ar",
+            )}. هل تريد إضافة شيء إلى طلبك؟`,
+          )
+        : t(
+            ctx.lang,
+            `The menu has ${joinList(tabs)}. Best sellers include ${joinList(
+              cards
+                .filter((c) => c.isBestSeller)
+                .slice(0, 3)
+                .map((c) => `${c.name} (${c.price})`),
+            )}. I can filter by vegetarian, vegan or gluten-free too.`,
+            `تشمل القائمة ${joinList(tabs, "ar")}. الأكثر مبيعاً: ${joinList(
+              cards
+                .filter((c) => c.isBestSeller)
+                .slice(0, 3)
+                .map((c) => `${c.name} (${c.price})`),
+              "ar",
+            )}. يمكنني التصفية حسب النباتي أو الخالي من الغلوتين.`,
+          );
+    return ok(
+      { items: cards, tabs },
+      speech,
+      {
+        type: "menu",
+        title: t(ctx.lang, "Food & Drinks", "المأكولات والمشروبات"),
+        items: cards,
+        actions: cards
+          .slice(0, 4)
+          .map((c) => ({
+            label: t(ctx.lang, `Add ${c.nameEn}`, `أضف ${c.name}`),
+            value: `add_item:${c.itemId}`,
+          })),
+      },
+      { name: "fnb_info", status: "completed" },
+    );
+  },
+
+  async get_ticket_types(ctx, input) {
+    const s = await ctx.catalog.sessionByKey(input.sessionKey);
+    if (!s)
+      return err(ErrorCodes.NOT_FOUND, t(ctx.lang, "I couldn't find that showtime.", "لم أجد هذا الموعد."));
+    const r = await ctx.vista.ticketTypes(s.cinemaId, s.sessionId);
+    if (r.ResponseCode !== 0)
+      return err(ErrorCodes.VISTA_ERROR, r.ErrorDescription ?? "Ticket types unavailable");
+    const types = r.Tickets.filter(
+      (x) => !x.IsAvailableForLoyaltyMembersOnly || ctx.conversation.memberId,
+    ).map((x) => ({
+      code: x.TicketTypeCode,
+      description: x.Description,
+      descriptionAlt: x.DescriptionAlt,
+      priceCents: x.PriceInCents,
+      price: money(x.PriceInCents, ctx.lang),
+      area: x.AreaCategoryCode === "0000000001" ? "premium_view" : "regular",
+      isChild: x.IsChildOnlyTicket,
+      membersOnly: x.IsAvailableForLoyaltyMembersOnly,
+      note: x.LongDescription,
+    }));
+    const regular = types.filter((x) => x.area === "regular");
+    const speech = t(
+      ctx.lang,
+      `For ${s.filmTitle} ${experienceLabel(s.experience, "en")} at ${fmtDateTime(s.showtime, "en", ctx.nowLocal)}: ${joinList(regular.map((x) => `${x.description.replace(/^[A-Z0-9 ]+? /, "").toLowerCase()} ${x.price}`))}${types.some((x) => x.area === "premium_view") ? ", plus premium view seats at a small extra" : ""}. How many tickets, and adults or children?`,
+      `لفيلم ${s.filmTitle} ${experienceLabel(s.experience, "ar")} في ${fmtDateTime(s.showtime, "ar", ctx.nowLocal)}: ${joinList(
+        regular.map((x) => `${x.descriptionAlt || x.description} ${x.price}`),
+        "ar",
+      )}. كم عدد التذاكر، للكبار أم الأطفال؟`,
+    );
+    return ok(
+      {
+        session: {
+          key: s.key,
+          cinemaId: s.cinemaId,
+          sessionId: s.sessionId,
+          showtime: s.showtime,
+          experience: s.experience,
+          filmTitle: s.filmTitle,
+          seatsAvailable: s.seatsAvailable,
+        },
+        ticketTypes: types,
+      },
+      speech,
+      { type: "order", title: t(ctx.lang, "Tickets", "التذاكر"), items: types, meta: { sessionKey: s.key } },
+    );
+  },
+
+  async get_seat_plan(ctx, input) {
+    const s = await ctx.catalog.sessionByKey(input.sessionKey);
+    if (!s)
+      return err(ErrorCodes.NOT_FOUND, t(ctx.lang, "I couldn't find that showtime.", "لم أجد هذا الموعد."));
+    const usid = input.userSessionId ?? activeOrder(ctx);
+    const plan = await ctx.vista.seatPlan(s.cinemaId, s.sessionId, usid);
+    if (!plan.SeatLayoutData)
+      return err(ErrorCodes.VISTA_ERROR, plan.ErrorDescription ?? "Seat plan unavailable");
+    const areas = plan.SeatLayoutData.Areas as any[];
+    const rows = areas.flatMap((a) =>
+      a.Rows.map((r: any) => ({
+        area: a.Description,
+        areaCategoryCode: a.AreaCategoryCode,
+        row: r.PhysicalName,
+        rowIndex: r.RowIndexZeroBased,
+        seats: r.Seats.map((x: any) => ({
+          id: x.Id,
+          col: x.Position.ColumnIndex,
+          status: x.Status,
+          style: x.SeatStyle,
+        })),
+      })),
+    );
+    const available = rows.reduce((n, r) => n + r.seats.filter((x: any) => x.status === 0).length, 0);
+    const held = rows.flatMap((r) =>
+      r.seats.filter((x: any) => x.status === 2).map((x: any) => `${r.row}${x.id}`),
+    );
+    const speech = t(
+      ctx.lang,
+      `${available} seats are free for this show${held.length ? `; you currently hold ${held.join(", ")}` : ""}. I've opened the seat map — tap seats or tell me a row and seat numbers, or say "pick the best available".`,
+      `${available} مقعداً متاحاً لهذا العرض${held.length ? `؛ مقاعدك المحجوزة حالياً ${held.join("، ")}` : ""}. فتحت خريطة المقاعد — اختر بالضغط أو أخبرني بالصف وأرقام المقاعد، أو قل "اختر الأفضل".`,
+    );
+    return ok(
+      {
+        sessionKey: s.key,
+        userSessionId: usid,
+        columnCount: plan.SeatLayoutData.ColumnCount,
+        rowCount: plan.SeatLayoutData.RowCount,
+        rows,
+        available,
+        held,
+      },
+      speech,
+      {
+        type: "seatmap",
+        title: t(ctx.lang, "Choose seats", "اختر المقاعد"),
+        items: rows,
+        meta: {
+          sessionKey: s.key,
+          userSessionId: usid,
+          columnCount: plan.SeatLayoutData.ColumnCount,
+          screenLabel: t(ctx.lang, "SCREEN", "الشاشة"),
+        },
+      },
+    );
+  },
+
+  async start_order(ctx, input) {
+    const s = await ctx.catalog.sessionByKey(input.sessionKey);
+    if (!s)
+      return err(ErrorCodes.NOT_FOUND, t(ctx.lang, "I couldn't find that showtime.", "لم أجد هذا الموعد."));
+    if (s.soldOut || !s.allowTicketSales)
+      return err(
+        ErrorCodes.SEATS_UNAVAILABLE,
+        t(
+          ctx.lang,
+          "That show is sold out. Shall I look for another time?",
+          "هذا العرض مكتمل. هل أبحث عن موعد آخر؟",
+        ),
+      );
+    if (s.showtime < ctx.nowLocal)
+      return err(
+        ErrorCodes.VALIDATION,
+        t(ctx.lang, "That show has already started.", "بدأ هذا العرض بالفعل."),
+      );
+    const existing = activeOrder(ctx);
+    const userSessionId = `${ctx.conversation.id.slice(0, 24)}-${Date.now().toString(36)}`;
+    await updateConversation(ctx.db, ctx.conversation.id, {
+      metadata: {
+        ...(ctx.conversation.metadata ?? {}),
+        activeOrder: userSessionId,
+        activeSessionKey: s.key,
+        lastCinemaId: s.cinemaId,
+        previousOrder: existing,
+      },
+    });
+    ctx.conversation.metadata = {
+      ...(ctx.conversation.metadata ?? {}),
+      activeOrder: userSessionId,
+      activeSessionKey: s.key,
+    };
+    const tt = await ctx.vista.ticketTypes(s.cinemaId, s.sessionId);
+    const types = tt.Tickets.filter(
+      (x) => !x.IsAvailableForLoyaltyMembersOnly || ctx.conversation.memberId,
+    ).map((x) => ({
+      code: x.TicketTypeCode,
+      description: x.Description,
+      priceCents: x.PriceInCents,
+      price: money(x.PriceInCents, ctx.lang),
+      area: x.AreaCategoryCode === "0000000001" ? "premium_view" : "regular",
+      isChild: x.IsChildOnlyTicket,
+    }));
+    if (existing)
+      await enqueue(ctx.db, ctx.events, {
+        conversationId: ctx.conversation.id,
+        type: "cancel_order",
+        resourceKey: `order:${existing}`,
+        idempotencyKey: idem(ctx.conversation.id, `cancel_order:${existing}`),
+        payload: { userSessionId: existing },
+        requestedBy: "system",
+      });
+    const speech = t(
+      ctx.lang,
+      `Starting your booking for ${s.filmTitle}, ${experienceLabel(s.experience, "en")} at ${await cinemaName(ctx, s.cinemaId)} ${fmtDateTime(s.showtime, "en", ctx.nowLocal)}. Tickets are ${joinList(
+        types
+          .filter((x) => x.area === "regular")
+          .slice(0, 3)
+          .map((x) => `${x.description.toLowerCase()} ${x.price}`),
+      )}. How many, and any children?`,
+      `بدأت حجزك لفيلم ${s.filmTitle}، ${experienceLabel(s.experience, "ar")} في ${await cinemaName(ctx, s.cinemaId)} ${fmtDateTime(s.showtime, "ar", ctx.nowLocal)}. التذاكر: ${joinList(
+        types
+          .filter((x) => x.area === "regular")
+          .slice(0, 3)
+          .map((x) => `${x.description} ${x.price}`),
+        "ar",
+      )}. كم عدد التذاكر، وهل هناك أطفال؟`,
+    );
+    return ok(
+      {
+        userSessionId,
+        sessionKey: s.key,
+        session: {
+          cinemaId: s.cinemaId,
+          sessionId: s.sessionId,
+          showtime: s.showtime,
+          experience: s.experience,
+          filmTitle: s.filmTitle,
+          seatsAvailable: s.seatsAvailable,
+        },
+        ticketTypes: types,
+        expiresInMinutes: ctx.cfg.orderExpiryMinutes,
+      },
+      speech,
+      {
+        type: "order",
+        title: t(ctx.lang, "New booking", "حجز جديد"),
+        items: types,
+        meta: { userSessionId, sessionKey: s.key },
+      },
+      { name: "guided_booking", status: "started" },
+    );
+  },
+
+  async add_tickets(ctx, input) {
+    const key = input.idempotencyKey ?? `add_tickets:${input.userSessionId}:${JSON.stringify(input.tickets)}`;
+    return enqueueOrderAction(
+      ctx,
+      "add_tickets",
+      input.userSessionId,
+      {
+        tickets: input.tickets,
+        preference: (ctx.conversation.metadata as { seatPreference?: string })?.seatPreference,
+      },
+      key,
+      t(
+        ctx.lang,
+        "Adding those tickets and holding the best seats for you…",
+        "أضيف التذاكر وأحجز أفضل المقاعد لك…",
+      ),
+    );
+  },
+
+  async select_seats(ctx, input) {
+    const key =
+      input.idempotencyKey ??
+      `select_seats:${input.userSessionId}:${input.autoAllocate ? `auto:${input.preference ?? ""}` : input.seats.map((s) => `${s.row}${s.number}`).join(",")}`;
+    return enqueueOrderAction(
+      ctx,
+      "select_seats",
+      input.userSessionId,
+      { seats: input.seats, autoAllocate: input.autoAllocate, preference: input.preference },
+      key,
+      t(ctx.lang, "Let me grab those seats…", "دعني أحجز هذه المقاعد…"),
+    );
+  },
+
+  async add_concessions(ctx, input) {
+    const key =
+      input.idempotencyKey ?? `add_concessions:${input.userSessionId}:${JSON.stringify(input.items)}`;
+    return enqueueOrderAction(
+      ctx,
+      "add_concessions",
+      input.userSessionId,
+      { items: input.items },
+      key,
+      t(ctx.lang, "Adding that to your order…", "أضيف ذلك إلى طلبك…"),
+      "fnb_preorder",
+    );
+  },
+
+  async apply_offer(ctx, input) {
+    const key =
+      input.idempotencyKey ??
+      `apply_offer:${input.userSessionId}:${input.offerId ?? input.promoCode ?? input.cardBin}`;
+    return enqueueOrderAction(
+      ctx,
+      "apply_offer",
+      input.userSessionId,
+      {
+        offerId: input.offerId,
+        promoCode: input.promoCode,
+        cardBin: input.cardBin,
+        memberId: ctx.conversation.memberId,
+      },
+      key,
+      t(ctx.lang, "Checking that offer against your order…", "أتحقق من العرض على طلبك…"),
+      "apply_offer",
+    );
+  },
+
+  async redeem_points(ctx, input) {
+    const memberId = input.memberId ?? ctx.conversation.memberId;
+    if (!memberId)
+      return err(
+        ErrorCodes.LOGIN_REQUIRED,
+        t(
+          ctx.lang,
+          "Please log in to your SHARE account first so I can use your points.",
+          "يرجى تسجيل الدخول إلى حساب شير أولاً لاستخدام نقاطك.",
+        ),
+      );
+    const key = input.idempotencyKey ?? `redeem_points:${input.userSessionId}:${input.points ?? "max"}`;
+    return enqueueOrderAction(
+      ctx,
+      "redeem_points",
+      input.userSessionId,
+      { memberId, points: input.points },
+      key,
+      t(ctx.lang, "Applying your Share Points…", "أطبق نقاط شير…"),
+    );
+  },
+
+  async get_order(ctx, input) {
+    const r = await ctx.vista.getOrder(input.userSessionId);
+    if (!r.Order)
+      return err(
+        ErrorCodes.NOT_FOUND,
+        t(ctx.lang, "There's no active order. Shall we start one?", "لا يوجد طلب نشط. هل نبدأ واحداً؟"),
+      );
+    const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cinemaName(ctx, r.Order.CinemaId));
+    if (s.state === "expired")
+      return err(
+        ErrorCodes.ORDER_EXPIRED,
+        t(
+          ctx.lang,
+          "That order expired because it wasn't completed in time — seats were released. I can start again quickly.",
+          "انتهت صلاحية الطلب لعدم إكماله في الوقت المحدد — تم تحرير المقاعد. يمكنني البدء من جديد بسرعة.",
+        ),
+      );
+    const speech = t(
+      ctx.lang,
+      `Your order: ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} for ${s.filmTitle}${s.seats ? `, seats ${s.seats}` : ""}${s.concessions.length ? `, plus ${joinList(s.concessions.map((c) => `${c.quantity}× ${c.description}`))}` : ""}${s.offers.length ? `, with ${joinList(s.offers.map((o: { title: string }) => o.title))} applied` : ""}. Total ${s.total} including booking fee. Ready to pay?`,
+      `طلبك: ${s.tickets.length} تذكرة لفيلم ${s.filmTitle}${s.seats ? `، المقاعد ${s.seats}` : ""}${
+        s.concessions.length
+          ? `، بالإضافة إلى ${joinList(
+              s.concessions.map((c) => `${c.quantity}× ${c.description}`),
+              "ar",
+            )}`
+          : ""
+      }. الإجمالي ${s.total}. هل أنت مستعد للدفع؟`,
+    );
+    return ok({ order: s }, speech, {
+      type: "order",
+      title: t(ctx.lang, "Your order", "طلبك"),
+      items: [s],
+      actions: [
+        { label: t(ctx.lang, "Pay now", "ادفع الآن"), value: "pay:start", style: "primary" },
+        { label: t(ctx.lang, "Add food & drinks", "أضف مأكولات"), value: "menu:open" },
+      ],
+    });
+  },
+
+  async prepare_payment(ctx, input) {
+    const r = await ctx.vista.getOrder(input.userSessionId);
+    if (!r.Order)
+      return err(
+        ErrorCodes.NOT_FOUND,
+        t(ctx.lang, "There's no active order to pay for.", "لا يوجد طلب نشط للدفع."),
+      );
+    const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cinemaName(ctx, r.Order.CinemaId));
+    if (s.state === "expired")
+      return err(
+        ErrorCodes.ORDER_EXPIRED,
+        t(ctx.lang, "The order expired — let's start again.", "انتهت صلاحية الطلب — لنبدأ من جديد."),
+      );
+    if (!s.seatsAllocated)
+      return err(
+        ErrorCodes.ORDER_INVALID_STATE,
+        t(
+          ctx.lang,
+          "Seats haven't been chosen yet. Shall I pick the best available?",
+          "لم يتم اختيار المقاعد بعد. هل أختار الأفضل المتاح؟",
+        ),
+      );
+    let customer = input.customer;
+    if (!customer && ctx.conversation.customerId) {
+      const c = await ctx.vista.customer(ctx.conversation.customerId);
+      customer = { name: `${c.firstName} ${c.lastName}`, email: c.email, phone: c.phone };
+    }
+    if (!customer)
+      return err(
+        ErrorCodes.VALIDATION,
+        t(
+          ctx.lang,
+          "I need a name, email and mobile number for the tickets. What should I use?",
+          "أحتاج الاسم والبريد الإلكتروني ورقم الجوال للتذاكر. ما هي البيانات؟",
+        ),
+      );
+    if (input.method === "VOX_CREDIT" || input.method === "SHARE_POINTS") {
+      if (!ctx.conversation.memberId)
+        return err(
+          ErrorCodes.LOGIN_REQUIRED,
+          t(
+            ctx.lang,
+            "Please log in to pay with VOX credit or Share Points.",
+            "يرجى تسجيل الدخول للدفع برصيد فوكس أو نقاط شير.",
+          ),
+        );
+      const bal = await ctx.vista.balances(ctx.conversation.memberId);
+      const b = bal.Balances.find(
+        (x) => x.BalanceTypeId === (input.method === "VOX_CREDIT" ? "VOX_REWARDS" : "SHARE_POINTS"),
+      )!;
+      if (b.ValueCents < s.totalCents)
+        return err(
+          ErrorCodes.INSUFFICIENT_POINTS,
+          t(
+            ctx.lang,
+            `Your ${input.method === "VOX_CREDIT" ? "VOX credit" : "Share Points"} cover ${money(b.ValueCents, ctx.lang)} of the ${s.total} total. I can apply them and take the rest by card — shall I?`,
+            `رصيدك يغطي ${money(b.ValueCents, "ar")} من الإجمالي ${s.total}. يمكنني تطبيقه ودفع الباقي بالبطاقة — هل أفعل؟`,
+          ),
+        );
+    }
+    const methodText = {
+      CARD: t(ctx.lang, "card", "البطاقة"),
+      VOX_CREDIT: t(ctx.lang, "VOX credit", "رصيد فوكس"),
+      SHARE_POINTS: t(ctx.lang, "Share Points", "نقاط شير"),
+      APPLE_PAY: "Apple Pay",
+      GOOGLE_PAY: "Google Pay",
+    }[input.method];
+    const summary = {
+      userSessionId: input.userSessionId,
+      method: input.method,
+      amountCents: s.totalCents,
+      customer,
+      memberId: ctx.conversation.memberId ?? undefined,
+      customerId: ctx.conversation.customerId ?? undefined,
+      filmTitle: s.filmTitle,
+      showtime: s.showtime,
+      seats: s.seats,
+      cinemaId: s.cinemaId,
+    };
+    const spoken = t(
+      ctx.lang,
+      `To confirm: ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} for ${s.filmTitle}, ${s.showtimeLabel} at ${s.cinemaName}, seats ${s.seats}${s.concessions.length ? `, with ${joinList(s.concessions.map((c) => `${c.quantity}× ${c.description}`))}` : ""}. Total ${s.total}, paying by ${methodText} for ${customer.name}, tickets to ${customer.email}. ${input.method === "CARD" || input.method === "APPLE_PAY" || input.method === "GOOGLE_PAY" ? "I've opened the secure payment sheet — complete it there and I'll confirm." : "Shall I complete the payment?"}`,
+      `للتأكيد: ${s.tickets.length} تذكرة لفيلم ${s.filmTitle}، ${s.showtimeLabel} في ${s.cinemaName}، المقاعد ${s.seats}. الإجمالي ${s.total}، الدفع عبر ${methodText} باسم ${customer.name}، وتُرسل التذاكر إلى ${customer.email}. ${input.method === "CARD" ? "فتحت نافذة الدفع الآمن — أكمل الدفع هناك وسأؤكد." : "هل أكمل الدفع؟"}`,
+    );
+    const conf = await createConfirmation(ctx.db, {
+      conversationId: ctx.conversation.id,
+      actionType: "pay_order",
+      resourceKey: `order:${input.userSessionId}`,
+      summary,
+      spokenSummary: spoken,
+      ttlSeconds: ctx.cfg.confirmationTtlSeconds,
+    });
+    return ok({ confirmationId: conf.id, summary: { ...summary, order: s } }, spoken, {
+      type: "payment",
+      title: t(ctx.lang, "Payment", "الدفع"),
+      items: [{ ...s, method: input.method, customer }],
+      meta: {
+        confirmationId: conf.id,
+        userSessionId: input.userSessionId,
+        method: input.method,
+        amountCents: s.totalCents,
+        requiresSheet:
+          input.method === "CARD" || input.method === "APPLE_PAY" || input.method === "GOOGLE_PAY",
+      },
+      actions:
+        input.method === "VOX_CREDIT" || input.method === "SHARE_POINTS"
+          ? [
+              {
+                label: t(ctx.lang, "Confirm payment", "تأكيد الدفع"),
+                value: `confirm:${conf.id}`,
+                style: "primary",
+              },
+              { label: t(ctx.lang, "Cancel", "إلغاء"), value: "abort" },
+            ]
+          : [],
+    });
+  },
+
+  async pay_order(ctx, input) {
+    const { consumeConfirmation } = await import("../services/confirmations.js");
+    let conf: Awaited<ReturnType<typeof consumeConfirmation>>;
+    try {
+      conf = await consumeConfirmation(ctx.db, {
+        id: input.confirmationId,
+        conversationId: ctx.conversation.id,
+        actionType: "pay_order",
+        resourceKey: `order:${input.userSessionId}`,
+      });
+    } catch (e) {
+      const { findByKey } = await import("../actions/ledger.js");
+      const existing = await findByKey(
+        ctx.db,
+        idem(ctx.conversation.id, input.idempotencyKey ?? `pay:${input.confirmationId}`),
+      );
+      if (existing)
+        return ok(
+          { action: toRef(existing), created: false },
+          t(
+            ctx.lang,
+            "Payment is already being processed — one moment.",
+            "الدفع قيد المعالجة بالفعل — لحظة.",
+          ),
+        );
+      return err((e as { code?: string }).code ?? ErrorCodes.CONFIRMATION_REQUIRED, (e as Error).message);
+    }
+    const method = (conf.summary as { method: string }).method;
+    if ((method === "CARD" || method === "APPLE_PAY" || method === "GOOGLE_PAY") && !input.paymentToken)
+      return err(
+        ErrorCodes.VALIDATION,
+        t(
+          ctx.lang,
+          "I'm waiting for the payment sheet to be completed in the widget.",
+          "أنتظر إكمال نافذة الدفع في الواجهة.",
+        ),
+      );
+    const key = input.idempotencyKey ?? `pay:${input.confirmationId}`;
+    return enqueueOrderAction(
+      ctx,
+      "pay_order",
+      input.userSessionId,
+      { ...conf.summary, paymentToken: input.paymentToken, confirmationId: conf.id },
+      key,
+      t(ctx.lang, "Processing your payment…", "أعالج الدفع…"),
+      "payment",
+    );
+  },
+
+  async cancel_order(ctx, input) {
+    const r = await enqueueOrderAction(
+      ctx,
+      "cancel_order",
+      input.userSessionId,
+      {},
+      input.idempotencyKey ?? `cancel_order:${input.userSessionId}`,
+      t(ctx.lang, "No problem — I've released those seats.", "لا مشكلة — حررت المقاعد."),
+      "guided_booking",
+    );
+    await updateConversation(ctx.db, ctx.conversation.id, {
+      metadata: { ...(ctx.conversation.metadata ?? {}), activeOrder: null },
+    });
+    return { ...r, journey: { name: "guided_booking", status: "abandoned" } };
+  },
+};
+
+async function orderCinema(ctx: ToolCtx): Promise<string | undefined> {
+  const key = (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey;
+  return key?.split("-")[0];
+}
+async function orderExperience(ctx: ToolCtx): Promise<string | undefined> {
+  const key = (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey;
+  if (!key) return undefined;
+  return (await ctx.catalog.sessionByKey(key))?.experience;
+}
+
+export const offerTools: Pick<ToolHandlers, "list_offers" | "check_offer_eligibility"> = {
+  async list_offers(ctx, input) {
+    const memberId = input.memberId ?? ctx.conversation.memberId ?? undefined;
+    const { offers } = await ctx.vista.offers({
+      cinemaId: input.cinemaId,
+      sessionKey: input.sessionKey,
+      experience: input.experience,
+      type: input.type === "any" ? undefined : input.type,
+      memberId,
+    });
+    const cards = offers
+      .slice(0, input.limit)
+      .map((o) => ({
+        offerId: o.id,
+        title: ctx.lang === "ar" && o.titleAlt ? o.titleAlt : o.title,
+        titleEn: o.title,
+        description: ctx.lang === "ar" && o.shortDescriptionAlt ? o.shortDescriptionAlt : o.shortDescription,
+        benefit: describeBenefit(o.benefit, ctx.lang),
+        type: o.type,
+        imageUrl: o.imageUrl,
+        terms: o.terms,
+        howToRedeem: o.howToRedeem,
+        eligible: o.eligibility?.eligible,
+        requires: o.eligibility?.requires ?? [],
+        reasons: o.eligibility?.reasons ?? [],
+        remainingBudget: o.remainingBudget,
+        validDays: o.rules?.days,
+        experiences: o.rules?.experiences,
+        bankName: o.rules?.bankName,
+      }));
+    const eligible = cards.filter((c) => c.eligible || c.requires.length);
+    const speech = t(
+      ctx.lang,
+      `There are ${cards.length} offers${input.sessionKey ? " for this session" : ""}: ${joinList(eligible.slice(0, 4).map((c) => `${c.titleEn} (${c.benefit})`))}${cards.length > 4 ? " and more" : ""}. Bank offers apply automatically when you pay with an eligible card; Share Points and VOX credit need you logged in. Want me to apply one to your booking?`,
+      `يوجد ${cards.length} عروض: ${joinList(
+        eligible.slice(0, 4).map((c) => `${c.title} (${c.benefit})`),
+        "ar",
+      )}. تُطبق عروض البنوك تلقائياً عند الدفع ببطاقة مؤهلة. هل أطبق أحدها على حجزك؟`,
+    );
+    return ok(
+      { offers: cards },
+      speech,
+      {
+        type: "offer",
+        title: t(ctx.lang, "Offers", "العروض"),
+        items: cards,
+        actions: eligible.slice(0, 3).map((c) => ({ label: c.titleEn, value: `offer:${c.offerId}` })),
+      },
+      { name: "offers_info", status: "completed" },
+    );
+  },
+  async check_offer_eligibility(ctx, input) {
+    const r = await ctx.vista.offerEligibility(input.offerId, {
+      sessionKey: input.sessionKey,
+      memberId: input.memberId ?? ctx.conversation.memberId,
+      cardBin: input.cardBin,
+      ticketCount: input.ticketCount,
+    });
+    const speech = r.eligible
+      ? t(
+          ctx.lang,
+          "Yes, that offer applies. Shall I add it to the order?",
+          "نعم، هذا العرض ينطبق. هل أضيفه إلى الطلب؟",
+        )
+      : r.requires.length
+        ? t(
+            ctx.lang,
+            `It can apply, but I need ${joinList(r.requires.map((x) => (x === "member" ? "you to log in to SHARE" : x === "card" ? "the first six digits of the card you'll pay with" : "the promo code")))}.`,
+            `يمكن تطبيقه، لكن أحتاج ${joinList(
+              r.requires.map((x) =>
+                x === "member"
+                  ? "تسجيل الدخول إلى شير"
+                  : x === "card"
+                    ? "أول ستة أرقام من البطاقة"
+                    : "رمز العرض",
+              ),
+              "ar",
+            )}.`,
+          )
+        : t(ctx.lang, `Unfortunately not: ${r.reasons.join("; ")}.`, `للأسف لا: ${r.reasons.join("؛ ")}.`);
+    return ok({ ...r }, speech);
+  },
+};
+
+export { VistaClientError };

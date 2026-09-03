@@ -29,7 +29,11 @@ export const customers = pgTable(
     demoPin: varchar("demo_pin", { length: 8 }).default("0000"), // simulated login
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("customers_email_idx").on(t.email), index("customers_phone_idx").on(t.phone), index("customers_member_idx").on(t.memberId)],
+  (t) => [
+    index("customers_email_idx").on(t.email),
+    index("customers_phone_idx").on(t.phone),
+    index("customers_member_idx").on(t.memberId),
+  ],
 );
 
 export const loyaltyAccounts = pgTable("loyalty_accounts", {

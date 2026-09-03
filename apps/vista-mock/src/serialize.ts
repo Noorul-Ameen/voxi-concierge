@@ -104,7 +104,14 @@ export function filmJson(f: Film, cinemaId?: string) {
     WebsiteUrl: f.websiteUrl ?? "",
     Slug: f.slug ?? "",
     Status: f.status,
-    ...(f.cast ?? []).filter((c) => c.PersonType === "Director").length ? { Director: (f.cast ?? []).filter((c) => c.PersonType === "Director").map((c) => `${c.FirstName} ${c.LastName}`.trim()).join(", ") } : {},
+    ...((f.cast ?? []).filter((c) => c.PersonType === "Director").length
+      ? {
+          Director: (f.cast ?? [])
+            .filter((c) => c.PersonType === "Director")
+            .map((c) => `${c.FirstName} ${c.LastName}`.trim())
+            .join(", "),
+        }
+      : {}),
   };
 }
 
@@ -132,7 +139,9 @@ export function attributeJson(a: Attr) {
 }
 
 export function sessionJson(s: Session, attrs: Attr[], film?: Film) {
-  const sessionAttrs = (s.attributeIds ?? []).map((id) => attrs.find((a) => a.id === id)).filter((a): a is Attr => !!a);
+  const sessionAttrs = (s.attributeIds ?? [])
+    .map((id) => attrs.find((a) => a.id === id))
+    .filter((a): a is Attr => !!a);
   return {
     Attributes: sessionAttrs.map(attributeJson),
     ID: `${s.cinemaId}-${s.sessionId}`,
@@ -253,7 +262,11 @@ export function concessionJson(c: Concession) {
     DescriptionTranslations: [],
     AlternateItems: [],
     PackageChildItems: (c.packageChildItems ?? []).map((p) => ({ ItemId: p.itemId, Quantity: p.quantity })),
-    ModifierGroups: (c.modifierGroups ?? []).map((g) => ({ Name: g.name, IsRequired: g.required, Modifiers: g.options.map((o) => ({ Id: o.id, Description: o.name, PriceInCents: o.priceInCents })) })),
+    ModifierGroups: (c.modifierGroups ?? []).map((g) => ({
+      Name: g.name,
+      IsRequired: g.required,
+      Modifiers: g.options.map((o) => ({ Id: o.id, Description: o.name, PriceInCents: o.priceInCents })),
+    })),
     SmartModifiers: [],
     DiscountsAvailable: [],
     // extensions

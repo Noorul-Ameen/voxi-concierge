@@ -8,7 +8,15 @@ import { parseReleaseDate, toLocalIso, toMinutes } from "./parse.js";
 
 export type RawCapture = {
   films: RawFilm[];
-  sessions: [ho: string, cinemaId: string, sessionId: string, experience: string, date: string, time: string, soldOut: number][];
+  sessions: [
+    ho: string,
+    cinemaId: string,
+    sessionId: string,
+    experience: string,
+    date: string,
+    time: string,
+    soldOut: number,
+  ][];
   cinemaNames: Record<string, string>;
   cinemas: RawCinema[];
 };
@@ -62,7 +70,14 @@ export type SeedSession = {
   soldOut: boolean;
   bookingUrl: string;
 };
-export type SeedDataset = { capturedAt: string; cinemas: SeedCinema[]; films: SeedFilm[]; sessions: SeedSession[]; genres: string[]; experiences: string[] };
+export type SeedDataset = {
+  capturedAt: string;
+  cinemas: SeedCinema[];
+  films: SeedFilm[];
+  sessions: SeedSession[];
+  genres: string[];
+  experiences: string[];
+};
 
 const SITE = "https://uae.voxcinemas.com";
 const ASSETS = "https://assets.voxcinemas.com";
@@ -161,7 +176,8 @@ export function normalize(raw: RawCapture, capturedAt = new Date().toISOString()
   const bySlug = new Map(raw.cinemas.map((c) => [c.href.replace("/cinemas/", ""), c]));
   const findPage = (name: string): RawCinema | undefined => {
     const key = slugify(name.replace(/\(.*?\)/g, "").replace(/-/g, " "));
-    for (const [slug, c] of bySlug) if (slug.startsWith(key.slice(0, 12)) || key.startsWith(slug.slice(0, 12))) return c;
+    for (const [slug, c] of bySlug)
+      if (slug.startsWith(key.slice(0, 12)) || key.startsWith(slug.slice(0, 12))) return c;
     return undefined;
   };
   const expByCinema = new Map<string, Set<string>>();
@@ -202,8 +218,20 @@ export function normalize(raw: RawCapture, capturedAt = new Date().toISOString()
   const films: SeedFilm[] = raw.films.map((f) => {
     const ho = f.ho || f.meta.poster.replace("P_", "") || `HOCS${String(++synthetic).padStart(6, "0")}`;
     const aside = f.meta.aside;
-    const genreNames = [...new Set([f.meta.genre, aside.Genre].filter(Boolean).flatMap((g) => g!.split(/,|\//).map((x) => x.trim())).filter(Boolean))];
-    const cast = f.meta.actors.length ? f.meta.actors : (aside.Starring ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+    const genreNames = [
+      ...new Set(
+        [f.meta.genre, aside.Genre]
+          .filter(Boolean)
+          .flatMap((g) => g!.split(/,|\//).map((x) => x.trim()))
+          .filter(Boolean),
+      ),
+    ];
+    const cast = f.meta.actors.length
+      ? f.meta.actors
+      : (aside.Starring ?? "")
+          .split(",")
+          .map((x) => x.trim())
+          .filter(Boolean);
     const hasRealHo = !ho.startsWith("HOCS");
     return {
       hoCode: ho,

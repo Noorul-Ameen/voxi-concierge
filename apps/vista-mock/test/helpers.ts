@@ -10,7 +10,9 @@ export function testApp() {
   const BASE = "/vistatickets/vista/v2";
   let token = "";
   const auth = async () => {
-    const res = await app.request("/v1/oauth/generate?grant_type=client_credentials", { headers: { authorization: `Basic ${cfg.auth.basicSecret}` } });
+    const res = await app.request("/v1/oauth/generate?grant_type=client_credentials", {
+      headers: { authorization: `Basic ${cfg.auth.basicSecret}` },
+    });
     const j = (await res.json()) as { access_token: string };
     token = j.access_token;
     return j;
@@ -18,10 +20,24 @@ export function testApp() {
   const call = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
     const res = await app.request(`${BASE}${path}`, {
       method,
-      headers: { "x-api-key": cfg.auth.apiKey, authorization: `Bearer ${token}`, "content-type": "application/json", ...headers },
+      headers: {
+        "x-api-key": cfg.auth.apiKey,
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        ...headers,
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, json: (await res.json()) as any };
   };
-  return { app, db, close, cfg, auth, call, get: (p: string) => call("GET", p), post: (p: string, b?: unknown) => call("POST", p, b) };
+  return {
+    app,
+    db,
+    close,
+    cfg,
+    auth,
+    call,
+    get: (p: string) => call("GET", p),
+    post: (p: string, b?: unknown) => call("POST", p, b),
+  };
 }
