@@ -60,7 +60,9 @@ describe("order lifecycle with seat holds", () => {
   let sessionId = "";
   let ticketCode = "";
   it("finds an upcoming session and ticket types", async () => {
-    const r = await t.get(`/OData/Sessions?$format=json&$filter=CinemaId eq '${cinemaId}' and Experience eq 'Standard' and SoldoutStatus eq 0&$top=50`);
+    const { nowLocalIso } = await import("@voxi/db");
+    const from = new Date(new Date(`${nowLocalIso()}Z`).getTime() + 2 * 3600000).toISOString().slice(0, 19);
+    const r = await t.get(`/OData/Sessions?$format=json&$filter=CinemaId eq '${cinemaId}' and Experience eq 'Standard' and SoldoutStatus eq 0 and Showtime gt DATETIME'${from}'&$orderby=Showtime asc&$top=50`);
     const s = r.json.value.find((x: any) => x.SeatsAvailable > 20);
     sessionId = s.SessionId;
     const tt = await t.get(`/Data/Cinemas/${cinemaId}/sessions/${sessionId}/tickets?salesChannel=WWW`);
@@ -135,7 +137,8 @@ describe("order lifecycle with seat holds", () => {
 describe("offers engine", () => {
   it("applies a promo code and rejects combining with a bank offer", async () => {
     const r = await t.get("/OData/Sessions?$format=json&$filter=CinemaId eq '0005' and Experience eq 'Standard'&$orderby=Showtime asc&$top=2000");
-    const monday = r.json.value.find((x: any) => new Date(`${x.Showtime}Z`).getUTCDay() === 1 && x.SeatsAvailable > 10);
+    const { nowLocalIso } = await import("@voxi/db");
+    const monday = r.json.value.find((x: any) => new Date(`${x.Showtime}Z`).getUTCDay() === 1 && x.SeatsAvailable > 10 && x.Showtime > nowLocalIso());
     expect(monday).toBeTruthy();
     const usid = `offer-${Date.now()}`;
     const tt = await t.get(`/Data/Cinemas/0005/sessions/${monday.SessionId}/tickets`);
