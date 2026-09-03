@@ -1,0 +1,115 @@
+# 02 — Runbook
+
+How to run, verify, deploy and operate the Voxi demo stack.
+
+## 1. Prerequisites
+
+- Node 20+, pnpm 9+, Docker (for Postgres / full-stack compose)
+- An ElevenLabs workspace with Agents (the demo agent is `agent_1001m1m6rghcfsr8nrpj5x08g16e` in the EU workspace) and an API key
+- Optional: Genesys Cloud org with an Open Messaging integration (for real transfer-to-agent)
+- Optional: Lovable workspace connected to the GitHub repo (UI iteration)
+
+## 2. Environment
+
+Copy `.env.example` to `.env`. Variables by concern:
+
+| Group | Variables | Notes |
+|---|---|---|
+| Database | `DATABASE_URL` | Postgres 16. All services share one DB (schemas: reference, commerce, customer, concierge). |
+| Vista (client side) | `VISTA_BASE_URL`, `VISTA_OAUTH_URL`, `VISTA_API_KEY`, `VISTA_CLIENT_SECRET`, `VISTA_SALES_CHANNEL`, `VISTA_CLIENT_ID` | The go-live swap. Point at `api-prod.maflec.com/vistatickets/vista/v2` + real Apigee key/secret. |
+| Vista mock | `VISTA_MOCK_PORT`, `VISTA_MOCK_API_KEY`, `VISTA_MOCK_BASIC_SECRET`, `VISTA_MOCK_TOKEN_TTL_SECONDS`, `VISTA_MOCK_ORDER_EXPIRY_MINUTES` | What the mock accepts. Basic secret = base64(`apiKey:secret`). |
+| Concierge | `CONCIERGE_PORT`, `CONCIERGE_PUBLIC_URL`, `TOOL_HMAC_SECRET`, `WIDGET_JWT_SECRET`, `ELEVENLABS_WEBHOOK_SECRET`, `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, `DEFAULT_MARKET`, `DEFAULT_CURRENCY`, `DEFAULT_TIMEZONE`, `VOX_WEB_BASE_URL`, `DEV_TOOL_BRIDGE` | `CONCIERGE_PUBLIC_URL` must be the public HTTPS URL when deploying the agent (ElevenLabs calls it). `DEV_TOOL_BRIDGE=true` enables `/widget/dev-tool` for text-only demos without ElevenLabs. |
+| Handover | `HANDOVER_ADAPTER` (`simulated` \| `genesys`), `GENESYS_REGION`, `GENESYS_CLIENT_ID`, `GENESYS_CLIENT_SECRET`, `GENESYS_OPEN_MESSAGING_INTEGRATION_ID`, `GENESYS_WEBHOOK_SECRET` | Simulated adapter is fully functional (agent joins, messages, summary). |
+| Payment | `PAYMENT_ADAPTER=simulated` | Checkout-style tokenisation is simulated in the widget; PAN never reaches the API. `tok_declined_*` simulates a decline. |
+| Policy | `CANCELLATION_CUTOFF_MINUTES`, `REFUND_METHODS` | Domain default is 30 min (VOX refund page); `.env.example` sets 60 for a safer demo. |
+
+All processes run with `TZ=UTC`; Dubai wall-clock comparisons use `nowLocalDate()` / `nowLocalIso()` from `@voxi/domain`.
+
+## 3. Local development
+
+```bash
+pnpm install
+docker compose -f infra/docker-compose.yml up -d postgres   # or any Postgres 16 at DATABASE_URL
+pnpm db:migrate
+pnpm db:seed              # real catalogue snapshot + 6 personas, bookings, offers, menu, seat plans
+infra/dev-up.sh           # starts vista-mock (4010), concierge-api (4020), worker, web (5173); logs in /tmp/voxi/
+```
+
+Health: `curl localhost:4010/healthz`, `curl localhost:4020/healthz`, `curl localhost:4020/readyz`.
+
+Individual processes: `pnpm dev:vista`, `pnpm dev:api`, `pnpm dev:worker`, `pnpm dev:web`.
+
+Stop: `pkill -f "cli.mjs watch"; pkill -f "vite"`.
+
+### Reseeding
+
+The seed is idempotent and destructive for demo data (`pnpm db:seed` truncates commerce/customer/concierge tables and rebuilds them). Reseed before a demo so fixture bookings (`LHGUEST5`, `RM3PQ9X`, …) are back in their starting state. The catalogue is dated to the scrape snapshot; sessions are shifted at seed time so "today" always has showtimes.
+
+### Refreshing the real catalogue
+
+`apps/scraper` was run from a browser session (the container cannot reach voxcinemas.com). Re-run `pnpm scrape` from a machine with access, commit the new `apps/scraper/out/*.json`, then `pnpm db:seed`. KB pages (`packages/agent/kb/*.md`) are rebuilt with `pnpm --filter @voxi/agent kb:build`.
+
+## 4. Full stack with Docker
+
+```bash
+docker compose -f infra/docker-compose.yml up --build
+# postgres → migrate → seed → vista-mock:4010, concierge-api:4020, worker, web (nginx):8080
+```
+
+`infra/nginx.conf` proxies `/api/*` to `concierge-api` (SSE-safe: buffering off, long read timeout).
+
+## 5. Verification
+
+| Check | Command | Expectation |
+|---|---|---|
+| Types + lint | `pnpm typecheck && pnpm lint` | clean |
+| Unit/integration | `pnpm test` | vista-mock 22, concierge-api 16, domain 10, concierge-core 1 (each suite reseeds via global setup) |
+| Concurrency invariants | `pnpm db:seed && node infra/load/concurrency.mjs` | 6/6: 25 concurrent confirmations → 1 action; reads never blocked by writes; 30 racers for the same seats → 1 winner; idempotent retries |
+| UI smoke | `cd infra/e2e && npm i && node smoke.mjs && node cards.mjs` | widget loads, cards render |
+| UI booking journey | `node infra/e2e/booking.mjs` | film → session → seats → F&B → promo → pay → QR |
+| API contract | `curl localhost:4020/openapi.json` | 39 tool paths; `infra/openapi.json` is the committed snapshot |
+| Postman | import `infra/postman-voxi-concierge.json` and `infra/postman-vista-mock.json` | regenerate with `node infra/gen-postman.mjs` |
+
+## 6. Deploying the ElevenLabs agent (agent-as-code)
+
+Everything the agent needs lives in `packages/agent`:
+- `prompts/system.md` — system prompt (EN/AR, VOX vocabulary, confirmation etiquette, handover rules)
+- `src/index.ts` — builds the agent config from `@voxi/contracts` (39 webhook tools with `conversationId ← system__conversation_id`, 12 client tools, language presets, data collection, evaluation criteria)
+- `kb/*.md` — 42 knowledge-base documents (site content, refund policy, per-cinema in-mall guides, experiences, Arabic glossary)
+
+```bash
+export CONCIERGE_PUBLIC_URL=https://<public-host>      # must be reachable by ElevenLabs
+export ELEVENLABS_API_KEY=...
+export TOOL_HMAC_SECRET=...                             # same value as the API
+pnpm --filter @voxi/agent agent:export                  # writes dist/agent.json for review
+pnpm --filter @voxi/agent agent:deploy                  # upserts tools, KB docs and agent config on ELEVENLABS_AGENT_ID
+```
+
+Then in the ElevenLabs console set the post-call webhook to `${CONCIERGE_PUBLIC_URL}/webhooks/elevenlabs` with `ELEVENLABS_WEBHOOK_SECRET`. Tool calls authenticate with the `x-voxi-key` secret header (or HMAC `x-voxi-timestamp` + `x-voxi-signature`).
+
+Exposing a local stack for a demo: any HTTPS tunnel (e.g. `cloudflared tunnel --url http://localhost:4020`) works; set `CONCIERGE_PUBLIC_URL` to the tunnel URL before `agent:deploy`.
+
+## 7. Widget / Lovable
+
+`apps/web` is a Vite + React app. In Lovable: connect the GitHub repo, set the project root to `apps/web`, and set `VITE_API_BASE` to the public concierge URL (default `/api` proxied by Vite/nginx). The widget uses `@elevenlabs/react` (`useConversation`) with a signed URL from `/widget/signed-url` (falls back to public agent ID), client tools for cards/seat map/payment sheet/QR, and SSE from `/widget/events` for out-of-band updates (action results, order changes, human messages).
+
+Text-only mode works without any ElevenLabs credentials via the dev tool bridge (`DEV_TOOL_BRIDGE=true`).
+
+## 8. Transfer to a human agent
+
+- `HANDOVER_ADAPTER=simulated` (default): the worker "joins" a virtual agent after a short delay, streams the handover summary and canned replies through SSE — demo-safe with no external dependency.
+- `HANDOVER_ADAPTER=genesys`: `packages/concierge-core/src/handover/genesys.ts` implements Genesys Cloud Open Messaging (OAuth client credentials, inbound message POST with the conversation summary as the first message, outbound webhook at `/webhooks/genesys` verified with `GENESYS_WEBHOOK_SECRET`). Configure an Open Messaging integration in Genesys with the outbound notification URL pointing at `${CONCIERGE_PUBLIC_URL}/webhooks/genesys`, then fill the `GENESYS_*` variables.
+
+## 9. Operations & troubleshooting
+
+| Symptom | Cause / fix |
+|---|---|
+| Tool returns `UNAUTHORIZED` | `x-voxi-key` mismatch with `TOOL_HMAC_SECRET`, or HMAC timestamp older than 5 min |
+| Vista call fails with Apigee fault JSON | token expired → `vista-client` refreshes once automatically; check `VISTA_API_KEY`/`VISTA_CLIENT_SECRET` |
+| Action stuck `running` | worker down; leases expire and the next worker resumes. `GET /reporting/actions` shows the ledger |
+| Widget shows "reconnecting" | SSE dropped; reconnects with backoff and `after=<seq>` replay — no events lost |
+| Seat already taken | expected under contention; the order returns `SeatsUnavailable` and the agent offers alternatives |
+| No showtimes "today" | reseed (`pnpm db:seed`) — sessions are shifted relative to the seed date |
+| Posters not loading | `assets.voxcinemas.com` blocked on your network; URLs are real |
+
+Logs: each service logs JSON lines with `correlationId` (propagated from `x-correlation-id`) and `conversationId`.

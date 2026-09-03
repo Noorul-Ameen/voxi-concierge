@@ -1,4 +1,5 @@
 import { ErrorCodes } from "@voxi/contracts";
+import { prefixedId } from "@voxi/db";
 import { describeBenefit } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 import { enqueue, idem, toRef } from "../actions/ledger.js";
@@ -333,7 +334,7 @@ export const orderingTools: Pick<
         t(ctx.lang, "That show has already started.", "بدأ هذا العرض بالفعل."),
       );
     const existing = activeOrder(ctx);
-    const userSessionId = `${ctx.conversation.id.slice(0, 24)}-${Date.now().toString(36)}`;
+    const userSessionId = `usid_${prefixedId("o", 12).slice(2)}`;
     await updateConversation(ctx.db, ctx.conversation.id, {
       metadata: {
         ...(ctx.conversation.metadata ?? {}),

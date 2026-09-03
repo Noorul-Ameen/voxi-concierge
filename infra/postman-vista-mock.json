@@ -1,0 +1,1010 @@
+{
+  "info": {
+    "name": "Voxi Vista Mock (Apigee / Connect V1 shape)",
+    "description": "Mirrors the VOX partner API structure: 2-step OAuth (Basic secret → Bearer + x-api-key), OData reference data, Ticketing order flow, RESTBooking search/refund/cancel, RESTLoyalty, Offers Engine, Customer profile. Swap vistaBase/apiKey/basicSecret for the real gateway — the paths and bodies stay the same.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "vistaBase",
+      "value": "http://localhost:4010/vistatickets/vista/v2"
+    },
+    {
+      "key": "oauthBase",
+      "value": "http://localhost:4010"
+    },
+    {
+      "key": "apiKey",
+      "value": "demo-api-key"
+    },
+    {
+      "key": "basicSecret",
+      "value": "ZGVtby1hcGkta2V5OmRlbW8tc2VjcmV0",
+      "description": "base64(apiKey:secret) — VISTA_MOCK_BASIC_SECRET"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "userSessionId",
+      "value": "usid_postman_1"
+    },
+    {
+      "key": "cinemaId",
+      "value": "0005"
+    },
+    {
+      "key": "sessionId",
+      "value": ""
+    },
+    {
+      "key": "bookingId",
+      "value": ""
+    },
+    {
+      "key": "memberId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Generate token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const j = pm.response.json(); if (j.access_token) pm.collectionVariables.set('accessToken', j.access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Basic {{basicSecret}}"
+              }
+            ],
+            "url": {
+              "raw": "{{oauthBase}}/v1/oauth/generate?grant_type=client_credentials"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "OData reference data",
+      "item": [
+        {
+          "name": "Cinemas",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/OData/Cinemas?$format=json"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "CinemaOperators (experiences)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/OData/CinemaOperators?$format=json&$select=ID,Code,Name,ShortName,CinemaId,Experience"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "FilmGenres",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/OData/FilmGenres?$format=json"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "SessionAttributes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/OData/SessionAttributes?$format=json"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Films",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/OData/Films?$format=json&$top=20"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "ScheduledFilms with sessions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/OData/ScheduledFilms?$format=json&$filter=CinemaId eq '{{cinemaId}}'&$expand=Sessions"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Sessions for a cinema",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/OData/Sessions?$format=json&$filter=CinemaId eq '{{cinemaId}}'&$orderby=Showtime&$top=50"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Ticket types for session",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/Data/Cinemas/{{cinemaId}}/sessions/{{sessionId}}/tickets"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Seat plan",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/Data/Cinemas/{{cinemaId}}/sessions/{{sessionId}}/seat-plan"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Concessions grouped by tabs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/Data/concession-items-grouped-by-tabs?cinemaId={{cinemaId}}"
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ticketing (order lifecycle) — V1: HTTP 200 + Result code",
+      "item": [
+        {
+          "name": "Add tickets (creates order)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/Ticketing/Order/tickets"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"UserSessionId\": \"{{userSessionId}}\",\n  \"CinemaId\": \"{{cinemaId}}\",\n  \"SessionId\": \"{{sessionId}}\",\n  \"TicketTypes\": [\n    {\n      \"TicketTypeCode\": \"0001\",\n      \"Qty\": 2\n    }\n  ],\n  \"ReturnOrder\": true,\n  \"ReturnSeatData\": false,\n  \"ProcessOrderValue\": false,\n  \"ReorderSessionTickets\": true,\n  \"IncludeSeatNumbers\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Set selected seats",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/Ticketing/Order/seats"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"UserSessionId\": \"{{userSessionId}}\",\n  \"CinemaId\": \"{{cinemaId}}\",\n  \"SessionId\": \"{{sessionId}}\",\n  \"SelectedSeats\": [\n    {\n      \"AreaCategoryCode\": \"0000000001\",\n      \"AreaNumber\": 1,\n      \"RowIndex\": 5,\n      \"ColumnIndex\": 7\n    }\n  ],\n  \"ReturnOrder\": true,\n  \"SeatData\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Add concessions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/Ticketing/Order/concessions"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"UserSessionId\": \"{{userSessionId}}\",\n  \"CinemaId\": \"{{cinemaId}}\",\n  \"Concessions\": [\n    {\n      \"ItemId\": \"\",\n      \"Quantity\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Apply offer / promo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/Ticketing/Order/offers"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"UserSessionId\": \"{{userSessionId}}\",\n  \"PromoCode\": \"\",\n  \"CardBin\": \"\",\n  \"MemberId\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Redeem loyalty points",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/Ticketing/Order/loyalty-redeem"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"UserSessionId\": \"{{userSessionId}}\",\n  \"MemberId\": \"{{memberId}}\",\n  \"Points\": 500,\n  \"BalanceType\": \"SHARE_POINTS\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Get order",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/Ticketing/order/{{userSessionId}}"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Complete order (payment)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/Ticketing/order/payment"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"UserSessionId\": \"{{userSessionId}}\",\n  \"CustomerEmail\": \"guest@example.com\",\n  \"CustomerName\": \"Guest User\",\n  \"CustomerPhone\": \"+971500000000\",\n  \"PerformPayment\": true,\n  \"ReturnPrintStream\": false,\n  \"PaymentInfoCollection\": [\n    {\n      \"PaymentValueCents\": 0,\n      \"PaymentTenderCategory\": \"CREDIT\",\n      \"PaymentToken\": \"tok_visa_demo\",\n      \"CardNumber\": \"411111******1111\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "PaymentValueCents must equal order total. tok_declined_* simulates a decline."
+          }
+        },
+        {
+          "name": "Cancel order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/Ticketing/order/cancel"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"UserSessionId\": \"{{userSessionId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "RESTBooking (post-purchase)",
+      "item": [
+        {
+          "name": "Search bookings",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/RESTBooking.svc/booking/search"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"BookingId\": \"{{bookingId}}\",\n  \"Email\": \"\",\n  \"Phone\": \"\",\n  \"UpcomingOnly\": true,\n  \"Limit\": 10\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Get booking",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/RESTBooking.svc/booking/{{bookingId}}"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Refund booking (partial/full)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/RESTBooking.svc/booking/refund"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"BookingId\": \"{{bookingId}}\",\n  \"RefundTenderCategory\": \"EWALLET\",\n  \"TicketIds\": [],\n  \"RefundConcessions\": true,\n  \"RefundBookingFee\": false,\n  \"Reason\": \"customer request\",\n  \"Reference\": \"ref-{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Idempotent by Reference; EWALLET=VOX credit, LOYALTY=Share Points, CREDIT=original card (guests)."
+          }
+        },
+        {
+          "name": "Cancel booking (full)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/RESTBooking.svc/booking/cancel"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"BookingId\": \"{{bookingId}}\",\n  \"RefundTenderCategory\": \"EWALLET\",\n  \"Reason\": \"customer request\",\n  \"Reference\": \"ref-{{$guid}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Link swapped bookings",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/RESTBooking.svc/booking/link"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"FromBookingId\": \"\",\n  \"ToBookingId\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Mark collected",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/RESTBooking.svc/booking/collect"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"BookingId\": \"{{bookingId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "RESTLoyalty / Offers / Customer",
+      "item": [
+        {
+          "name": "Validate member (login)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/RESTLoyalty.svc/member/validate"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"Email\": \"\",\n  \"Phone\": \"\",\n  \"Pin\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Member balances",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/RESTLoyalty.svc/member/{{memberId}}/balances"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Member ledger",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/RESTLoyalty.svc/member/{{memberId}}/ledger"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Offers Engine — list",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/offers/v1/offers?cinemaId={{cinemaId}}"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Offers Engine — eligibility",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/offers/v1/offers/{{offerId}}/eligibility"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"CardBin\": \"\",\n  \"MemberId\": \"\",\n  \"CinemaId\": \"{{cinemaId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Customer profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/customer/v1/customers/{{memberId}}"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Customer history",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/customer/v1/customers/{{memberId}}/history"
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin (mock only)",
+      "item": [
+        {
+          "name": "Expire stale orders",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "x-api-key",
+                "value": "{{apiKey}}"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{vistaBase}}/admin/expire-orders"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": ""
+          }
+        }
+      ]
+    }
+  ]
+}

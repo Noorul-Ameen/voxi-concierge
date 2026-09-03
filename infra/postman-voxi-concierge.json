@@ -1,0 +1,1732 @@
+{
+  "info": {
+    "name": "Voxi Concierge API",
+    "description": "Generated from infra/openapi.json. Tool endpoints are the ElevenLabs webhook tools; the widget/reporting/webhook endpoints are hand-curated.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "conciergeBase",
+      "value": "http://localhost:4020"
+    },
+    {
+      "key": "conversationId",
+      "value": ""
+    },
+    {
+      "key": "widgetToken",
+      "value": ""
+    },
+    {
+      "key": "confirmationId",
+      "value": ""
+    },
+    {
+      "key": "toolSecret",
+      "value": "change-me-tool-secret"
+    },
+    {
+      "key": "agentId",
+      "value": "agent_1001m1m6rghcfsr8nrpj5x08g16e"
+    }
+  ],
+  "item": [
+    {
+      "name": "Widget",
+      "item": [
+        {
+          "name": "POST /widget/session",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/widget/session"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"language\": \"en\",\n  \"modality\": \"text\",\n  \"channel\": \"web\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /widget/state",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "authorization",
+                "value": "Bearer {{widgetToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/widget/state"
+            }
+          }
+        },
+        {
+          "name": "POST /widget/command (confirm)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "authorization",
+                "value": "Bearer {{widgetToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/widget/command"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"confirm\",\n  \"confirmationId\": \"{{confirmationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "GET /widget/events (SSE)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/widget/events?token={{widgetToken}}&after=0"
+            }
+          }
+        },
+        {
+          "name": "GET /widget/signed-url",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "authorization",
+                "value": "Bearer {{widgetToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/widget/signed-url"
+            }
+          }
+        },
+        {
+          "name": "POST /widget/dev-tool (DEV_TOOL_BRIDGE)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "authorization",
+                "value": "Bearer {{widgetToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/widget/dev-tool"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"search_films\",\n  \"input\": {\n    \"query\": \"\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tools — read",
+      "item": [
+        {
+          "name": "search_films",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/search_films",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "search_films"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Search movies (now showing, coming soon, advance booking) by title, actor, genre, language, rating or child age. Returns posters and trailers for cards."
+          }
+        },
+        {
+          "name": "get_film",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/get_film",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "get_film"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Get full details for one movie: synopsis, cast, runtime, rating, languages, trailer."
+          }
+        },
+        {
+          "name": "search_sessions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/search_sessions",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "search_sessions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Find showtimes for a movie and/or cinema on a date with optional experience, time window and language filters. Suggests alternatives when nothing matches."
+          }
+        },
+        {
+          "name": "list_cinemas",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/list_cinemas",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "list_cinemas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "List VOX cinemas, optionally by emirate or experience."
+          }
+        },
+        {
+          "name": "get_cinema",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/get_cinema",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "get_cinema"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Cinema details: address, opening hours, experiences, parking, in-mall directions, accessibility."
+          }
+        },
+        {
+          "name": "nearest_cinemas",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/nearest_cinemas",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "nearest_cinemas"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Three nearest cinemas to GPS coordinates. Ask the widget for location first (request_location client tool)."
+          }
+        },
+        {
+          "name": "get_age_rules",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/get_age_rules",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "get_age_rules"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Age restriction rules by rating and experience (e.g. GOLD/THEATRE 18+ policies) and whether a child of a given age may attend."
+          }
+        },
+        {
+          "name": "list_offers",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/list_offers",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "list_offers"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Available promotions and offers (bank, promo codes, Share Points, VOX Rewards) with images, eligibility and remaining balance."
+          }
+        },
+        {
+          "name": "check_offer_eligibility",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/check_offer_eligibility",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "check_offer_eligibility"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Check if an offer applies to a session, member or card."
+          }
+        },
+        {
+          "name": "how_to_book",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/how_to_book",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "how_to_book"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Explain how to book and return deep links to the booking page for a movie/session."
+          }
+        },
+        {
+          "name": "find_booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/find_booking",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "find_booking"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Find existing bookings by booking reference, email, phone or member id. Returns booking summary, tickets, seats, refund eligibility."
+          }
+        },
+        {
+          "name": "check_cancellation_eligibility",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/check_cancellation_eligibility",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "check_cancellation_eligibility"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Evaluate the cancellation & refund policy for a booking (cut-off, used tickets, F&B, offers) and compute refund amount per method."
+          }
+        },
+        {
+          "name": "prepare_cancellation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/prepare_cancellation",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "prepare_cancellation"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Create the cancellation summary the customer must confirm (refund amount, method). Returns confirmationId. ALWAYS read the summary to the customer before cancel_booking."
+          }
+        },
+        {
+          "name": "prepare_swap",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/prepare_swap",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "prepare_swap"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Prepare a swap to a different showtime: availability, price difference, refund/charge summary. Returns confirmationId."
+          }
+        },
+        {
+          "name": "get_action_result",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/get_action_result",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "get_action_result"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Fetch the outcome of a previously requested action (cancellation, refund, swap, order step, payment, transfer). Waits briefly for completion."
+          }
+        },
+        {
+          "name": "browse_menu",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/browse_menu",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "browse_menu"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Food & beverage menu per cinema/experience with prices, combos, images and dietary filters (vegetarian, vegan, gluten-free)."
+          }
+        },
+        {
+          "name": "get_ticket_types",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/get_ticket_types",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "get_ticket_types"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Ticket types and prices for a session (adult, child, student, premium view...)."
+          }
+        },
+        {
+          "name": "get_seat_plan",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/get_seat_plan",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "get_seat_plan"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Seat map and availability for a session; renders the interactive seat map in the widget."
+          }
+        },
+        {
+          "name": "get_order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/get_order",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "get_order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Current order (cart) summary: tickets, seats, F&B, offers, totals, expiry."
+          }
+        },
+        {
+          "name": "prepare_payment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/prepare_payment",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "prepare_payment"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Create the payment summary the customer must confirm and open the payment sheet in the widget. Returns confirmationId."
+          }
+        },
+        {
+          "name": "get_loyalty_balance",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/get_loyalty_balance",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "get_loyalty_balance"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Share Points and VOX Rewards balance for the logged-in member."
+          }
+        },
+        {
+          "name": "get_session_context",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/get_session_context",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "get_session_context"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Whether the customer is logged in, their name, preferred language, location permission and any active order."
+          }
+        },
+        {
+          "name": "login_customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/login_customer",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "login_customer"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Simulated login by email/phone/member id and PIN (demo)."
+          }
+        },
+        {
+          "name": "list_my_bookings",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/list_my_bookings",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "list_my_bookings"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Bookings for the logged-in customer."
+          }
+        },
+        {
+          "name": "get_recommendations",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/get_recommendations",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "get_recommendations"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Personalised movie and F&B recommendations from profile preferences and purchase history."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tools — write (confirmation-gated / ledgered)",
+      "item": [
+        {
+          "name": "cancel_booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/cancel_booking",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "cancel_booking"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Cancel a booking and trigger the refund exactly as summarised in prepare_cancellation. Requires confirmationId and confirmed=true."
+          }
+        },
+        {
+          "name": "swap_booking",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/swap_booking",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "swap_booking"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Execute the prepared swap (refund original, rebook new session). Requires confirmationId and confirmed=true."
+          }
+        },
+        {
+          "name": "start_order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/start_order",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "start_order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Start a new booking order for a session. Returns userSessionId."
+          }
+        },
+        {
+          "name": "add_tickets",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/add_tickets",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "add_tickets"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Add tickets to the order."
+          }
+        },
+        {
+          "name": "select_seats",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/select_seats",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "select_seats"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Choose specific seats (or auto-allocate) for the tickets in the order."
+          }
+        },
+        {
+          "name": "add_concessions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/add_concessions",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "add_concessions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Add food & beverage items to the order."
+          }
+        },
+        {
+          "name": "apply_offer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/apply_offer",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "apply_offer"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Apply an offer or promo code to the order."
+          }
+        },
+        {
+          "name": "redeem_points",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/redeem_points",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "redeem_points"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Redeem Share Points or VOX Rewards against the order."
+          }
+        },
+        {
+          "name": "pay_order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/pay_order",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "pay_order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Complete payment and create the booking (QR + reference). Requires confirmationId and confirmed=true."
+          }
+        },
+        {
+          "name": "cancel_order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/cancel_order",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "cancel_order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Abandon the in-progress order and release seats."
+          }
+        },
+        {
+          "name": "submit_feedback",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/submit_feedback",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "submit_feedback"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Record the end-of-chat feedback rating."
+          }
+        },
+        {
+          "name": "create_complaint",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/create_complaint",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "create_complaint"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Log a customer complaint with the details gathered in conversation."
+          }
+        },
+        {
+          "name": "transfer_to_agent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/transfer_to_agent",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "transfer_to_agent"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Hand the conversation to a human agent with a summary. Use on explicit request, frustration, or after two failed answers."
+          }
+        },
+        {
+          "name": "log_journey",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-voxi-key",
+                "value": "{{toolSecret}}",
+                "description": "TOOL_HMAC_SECRET (static secret header, as configured on the ElevenLabs tools). Alternative: x-voxi-timestamp + x-voxi-signature = HMAC-SHA256(secret, `${ts}.${rawBody}`) hex."
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/tools/log_journey",
+              "host": [
+                "{{conciergeBase}}"
+              ],
+              "path": [
+                "tools",
+                "log_journey"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversationId\": \"{{conversationId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Mark a journey (e.g. 'movie_info', 'cancellation') completed or abandoned for reporting."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reporting",
+      "item": [
+        {
+          "name": "GET /reporting/summary?days=30",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{conciergeBase}}/reporting/summary?days=30"
+            }
+          }
+        },
+        {
+          "name": "GET /reporting/conversations",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{conciergeBase}}/reporting/conversations"
+            }
+          }
+        },
+        {
+          "name": "GET /reporting/complaints",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{conciergeBase}}/reporting/complaints"
+            }
+          }
+        },
+        {
+          "name": "GET /reporting/feedback",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{conciergeBase}}/reporting/feedback"
+            }
+          }
+        },
+        {
+          "name": "GET /reporting/transfers",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{conciergeBase}}/reporting/transfers"
+            }
+          }
+        },
+        {
+          "name": "GET /reporting/actions",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{conciergeBase}}/reporting/actions"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "POST /webhooks/elevenlabs",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              },
+              {
+                "key": "elevenlabs-signature",
+                "value": "t={{ts}},v0={{hmac}}"
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/webhooks/elevenlabs"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"post_call_transcription\",\n  \"data\": {\n    \"conversation_id\": \"{{elConversationId}}\",\n    \"agent_id\": \"{{agentId}}\",\n    \"analysis\": {\n      \"data_collection_results\": {}\n    },\n    \"transcript\": []\n  }\n}"
+            }
+          }
+        },
+        {
+          "name": "POST /webhooks/genesys",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "content-type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{conciergeBase}}/webhooks/genesys"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"Text\",\n  \"text\": \"Hello from agent\",\n  \"channel\": {\n    \"to\": {\n      \"id\": \"{{transferId}}\"\n    },\n    \"from\": {\n      \"nickname\": \"Agent\"\n    }\n  }\n}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
