@@ -1,5 +1,7 @@
 # 02 — Runbook
 
+> Live deployment details (URLs, ids, residency notes): `docs/06-live-environment.md`.
+
 How to run, verify, deploy and operate the Voxi demo stack.
 
 ## 1. Prerequisites
@@ -18,7 +20,7 @@ Copy `.env.example` to `.env`. Variables by concern:
 | Database | `DATABASE_URL` | Postgres 16. All services share one DB (schemas: reference, commerce, customer, concierge). |
 | Vista (client side) | `VISTA_BASE_URL`, `VISTA_OAUTH_URL`, `VISTA_API_KEY`, `VISTA_CLIENT_SECRET`, `VISTA_SALES_CHANNEL`, `VISTA_CLIENT_ID` | The go-live swap. Point at `api-prod.maflec.com/vistatickets/vista/v2` + real Apigee key/secret. |
 | Vista mock | `VISTA_MOCK_PORT`, `VISTA_MOCK_API_KEY`, `VISTA_MOCK_BASIC_SECRET`, `VISTA_MOCK_TOKEN_TTL_SECONDS`, `VISTA_MOCK_ORDER_EXPIRY_MINUTES` | What the mock accepts. Basic secret = base64(`apiKey:secret`). |
-| Concierge | `CONCIERGE_PORT`, `CONCIERGE_PUBLIC_URL`, `TOOL_HMAC_SECRET`, `WIDGET_JWT_SECRET`, `ELEVENLABS_WEBHOOK_SECRET`, `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, `DEFAULT_MARKET`, `DEFAULT_CURRENCY`, `DEFAULT_TIMEZONE`, `VOX_WEB_BASE_URL`, `DEV_TOOL_BRIDGE` | `CONCIERGE_PUBLIC_URL` must be the public HTTPS URL when deploying the agent (ElevenLabs calls it). `DEV_TOOL_BRIDGE=true` enables `/widget/dev-tool` for text-only demos without ElevenLabs. |
+| Concierge | `CONCIERGE_PORT`, `CONCIERGE_PUBLIC_URL`, `TOOL_HMAC_SECRET`, `WIDGET_JWT_SECRET`, `ELEVENLABS_WEBHOOK_SECRET`, `ELEVENLABS_API_KEY`, `ELEVENLABS_AGENT_ID`, `ELEVENLABS_BASE_URL` (EU workspace: `https://api.eu.residency.elevenlabs.io`), `DEFAULT_MARKET`, `DEFAULT_CURRENCY`, `DEFAULT_TIMEZONE`, `VOX_WEB_BASE_URL`, `DEV_TOOL_BRIDGE` | `CONCIERGE_PUBLIC_URL` must be the public HTTPS URL when deploying the agent (ElevenLabs calls it). `DEV_TOOL_BRIDGE=true` enables `/widget/dev-tool` for text-only demos without ElevenLabs. |
 | Handover | `HANDOVER_ADAPTER` (`simulated` \| `genesys`), `GENESYS_REGION`, `GENESYS_CLIENT_ID`, `GENESYS_CLIENT_SECRET`, `GENESYS_OPEN_MESSAGING_INTEGRATION_ID`, `GENESYS_WEBHOOK_SECRET` | Simulated adapter is fully functional (agent joins, messages, summary). |
 | Payment | `PAYMENT_ADAPTER=simulated` | Checkout-style tokenisation is simulated in the widget; PAN never reaches the API. `tok_declined_*` simulates a decline. |
 | Policy | `CANCELLATION_CUTOFF_MINUTES`, `REFUND_METHODS` | Domain default is 30 min (VOX refund page); `.env.example` sets 60 for a safer demo. |

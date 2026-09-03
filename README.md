@@ -34,6 +34,10 @@ ElevenLabs Agent ──webhook tools──▶ concierge-api ──▶ vista-clie
 | `infra` | Docker Compose, Dockerfiles, nginx, CI, e2e (Playwright), concurrency proof, OpenAPI + Postman collections |
 | `docs` | Architecture, runbook, go-live swap, demo script, scope traceability |
 
+## Live demo
+
+Demo site: https://web-production-f54a1.up.railway.app · API: https://concierge-api-production-3d90.up.railway.app · details in `docs/06-live-environment.md`.
+
 ## Quick start
 
 ```bash
