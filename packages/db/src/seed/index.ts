@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
  *   SEED_SHIFT=none pnpm db:seed       # keep original dates
  *   SEED_KB_DIR=../agent/kb pnpm db:seed
  */
+import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -99,7 +100,13 @@ function chunk<T>(arr: T[], n: number): T[][] {
 
 async function main() {
   const { db, close } = createDb(undefined, { max: 4 });
-  const data: Dataset = JSON.parse(await readFile(path.join(here, `data/vox-${MARKET}.json`), "utf8"));
+  // Data lives under src/seed/data (not copied to dist by tsc); resolve from either location.
+  const candidates = [
+    path.join(here, `data/vox-${MARKET}.json`),
+    path.resolve(here, `../../src/seed/data/vox-${MARKET}.json`),
+  ];
+  const dataPath = candidates.find((p) => existsSync(p)) ?? (candidates[0] as string);
+  const data: Dataset = JSON.parse(await readFile(dataPath, "utf8"));
   const nowLocal = nowLocalIso(TZ);
 
   // ---- date shift (keep weekday alignment: shift by whole weeks) ----
