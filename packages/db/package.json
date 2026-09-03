@@ -21,7 +21,8 @@
     "generate": "tsc -p tsconfig.json && drizzle-kit generate",
     "migrate": "tsx src/migrate.ts",
     "seed": "tsx src/seed/index.ts",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "seed:history": "tsx src/seed/history.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.39.3",

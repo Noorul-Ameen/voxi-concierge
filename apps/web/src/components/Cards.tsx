@@ -456,7 +456,7 @@ function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, 
           Premium view
         </span>
         <span>
-          <i style={{ background: "#e4002b" }} />
+          <i style={{ background: "var(--vox-blue)" }} />
           {lang === "ar" ? "محجوز لك" : "Held for you"}
         </span>
         <span>

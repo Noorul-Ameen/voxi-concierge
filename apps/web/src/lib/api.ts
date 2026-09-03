@@ -88,11 +88,17 @@ export function subscribe(session: Session, onEvent: (e: WidgetEvent) => void, o
   };
 }
 
-export async function reportingSummary(days = 30) {
-  return json<Record<string, any>>(await fetch(`${API_BASE}/reporting/summary?days=${days}`));
+export type ReportingFilters = { days?: number; language?: string; modality?: string; channel?: string; outcome?: string; demo?: "include" | "exclude" | "only"; q?: string; limit?: number };
+const qs = (f: ReportingFilters) =>
+  Object.entries(f)
+    .filter(([, v]) => v !== undefined && v !== "" && v !== "all")
+    .map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`)
+    .join("&");
+export async function reportingSummary(f: ReportingFilters = {}) {
+  return json<Record<string, any>>(await fetch(`${API_BASE}/reporting/summary?${qs(f)}`));
 }
-export async function reportingList(kind: "conversations" | "complaints" | "feedback" | "transfers" | "actions") {
-  return json<Record<string, any>>(await fetch(`${API_BASE}/reporting/${kind}`));
+export async function reportingList(kind: "conversations" | "complaints" | "feedback" | "transfers" | "actions", f: ReportingFilters = {}) {
+  return json<Record<string, any>>(await fetch(`${API_BASE}/reporting/${kind}?${qs(f)}`));
 }
 export async function reportingConversation(id: string) {
   return json<Record<string, any>>(await fetch(`${API_BASE}/reporting/conversations/${encodeURIComponent(id)}`));

@@ -44,7 +44,7 @@ Demo site: https://web-production-f54a1.up.railway.app · API: https://concierge
 pnpm install
 cp .env.example .env
 docker compose -f infra/docker-compose.yml up -d postgres
-pnpm db:migrate && pnpm db:seed
+pnpm db:migrate && pnpm db:seed && pnpm db:seed:history   # real catalogue + demo personas + synthetic dashboard history
 infra/dev-up.sh            # vista-mock :4010, concierge-api :4020, worker, web :5173
 open http://localhost:5173 # demo page (text mode works without ElevenLabs credentials)
 ```

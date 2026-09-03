@@ -253,7 +253,7 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
       <div className="widget-body" ref={bodyRef}>
         {mode === "idle" && !items.length ? (
           <div className="start">
-            <div className="orb" style={{ width: 64, height: 64, borderRadius: "50%", background: "conic-gradient(from 180deg, #e4002b, #ff6b81, #e4002b)" }} />
+            <div className="orb" style={{ width: 64, height: 64, borderRadius: "50%", background: "conic-gradient(from 180deg, var(--vox-blue), #7fd3f5, var(--vox-blue))" }} />
             <p>{lang === "ar" ? "اسألني عن الأفلام والمواعيد والحجوزات والاسترداد والعروض والمأكولات — بالصوت أو الكتابة." : "Ask me about movies, showtimes, bookings, refunds, offers and food — by voice or text."}</p>
             <button className="btn primary" onClick={() => start("voice")}>
               🎙 {t(lang, "startVoice")}

@@ -15,6 +15,7 @@
     "lint:fix": "biome check --write .",
     "db:migrate": "pnpm --filter @voxi/db migrate",
     "db:seed": "pnpm --filter @voxi/db seed",
+    "db:seed:history": "pnpm --filter @voxi/db seed:history",
     "dev:vista": "pnpm --filter @voxi/vista-mock dev",
     "dev:api": "pnpm --filter @voxi/concierge-api dev",
     "dev:worker": "pnpm --filter @voxi/worker dev",
