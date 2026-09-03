@@ -1,6 +1,12 @@
 import { ErrorCodes } from "@voxi/contracts";
 import { schema as S } from "@voxi/db";
-import { buildTasteProfile, recommendConcessions, recommendFilms, scoreSession } from "@voxi/domain";
+import {
+  buildTasteProfile,
+  recommendConcessions,
+  recommendFilms,
+  resolveSpokenDate,
+  scoreSession,
+} from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 import { eq } from "drizzle-orm";
 import { enqueue, idem, toRef, waitFor } from "../actions/ledger.js";
@@ -235,7 +241,7 @@ export const customerTools: Pick<
       : c?.homeCinemaId
         ? [c.homeCinemaId]
         : ["0002"];
-    const date = input.date ?? ctx.nowLocal.slice(0, 10);
+    const date = resolveSpokenDate(input.date, ctx.nowLocal);
     const sessions = (
       await Promise.all((input.cinemaId ? [input.cinemaId] : cinemaIds).map((id) => ctx.catalog.sessions(id)))
     )

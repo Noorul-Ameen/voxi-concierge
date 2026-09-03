@@ -157,3 +157,17 @@ describe("fuzzy matching", () => {
     expect(similarity("spider man", "Spider-Man: Brand New Day")).toBeGreaterThan(0.5);
   });
 });
+
+describe("spoken dates", () => {
+  it("resolves today/tomorrow/weekday/weekend in cinema-local time", async () => {
+    const { resolveSpokenDate } = await import("../src/index.js");
+    const now = "2026-09-03T22:30:00"; // Thursday
+    expect(resolveSpokenDate("today", now)).toBe("2026-09-03");
+    expect(resolveSpokenDate("tomorrow", now)).toBe("2026-09-04");
+    expect(resolveSpokenDate("friday", now)).toBe("2026-09-04");
+    expect(resolveSpokenDate("thursday", now)).toBe("2026-09-03");
+    expect(resolveSpokenDate("next thursday", now)).toBe("2026-09-10");
+    expect(resolveSpokenDate("weekend", now)).toBe("2026-09-05");
+    expect(resolveSpokenDate("2026-09-20", now)).toBe("2026-09-20");
+  });
+});

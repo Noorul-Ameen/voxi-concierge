@@ -80,3 +80,39 @@ export const CINEMA_ALIASES: Record<string, string[]> = {
   "0057": ["Wafi", "وافي"],
   "0104": ["Reem Mall", "Reem Island", "ريم مول"],
 };
+
+/**
+ * Resolve a spoken date ("today", "tomorrow", "friday", "weekend", or YYYY-MM-DD) against a cinema-local ISO timestamp.
+ * Returns YYYY-MM-DD. Weekday names resolve to the next occurrence (today counts if it is that weekday).
+ * "weekend" resolves to the coming Saturday (UAE weekend: Sat/Sun); "next weekend" adds a week.
+ */
+export function resolveSpokenDate(word: string | undefined, nowLocalIso: string): string {
+  const today = nowLocalIso.slice(0, 10);
+  if (!word) return today;
+  const w = word.trim().toLowerCase();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(w)) return w;
+  const add = (d: number) => {
+    const t = new Date(`${today}T00:00:00Z`);
+    t.setUTCDate(t.getUTCDate() + d);
+    return t.toISOString().slice(0, 10);
+  };
+  if (w === "today" || w === "tonight") return today;
+  if (w === "tomorrow") return add(1);
+  if (w === "day after tomorrow") return add(2);
+  const dow = new Date(`${today}T00:00:00Z`).getUTCDay(); // 0=Sun
+  if (/weekend$/.test(w)) {
+    const toSat = (6 - dow + 7) % 7;
+    return add(toSat + (w.startsWith("next") ? 7 : 0));
+  }
+  const names = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+  const m = w.match(/^(next )?(\w+day)$/);
+  if (m) {
+    const target = names.indexOf(m[2] ?? "");
+    if (target >= 0) {
+      let diff = (target - dow + 7) % 7;
+      if (m[1]) diff += diff === 0 ? 7 : 0;
+      return add(diff);
+    }
+  }
+  return today;
+}

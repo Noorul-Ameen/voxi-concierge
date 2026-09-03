@@ -1,5 +1,5 @@
 import type { Experience } from "@voxi/contracts";
-import { similarity } from "@voxi/domain";
+import { resolveSpokenDate, similarity } from "@voxi/domain";
 import type { Film, Session } from "../services/catalog.js";
 import { fmtDate, fmtDateTime, fmtMinutes, fmtTime, joinList, t } from "../services/format.js";
 import { type ToolCtx, type ToolHandlers, err, ok } from "./types.js";
@@ -261,8 +261,8 @@ export const movieTools: Pick<
       const c = cinemas.find((x) => x.id === id);
       return c ? (ctx.lang === "ar" ? c.nameAlt || c.name : c.name) : id;
     };
-    const date = input.date ?? ctx.nowLocal.slice(0, 10);
-    const dateTo = input.dateTo ?? date;
+    const date = resolveSpokenDate(input.date, ctx.nowLocal);
+    const dateTo = input.dateTo ? resolveSpokenDate(input.dateTo, ctx.nowLocal) : date;
     const base = (await sessionsFor(ctx, cinemaIds)).filter(
       (s) => (!film || s.hoCode === film.hoCode) && s.showtime >= ctx.nowLocal,
     );

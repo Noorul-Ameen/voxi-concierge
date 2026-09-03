@@ -11,7 +11,13 @@
 import { z } from "zod";
 import { Experience, Language, PaymentMethod, RefundMethod } from "./common.js";
 
-const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "YYYY-MM-DD");
+/** YYYY-MM-DD, or a natural word the server resolves in cinema-local time: today, tomorrow, day after tomorrow, weekday names (next occurrence), weekend. */
+const dateStr = z
+  .string()
+  .regex(
+    /^(\d{4}-\d{2}-\d{2}|today|tonight|tomorrow|day after tomorrow|weekend|this weekend|next weekend|(next )?(mon|tues|wednes|thurs|fri|satur|sun)day)$/i,
+    "YYYY-MM-DD or today/tomorrow/weekday",
+  );
 const timeStr = z.string().regex(/^\d{2}:\d{2}$/, "HH:mm");
 
 // ---------- Phase 1: movies, cinemas, information ----------
@@ -39,7 +45,11 @@ export const SearchSessionsInput = z.object({
     .string()
     .optional()
     .describe("Cinema or mall name, fuzzy matched, e.g. 'Mall of the Emirates', 'MOE', 'Deira'"),
-  date: dateStr.optional().describe("Defaults to today (Asia/Dubai)"),
+  date: dateStr
+    .optional()
+    .describe(
+      "YYYY-MM-DD or a word: today, tomorrow, friday, weekend. Defaults to today (Dubai time). Do not compute dates yourself — pass the word.",
+    ),
   dateTo: dateStr.optional(),
   timeFrom: timeStr.optional(),
   timeTo: timeStr.optional(),

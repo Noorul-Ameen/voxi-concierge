@@ -21,7 +21,11 @@ describe("Phase 1 — information", () => {
     expect(r.ui.type).toBe("movie");
   });
   it("accepts a film-language filter without breaking the conversation context (regression)", async () => {
-    const r = await h.tool("search_films", conv("f3"), { language: "Tamil", status: "now_showing", limit: 3 });
+    const r = await h.tool("search_films", conv("f3"), {
+      language: "Tamil",
+      status: "now_showing",
+      limit: 3,
+    });
     expect(r.ok).toBe(true);
     expect(r.data.films.length).toBeGreaterThan(0);
     expect(r.data.films.every((f: any) => /Tamil/i.test(f.language))).toBe(true);
