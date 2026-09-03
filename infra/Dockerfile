@@ -21,7 +21,7 @@ COPY . .
 RUN pnpm -r --filter '!@voxi/web' build
 
 FROM node:22-alpine AS runtime
-ENV NODE_ENV=production
+ENV NODE_ENV=production TZ=UTC
 WORKDIR /app
 COPY --from=build /app ./
 USER node

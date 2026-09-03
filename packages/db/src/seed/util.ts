@@ -84,3 +84,11 @@ export function addMinutesIso(iso: string, minutes: number): string {
   d.setUTCMinutes(d.getUTCMinutes() + minutes);
   return d.toISOString().slice(0, 19);
 }
+
+/**
+ * Cinema-local "now" as a Date whose UTC fields equal the local wall clock (matches how `timestamp`
+ * columns without time zone are read back). Use this for any comparison against showtime columns.
+ */
+export function nowLocalDate(timeZone = process.env.DEFAULT_TIMEZONE ?? "Asia/Dubai", at = new Date()): Date {
+  return new Date(`${nowLocalIso(timeZone, at)}Z`);
+}
