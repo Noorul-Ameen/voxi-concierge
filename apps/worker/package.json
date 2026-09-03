@@ -1,0 +1,26 @@
+{
+  "name": "@voxi/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "node dist/main.js",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@voxi/db": "workspace:*",
+    "@voxi/contracts": "workspace:*",
+    "@voxi/domain": "workspace:*",
+    "@voxi/vista-client": "workspace:*",
+    "hono": "4.7.2",
+    "@hono/node-server": "1.13.8",
+    "@hono/zod-validator": "0.4.2",
+    "drizzle-orm": "0.39.3",
+    "postgres": "3.4.5",
+    "pino": "9.6.0",
+    "zod": "3.24.1"
+  }
+}

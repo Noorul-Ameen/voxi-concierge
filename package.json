@@ -1,0 +1,29 @@
+{
+  "name": "voxi",
+  "private": true,
+  "version": "0.1.0",
+  "description": "VOX 2.0 Digital Concierge (Voxi) — Phase 1 & 2. Conversational concierge on ElevenLabs Agents with a Vista-shaped backend.",
+  "packageManager": "pnpm@10.28.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "pnpm -r --filter './packages/**' --filter './apps/**' build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r --workspace-concurrency=1 test",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "db:migrate": "pnpm --filter @voxi/db migrate",
+    "db:seed": "pnpm --filter @voxi/db seed",
+    "dev:vista": "pnpm --filter @voxi/vista-mock dev",
+    "dev:api": "pnpm --filter @voxi/concierge-api dev",
+    "dev:worker": "pnpm --filter @voxi/worker dev",
+    "dev:web": "pnpm --filter @voxi/web dev",
+    "scrape": "pnpm --filter @voxi/scraper scrape"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "typescript": "5.7.3",
+    "vitest": "3.0.5",
+    "tsx": "4.19.2",
+    "@types/node": "22.13.1"
+  }
+}

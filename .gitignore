@@ -1,0 +1,10 @@
+node_modules
+dist
+.env
+.env.*
+!.env.example
+*.log
+.pgdata
+coverage
+apps/scraper/out/chunks
+apps/scraper/out/*.bak

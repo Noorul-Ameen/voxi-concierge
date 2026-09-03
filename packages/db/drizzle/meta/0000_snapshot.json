@@ -1,0 +1,3997 @@
+{
+  "id": "9774d8c8-db8a-43f2-b5bd-db510a425e2b",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.cinema_operators": {
+      "name": "cinema_operators",
+      "schema": "",
+      "columns": {
+        "cinema_id": {
+          "name": "cinema_id",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "code": {
+          "name": "code",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "short_name": {
+          "name": "short_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "experience": {
+          "name": "experience",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "cinema_operators_cinema_id_cinemas_id_fk": {
+          "name": "cinema_operators_cinema_id_cinemas_id_fk",
+          "tableFrom": "cinema_operators",
+          "tableTo": "cinemas",
+          "columnsFrom": [
+            "cinema_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "cinema_operators_cinema_id_code_pk": {
+          "name": "cinema_operators_cinema_id_code_pk",
+          "columns": [
+            "cinema_id",
+            "code"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.cinemas": {
+      "name": "cinemas",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(8)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "cinema_national_id": {
+          "name": "cinema_national_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name_alt": {
+          "name": "name_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "phone_number": {
+          "name": "phone_number",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "email_address": {
+          "name": "email_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "address1": {
+          "name": "address1",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "address2": {
+          "name": "address2",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "city": {
+          "name": "city",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "latitude": {
+          "name": "latitude",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "longitude": {
+          "name": "longitude",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "parking_info": {
+          "name": "parking_info",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "loyalty_code": {
+          "name": "loyalty_code",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "is_gift_store": {
+          "name": "is_gift_store",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "description_alt": {
+          "name": "description_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "public_transport": {
+          "name": "public_transport",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "currency_code": {
+          "name": "currency_code",
+          "type": "varchar(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'AED'"
+        },
+        "allow_print_at_home": {
+          "name": "allow_print_at_home",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "allow_online_voucher": {
+          "name": "allow_online_voucher",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": true
+        },
+        "display_sofa_seats": {
+          "name": "display_sofa_seats",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "time_zone_id": {
+          "name": "time_zone_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'Arabian Standard Time'"
+        },
+        "hopk": {
+          "name": "hopk",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "server_name": {
+          "name": "server_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "slug": {
+          "name": "slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "mall_name": {
+          "name": "mall_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "emirate": {
+          "name": "emirate",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "short_code": {
+          "name": "short_code",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "opening_hours": {
+          "name": "opening_hours",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "accessibility_info": {
+          "name": "accessibility_info",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "in_mall_directions": {
+          "name": "in_mall_directions",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "in_mall_directions_alt": {
+          "name": "in_mall_directions_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "best_parking": {
+          "name": "best_parking",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "experiences": {
+          "name": "experiences",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "website_url": {
+          "name": "website_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.film_genres": {
+      "name": "film_genres",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(10)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name_translations": {
+          "name": "name_translations",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.films": {
+      "name": "films",
+      "schema": "",
+      "columns": {
+        "ho_code": {
+          "name": "ho_code",
+          "type": "varchar(12)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title_alt": {
+          "name": "title_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "rating": {
+          "name": "rating",
+          "type": "varchar(12)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "rating_description": {
+          "name": "rating_description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "rating_description_alt": {
+          "name": "rating_description_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "synopsis": {
+          "name": "synopsis",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "synopsis_alt": {
+          "name": "synopsis_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "opening_date": {
+          "name": "opening_date",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "run_time": {
+          "name": "run_time",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "default": 0
+        },
+        "trailer_url": {
+          "name": "trailer_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "genre_ids": {
+          "name": "genre_ids",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "genre_names": {
+          "name": "genre_names",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "cast": {
+          "name": "cast",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "language": {
+          "name": "language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "subtitles": {
+          "name": "subtitles",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "poster_url": {
+          "name": "poster_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "hero_url": {
+          "name": "hero_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "slug": {
+          "name": "slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "website_url": {
+          "name": "website_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'now_showing'"
+        },
+        "is_scheduled_at_cinema": {
+          "name": "is_scheduled_at_cinema",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "source_hash": {
+          "name": "source_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "films_status_idx": {
+          "name": "films_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "films_title_idx": {
+          "name": "films_title_idx",
+          "columns": [
+            {
+              "expression": "title",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.scheduled_films": {
+      "name": "scheduled_films",
+      "schema": "",
+      "columns": {
+        "cinema_id": {
+          "name": "cinema_id",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ho_code": {
+          "name": "ho_code",
+          "type": "varchar(12)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "first_showtime": {
+          "name": "first_showtime",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "last_showtime": {
+          "name": "last_showtime",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "scheduled_films_cinema_id_cinemas_id_fk": {
+          "name": "scheduled_films_cinema_id_cinemas_id_fk",
+          "tableFrom": "scheduled_films",
+          "tableTo": "cinemas",
+          "columnsFrom": [
+            "cinema_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "scheduled_films_ho_code_films_ho_code_fk": {
+          "name": "scheduled_films_ho_code_films_ho_code_fk",
+          "tableFrom": "scheduled_films",
+          "tableTo": "films",
+          "columnsFrom": [
+            "ho_code"
+          ],
+          "columnsTo": [
+            "ho_code"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "scheduled_films_cinema_id_ho_code_pk": {
+          "name": "scheduled_films_cinema_id_ho_code_pk",
+          "columns": [
+            "cinema_id",
+            "ho_code"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.session_attributes": {
+      "name": "session_attributes",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(10)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "short_name": {
+          "name": "short_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "alt_description": {
+          "name": "alt_description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "alt_short_name": {
+          "name": "alt_short_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "message": {
+          "name": "message",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "sales_channels": {
+          "name": "sales_channels",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'|IVR|CALL|WWW|KIOSK|CELL|PDA|POS|POSBK|RSP|'"
+        },
+        "is_used_for_concepts": {
+          "name": "is_used_for_concepts",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "is_used_for_session_advertising": {
+          "name": "is_used_for_session_advertising",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": true
+        },
+        "display_priority": {
+          "name": "display_priority",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "default": 100
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.sessions": {
+      "name": "sessions",
+      "schema": "",
+      "columns": {
+        "cinema_id": {
+          "name": "cinema_id",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ho_code": {
+          "name": "ho_code",
+          "type": "varchar(12)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "showtime": {
+          "name": "showtime",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "session_business_date": {
+          "name": "session_business_date",
+          "type": "date",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "screen_name": {
+          "name": "screen_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "screen_number": {
+          "name": "screen_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "cinema_operator_code": {
+          "name": "cinema_operator_code",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "experience": {
+          "name": "experience",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "format_code": {
+          "name": "format_code",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0000000001'"
+        },
+        "attribute_ids": {
+          "name": "attribute_ids",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "area_category_codes": {
+          "name": "area_category_codes",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[\"0000000001\",\"0000000002\"]'::jsonb"
+        },
+        "seats_available": {
+          "name": "seats_available",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "total_seats": {
+          "name": "total_seats",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "is_allocated_seating": {
+          "name": "is_allocated_seating",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": true
+        },
+        "allow_child_admits": {
+          "name": "allow_child_admits",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": true
+        },
+        "allow_ticket_sales": {
+          "name": "allow_ticket_sales",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": true
+        },
+        "soldout_status": {
+          "name": "soldout_status",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "default": 0
+        },
+        "price_group_code": {
+          "name": "price_group_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "sales_channels": {
+          "name": "sales_channels",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "';UNO;SAPP;POS;POSBK;IVR;KIOSK;WWW;PDA;CELL;CALL;RSP;GSALE;'"
+        },
+        "type_code": {
+          "name": "type_code",
+          "type": "varchar(4)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'01'"
+        },
+        "seat_layout_template_id": {
+          "name": "seat_layout_template_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "booking_url": {
+          "name": "booking_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "language": {
+          "name": "language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "source_hash": {
+          "name": "source_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "sessions_film_idx": {
+          "name": "sessions_film_idx",
+          "columns": [
+            {
+              "expression": "ho_code",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sessions_showtime_idx": {
+          "name": "sessions_showtime_idx",
+          "columns": [
+            {
+              "expression": "showtime",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sessions_cinema_date_idx": {
+          "name": "sessions_cinema_date_idx",
+          "columns": [
+            {
+              "expression": "cinema_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "session_business_date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "sessions_cinema_id_cinemas_id_fk": {
+          "name": "sessions_cinema_id_cinemas_id_fk",
+          "tableFrom": "sessions",
+          "tableTo": "cinemas",
+          "columnsFrom": [
+            "cinema_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "sessions_ho_code_films_ho_code_fk": {
+          "name": "sessions_ho_code_films_ho_code_fk",
+          "tableFrom": "sessions",
+          "tableTo": "films",
+          "columnsFrom": [
+            "ho_code"
+          ],
+          "columnsTo": [
+            "ho_code"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "sessions_cinema_id_session_id_pk": {
+          "name": "sessions_cinema_id_session_id_pk",
+          "columns": [
+            "cinema_id",
+            "session_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.bookings": {
+      "name": "bookings",
+      "schema": "",
+      "columns": {
+        "vista_booking_id": {
+          "name": "vista_booking_id",
+          "type": "varchar(16)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "vista_booking_number": {
+          "name": "vista_booking_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "vista_trans_number": {
+          "name": "vista_trans_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cinema_id": {
+          "name": "cinema_id",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ho_code": {
+          "name": "ho_code",
+          "type": "varchar(12)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "film_title": {
+          "name": "film_title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "film_title_alt": {
+          "name": "film_title_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "film_classification": {
+          "name": "film_classification",
+          "type": "varchar(12)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "experience": {
+          "name": "experience",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "screen_name": {
+          "name": "screen_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "showtime": {
+          "name": "showtime",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'confirmed'"
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "customer": {
+          "name": "customer",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tickets": {
+          "name": "tickets",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "concessions": {
+          "name": "concessions",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "applied_offers": {
+          "name": "applied_offers",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "payments": {
+          "name": "payments",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "total_value_cents": {
+          "name": "total_value_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tax_value_cents": {
+          "name": "tax_value_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "booking_fee_value_cents": {
+          "name": "booking_fee_value_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "refunded_value_cents": {
+          "name": "refunded_value_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "sales_channel": {
+          "name": "sales_channel",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'WWW'"
+        },
+        "source": {
+          "name": "source",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'seed'"
+        },
+        "qr_payload": {
+          "name": "qr_payload",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "swapped_from_booking_id": {
+          "name": "swapped_from_booking_id",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "swapped_to_booking_id": {
+          "name": "swapped_to_booking_id",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_third_party": {
+          "name": "is_third_party",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "tickets_collected": {
+          "name": "tickets_collected",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "booked_at": {
+          "name": "booked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "bookings_customer_idx": {
+          "name": "bookings_customer_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "bookings_email_idx": {
+          "name": "bookings_email_idx",
+          "columns": [
+            {
+              "expression": "customer",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "bookings_session_idx": {
+          "name": "bookings_session_idx",
+          "columns": [
+            {
+              "expression": "cinema_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "session_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "bookings_number_idx": {
+          "name": "bookings_number_idx",
+          "columns": [
+            {
+              "expression": "cinema_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "vista_booking_number",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "bookings_cinema_id_cinemas_id_fk": {
+          "name": "bookings_cinema_id_cinemas_id_fk",
+          "tableFrom": "bookings",
+          "tableTo": "cinemas",
+          "columnsFrom": [
+            "cinema_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "bookings_customer_id_customers_id_fk": {
+          "name": "bookings_customer_id_customers_id_fk",
+          "tableFrom": "bookings",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.concession_items": {
+      "name": "concession_items",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(16)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "cinema_id": {
+          "name": "cinema_id",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "tab": {
+          "name": "tab",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "head_office_item_code": {
+          "name": "head_office_item_code",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "hopk": {
+          "name": "hopk",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description_alt": {
+          "name": "description_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "extended_description": {
+          "name": "extended_description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "extended_description_alt": {
+          "name": "extended_description_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "price_in_cents": {
+          "name": "price_in_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tax_in_cents": {
+          "name": "tax_in_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "item_class_code": {
+          "name": "item_class_code",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'BOX'"
+        },
+        "image_url": {
+          "name": "image_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "dietary_tags": {
+          "name": "dietary_tags",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "allergens": {
+          "name": "allergens",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "calories": {
+          "name": "calories",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_combo": {
+          "name": "is_combo",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "package_child_items": {
+          "name": "package_child_items",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "modifier_groups": {
+          "name": "modifier_groups",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "experiences": {
+          "name": "experiences",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "in_seat_delivery": {
+          "name": "in_seat_delivery",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "pickup_at_counter": {
+          "name": "pickup_at_counter",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": true
+        },
+        "is_best_seller": {
+          "name": "is_best_seller",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "display_sequence": {
+          "name": "display_sequence",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "default": 100
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        }
+      },
+      "indexes": {
+        "concession_tab_idx": {
+          "name": "concession_tab_idx",
+          "columns": [
+            {
+              "expression": "tab",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.orders": {
+      "name": "orders",
+      "schema": "",
+      "columns": {
+        "user_session_id": {
+          "name": "user_session_id",
+          "type": "varchar(64)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "cinema_id": {
+          "name": "cinema_id",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "state": {
+          "name": "state",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'draft'"
+        },
+        "tickets": {
+          "name": "tickets",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "concessions": {
+          "name": "concessions",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "applied_offers": {
+          "name": "applied_offers",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "total_value_cents": {
+          "name": "total_value_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "tax_value_cents": {
+          "name": "tax_value_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "booking_fee_value_cents": {
+          "name": "booking_fee_value_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "discount_value_cents": {
+          "name": "discount_value_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "loyalty_points_payable_cents": {
+          "name": "loyalty_points_payable_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "customer": {
+          "name": "customer",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "client_class": {
+          "name": "client_class",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'WWW'"
+        },
+        "seats_allocated": {
+          "name": "seats_allocated",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "last_updated_at": {
+          "name": "last_updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expiry_at": {
+          "name": "expiry_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "completed_booking_id": {
+          "name": "completed_booking_id",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "orders_state_expiry_idx": {
+          "name": "orders_state_expiry_idx",
+          "columns": [
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "expiry_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "orders_conversation_idx": {
+          "name": "orders_conversation_idx",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "orders_cinema_id_cinemas_id_fk": {
+          "name": "orders_cinema_id_cinemas_id_fk",
+          "tableFrom": "orders",
+          "tableTo": "cinemas",
+          "columnsFrom": [
+            "cinema_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "orders_customer_id_customers_id_fk": {
+          "name": "orders_customer_id_customers_id_fk",
+          "tableFrom": "orders",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.refunds": {
+      "name": "refunds",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "booking_id": {
+          "name": "booking_id",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount_cents": {
+          "name": "amount_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "method": {
+          "name": "method",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tender_category": {
+          "name": "tender_category",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ticket_ids": {
+          "name": "ticket_ids",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "reference": {
+          "name": "reference",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'completed'"
+        },
+        "initiated_by": {
+          "name": "initiated_by",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'concierge'"
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "refunds_booking_idx": {
+          "name": "refunds_booking_idx",
+          "columns": [
+            {
+              "expression": "booking_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "refunds_booking_id_bookings_vista_booking_id_fk": {
+          "name": "refunds_booking_id_bookings_vista_booking_id_fk",
+          "tableFrom": "refunds",
+          "tableTo": "bookings",
+          "columnsFrom": [
+            "booking_id"
+          ],
+          "columnsTo": [
+            "vista_booking_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.seat_layout_templates": {
+      "name": "seat_layout_templates",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "experience": {
+          "name": "experience",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "total_seats": {
+          "name": "total_seats",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "layout": {
+          "name": "layout",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.session_seat_state": {
+      "name": "session_seat_state",
+      "schema": "",
+      "columns": {
+        "cinema_id": {
+          "name": "cinema_id",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "session_id": {
+          "name": "session_id",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "seats": {
+          "name": "seats",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "session_seat_state_cinema_id_session_id_pk": {
+          "name": "session_seat_state_cinema_id_session_id_pk",
+          "columns": [
+            "cinema_id",
+            "session_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.ticket_types": {
+      "name": "ticket_types",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "cinema_id": {
+          "name": "cinema_id",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ticket_type_code": {
+          "name": "ticket_type_code",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "experience": {
+          "name": "experience",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "area_category_code": {
+          "name": "area_category_code",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "description_alt": {
+          "name": "description_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "long_description": {
+          "name": "long_description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "price_in_cents": {
+          "name": "price_in_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "hopk": {
+          "name": "hopk",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "head_office_grouping_code": {
+          "name": "head_office_grouping_code",
+          "type": "varchar(12)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "is_child_only": {
+          "name": "is_child_only",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "is_package": {
+          "name": "is_package",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "loyalty_only": {
+          "name": "loyalty_only",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false,
+          "default": false
+        },
+        "loyalty_points_cost": {
+          "name": "loyalty_points_cost",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "qty_per_order": {
+          "name": "qty_per_order",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "default": 10
+        },
+        "display_sequence": {
+          "name": "display_sequence",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "default": 1
+        },
+        "price_group_code": {
+          "name": "price_group_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "sales_channels": {
+          "name": "sales_channels",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[\"CALL\",\"CELL\",\"KIOSK\",\"POS\",\"POSBK\",\"WWW\"]'::jsonb"
+        }
+      },
+      "indexes": {
+        "ticket_types_cinema_exp_idx": {
+          "name": "ticket_types_cinema_exp_idx",
+          "columns": [
+            {
+              "expression": "cinema_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "experience",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ticket_types_cinema_id_cinemas_id_fk": {
+          "name": "ticket_types_cinema_id_cinemas_id_fk",
+          "tableFrom": "ticket_types",
+          "tableTo": "cinemas",
+          "columnsFrom": [
+            "cinema_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.customers": {
+      "name": "customers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "first_name": {
+          "name": "first_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_name": {
+          "name": "last_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "member_id": {
+          "name": "member_id",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "preferred_language": {
+          "name": "preferred_language",
+          "type": "varchar(4)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'en'"
+        },
+        "date_of_birth": {
+          "name": "date_of_birth",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "preferences": {
+          "name": "preferences",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'{}'::jsonb"
+        },
+        "home_cinema_id": {
+          "name": "home_cinema_id",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "persona": {
+          "name": "persona",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "demo_pin": {
+          "name": "demo_pin",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'0000'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "customers_email_idx": {
+          "name": "customers_email_idx",
+          "columns": [
+            {
+              "expression": "email",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "customers_phone_idx": {
+          "name": "customers_phone_idx",
+          "columns": [
+            {
+              "expression": "phone",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "customers_member_idx": {
+          "name": "customers_member_idx",
+          "columns": [
+            {
+              "expression": "member_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.loyalty_accounts": {
+      "name": "loyalty_accounts",
+      "schema": "",
+      "columns": {
+        "member_id": {
+          "name": "member_id",
+          "type": "varchar(24)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "tier": {
+          "name": "tier",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'Blue'"
+        },
+        "share_points_balance": {
+          "name": "share_points_balance",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "vox_rewards_balance_cents": {
+          "name": "vox_rewards_balance_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "version": {
+          "name": "version",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "loyalty_accounts_customer_id_customers_id_fk": {
+          "name": "loyalty_accounts_customer_id_customers_id_fk",
+          "tableFrom": "loyalty_accounts",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.loyalty_ledger": {
+      "name": "loyalty_ledger",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "member_id": {
+          "name": "member_id",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "balance_type": {
+          "name": "balance_type",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "delta": {
+          "name": "delta",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reference": {
+          "name": "reference",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "loyalty_ledger_member_idx": {
+          "name": "loyalty_ledger_member_idx",
+          "columns": [
+            {
+              "expression": "member_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "loyalty_ledger_member_id_loyalty_accounts_member_id_fk": {
+          "name": "loyalty_ledger_member_id_loyalty_accounts_member_id_fk",
+          "tableFrom": "loyalty_ledger",
+          "tableTo": "loyalty_accounts",
+          "columnsFrom": [
+            "member_id"
+          ],
+          "columnsTo": [
+            "member_id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.offer_redemptions": {
+      "name": "offer_redemptions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "offer_id": {
+          "name": "offer_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "member_id": {
+          "name": "member_id",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "order_user_session_id": {
+          "name": "order_user_session_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "booking_id": {
+          "name": "booking_id",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "discount_cents": {
+          "name": "discount_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'applied'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "offer_redemptions_member_idx": {
+          "name": "offer_redemptions_member_idx",
+          "columns": [
+            {
+              "expression": "member_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "offer_redemptions_offer_id_offers_id_fk": {
+          "name": "offer_redemptions_offer_id_offers_id_fk",
+          "tableFrom": "offer_redemptions",
+          "tableTo": "offers",
+          "columnsFrom": [
+            "offer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.offers": {
+      "name": "offers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title_alt": {
+          "name": "title_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "short_description": {
+          "name": "short_description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "short_description_alt": {
+          "name": "short_description_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "terms": {
+          "name": "terms",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "terms_alt": {
+          "name": "terms_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "type": {
+          "name": "type",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "image_url": {
+          "name": "image_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "rules": {
+          "name": "rules",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "benefit": {
+          "name": "benefit",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "total_budget": {
+          "name": "total_budget",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "remaining_budget": {
+          "name": "remaining_budget",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "per_member_limit": {
+          "name": "per_member_limit",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "how_to_redeem": {
+          "name": "how_to_redeem",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "priority": {
+          "name": "priority",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 100
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "offers_type_idx": {
+          "name": "offers_type_idx",
+          "columns": [
+            {
+              "expression": "type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.purchase_history": {
+      "name": "purchase_history",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "booking_id": {
+          "name": "booking_id",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cinema_id": {
+          "name": "cinema_id",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ho_code": {
+          "name": "ho_code",
+          "type": "varchar(12)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "film_title": {
+          "name": "film_title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "genres": {
+          "name": "genres",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "language": {
+          "name": "language",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "experience": {
+          "name": "experience",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "showtime": {
+          "name": "showtime",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ticket_count": {
+          "name": "ticket_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "concession_item_ids": {
+          "name": "concession_item_ids",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "spend_cents": {
+          "name": "spend_cents",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "indexes": {
+        "purchase_history_customer_idx": {
+          "name": "purchase_history_customer_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "purchase_history_customer_id_customers_id_fk": {
+          "name": "purchase_history_customer_id_customers_id_fk",
+          "tableFrom": "purchase_history",
+          "tableTo": "customers",
+          "columnsFrom": [
+            "customer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.actions": {
+      "name": "actions",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "varchar(160)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "varchar(48)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resource_key": {
+          "name": "resource_key",
+          "type": "varchar(96)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "input": {
+          "name": "input",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'queued'"
+        },
+        "attempts": {
+          "name": "attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "max_attempts": {
+          "name": "max_attempts",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 3
+        },
+        "result": {
+          "name": "result",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "steps": {
+          "name": "steps",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "requested_by": {
+          "name": "requested_by",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'agent'"
+        },
+        "tool_call_id": {
+          "name": "tool_call_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "correlation_id": {
+          "name": "correlation_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "finished_at": {
+          "name": "finished_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "locked_by": {
+          "name": "locked_by",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lease_until": {
+          "name": "lease_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "actions_idempotency_idx": {
+          "name": "actions_idempotency_idx",
+          "columns": [
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "actions_conversation_status_idx": {
+          "name": "actions_conversation_status_idx",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "actions_queue_idx": {
+          "name": "actions_queue_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "actions_resource_idx": {
+          "name": "actions_resource_idx",
+          "columns": [
+            {
+              "expression": "resource_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.complaints": {
+      "name": "complaints",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "customer_name": {
+          "name": "customer_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "customer_email": {
+          "name": "customer_email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "customer_phone": {
+          "name": "customer_phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "category": {
+          "name": "category",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "severity": {
+          "name": "severity",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'medium'"
+        },
+        "cinema_id": {
+          "name": "cinema_id",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "booking_id": {
+          "name": "booking_id",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "visit_date": {
+          "name": "visit_date",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resolution_offered": {
+          "name": "resolution_offered",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'open'"
+        },
+        "sentiment": {
+          "name": "sentiment",
+          "type": "varchar(12)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'negative'"
+        },
+        "oneview_case_id": {
+          "name": "oneview_case_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "complaints_status_idx": {
+          "name": "complaints_status_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.conversation_events": {
+      "name": "conversation_events",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "seq": {
+          "name": "seq",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "type": {
+          "name": "type",
+          "type": "varchar(48)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor": {
+          "name": "actor",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'system'"
+        },
+        "payload": {
+          "name": "payload",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "conversation_events_seq_idx": {
+          "name": "conversation_events_seq_idx",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "seq",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.conversations": {
+      "name": "conversations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(64)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "agent_id": {
+          "name": "agent_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "channel": {
+          "name": "channel",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'web'"
+        },
+        "modality": {
+          "name": "modality",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'text'"
+        },
+        "language": {
+          "name": "language",
+          "type": "varchar(4)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'en'"
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "member_id": {
+          "name": "member_id",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "is_logged_in": {
+          "name": "is_logged_in",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "market": {
+          "name": "market",
+          "type": "varchar(4)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'AE'"
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "mode": {
+          "name": "mode",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'bot'"
+        },
+        "geo": {
+          "name": "geo",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "topics": {
+          "name": "topics",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "journeys": {
+          "name": "journeys",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'[]'::jsonb"
+        },
+        "started_at": {
+          "name": "started_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "ended_at": {
+          "name": "ended_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "duration_seconds": {
+          "name": "duration_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'{}'::jsonb"
+        }
+      },
+      "indexes": {
+        "conversations_started_idx": {
+          "name": "conversations_started_idx",
+          "columns": [
+            {
+              "expression": "started_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "conversations_customer_idx": {
+          "name": "conversations_customer_idx",
+          "columns": [
+            {
+              "expression": "customer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.feedback": {
+      "name": "feedback",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "customer_id": {
+          "name": "customer_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "rating": {
+          "name": "rating",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "comment": {
+          "name": "comment",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "resolved": {
+          "name": "resolved",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "language": {
+          "name": "language",
+          "type": "varchar(4)",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'en'"
+        },
+        "oneview_reference": {
+          "name": "oneview_reference",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.kb_documents": {
+      "name": "kb_documents",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(64)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "language": {
+          "name": "language",
+          "type": "varchar(4)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'en'"
+        },
+        "category": {
+          "name": "category",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "source_url": {
+          "name": "source_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "content_markdown": {
+          "name": "content_markdown",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "content_hash": {
+          "name": "content_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "elevenlabs_document_id": {
+          "name": "elevenlabs_document_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.metrics_daily": {
+      "name": "metrics_daily",
+      "schema": "",
+      "columns": {
+        "day": {
+          "name": "day",
+          "type": "varchar(10)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "language": {
+          "name": "language",
+          "type": "varchar(4)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "modality": {
+          "name": "modality",
+          "type": "varchar(8)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "channel": {
+          "name": "channel",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "conversations": {
+          "name": "conversations",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "resolved": {
+          "name": "resolved",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "transferred": {
+          "name": "transferred",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "dropped": {
+          "name": "dropped",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "journeys_completed": {
+          "name": "journeys_completed",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "journeys_abandoned": {
+          "name": "journeys_abandoned",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "topics": {
+          "name": "topics",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "transfer_reasons": {
+          "name": "transfer_reasons",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "avg_duration_seconds": {
+          "name": "avg_duration_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "avg_rating_x100": {
+          "name": "avg_rating_x100",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "metrics_daily_key": {
+          "name": "metrics_daily_key",
+          "columns": [
+            {
+              "expression": "day",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "language",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "modality",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "channel",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.pending_confirmations": {
+      "name": "pending_confirmations",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "action_type": {
+          "name": "action_type",
+          "type": "varchar(48)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "resource_key": {
+          "name": "resource_key",
+          "type": "varchar(96)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "summary": {
+          "name": "summary",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "spoken_summary": {
+          "name": "spoken_summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "pending_conf_conv_idx": {
+          "name": "pending_conf_conv_idx",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "action_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.transcripts": {
+      "name": "transcripts",
+      "schema": "",
+      "columns": {
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "varchar(64)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "turns": {
+          "name": "turns",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "analysis": {
+          "name": "analysis",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'{}'::jsonb"
+        },
+        "summary": {
+          "name": "summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "call_successful": {
+          "name": "call_successful",
+          "type": "varchar(12)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "raw": {
+          "name": "raw",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "received_at": {
+          "name": "received_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.transfers": {
+      "name": "transfers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "varchar(32)",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "conversation_id": {
+          "name": "conversation_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "reason": {
+          "name": "reason",
+          "type": "varchar(24)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "summary": {
+          "name": "summary",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "summary_alt": {
+          "name": "summary_alt",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "''"
+        },
+        "context": {
+          "name": "context",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false,
+          "default": "'{}'::jsonb"
+        },
+        "adapter": {
+          "name": "adapter",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "external_conversation_id": {
+          "name": "external_conversation_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "external_reference": {
+          "name": "external_reference",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'requested'"
+        },
+        "agent_name": {
+          "name": "agent_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "oneview_note_id": {
+          "name": "oneview_note_id",
+          "type": "varchar(32)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "connected_at": {
+          "name": "connected_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "ended_at": {
+          "name": "ended_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "transfers_conversation_idx": {
+          "name": "transfers_conversation_idx",
+          "columns": [
+            {
+              "expression": "conversation_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

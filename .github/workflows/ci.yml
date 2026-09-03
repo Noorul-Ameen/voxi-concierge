@@ -1,0 +1,26 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: voxi, POSTGRES_PASSWORD: voxi, POSTGRES_DB: voxi }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U voxi" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgres://voxi:voxi@localhost:5432/voxi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.28.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm db:migrate
+      - run: pnpm db:seed
+      - run: pnpm test

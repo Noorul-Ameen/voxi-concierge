@@ -1,0 +1,70 @@
+# Voxi — local/production-like stack. `docker compose -f infra/docker-compose.yml up --build`
+name: voxi
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: voxi
+      POSTGRES_PASSWORD: voxi
+      POSTGRES_DB: voxi
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U voxi"], interval: 5s, timeout: 3s, retries: 20 }
+
+  migrate:
+    build: { context: .., dockerfile: infra/Dockerfile, target: runtime }
+    command: ["node", "packages/db/dist/migrate.js"]
+    environment: { DATABASE_URL: postgres://voxi:voxi@postgres:5432/voxi }
+    depends_on: { postgres: { condition: service_healthy } }
+
+  seed:
+    build: { context: .., dockerfile: infra/Dockerfile, target: runtime }
+    command: ["node", "packages/db/dist/seed/index.js"]
+    environment: { DATABASE_URL: postgres://voxi:voxi@postgres:5432/voxi }
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    profiles: ["seed"]
+
+  vista-mock:
+    build: { context: .., dockerfile: infra/Dockerfile, target: runtime }
+    command: ["node", "apps/vista-mock/dist/main.js"]
+    env_file: ../.env
+    environment: { DATABASE_URL: postgres://voxi:voxi@postgres:5432/voxi, VISTA_MOCK_PORT: "4010" }
+    ports: ["4010:4010"]
+    depends_on: { migrate: { condition: service_completed_successfully } }
+    healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost:4010/healthz"], interval: 10s, timeout: 3s, retries: 10 }
+
+  concierge-api:
+    build: { context: .., dockerfile: infra/Dockerfile, target: runtime }
+    command: ["node", "apps/concierge-api/dist/main.js"]
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgres://voxi:voxi@postgres:5432/voxi
+      VISTA_BASE_URL: http://vista-mock:4010/vistatickets/vista/v2
+      VISTA_OAUTH_URL: http://vista-mock:4010/v1/oauth/generate
+      CONCIERGE_PORT: "4020"
+    ports: ["4020:4020"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+      vista-mock: { condition: service_healthy }
+    healthcheck: { test: ["CMD", "wget", "-qO-", "http://localhost:4020/healthz"], interval: 10s, timeout: 3s, retries: 10 }
+
+  worker:
+    build: { context: .., dockerfile: infra/Dockerfile, target: runtime }
+    command: ["node", "apps/worker/dist/main.js"]
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgres://voxi:voxi@postgres:5432/voxi
+      VISTA_BASE_URL: http://vista-mock:4010/vistatickets/vista/v2
+      VISTA_OAUTH_URL: http://vista-mock:4010/v1/oauth/generate
+      CONCIERGE_INTERNAL_URL: http://concierge-api:4020
+    depends_on:
+      concierge-api: { condition: service_healthy }
+
+  web:
+    build: { context: .., dockerfile: infra/Dockerfile.web }
+    ports: ["8080:80"]
+    depends_on: [concierge-api]
+    profiles: ["web"]
+
+volumes:
+  pgdata: {}

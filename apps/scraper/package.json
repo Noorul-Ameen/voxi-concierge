@@ -1,0 +1,13 @@
+{
+  "name": "@voxi/scraper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "scrape": "tsx src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": { "@voxi/db": "workspace:*", "@voxi/contracts": "workspace:*", "cheerio": "1.0.0", "zod": "3.24.1", "p-limit": "6.2.0" }
+}
