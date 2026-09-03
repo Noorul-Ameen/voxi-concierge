@@ -10,6 +10,7 @@ COPY apps/concierge-api/package.json apps/concierge-api/
 COPY apps/worker/package.json apps/worker/
 COPY apps/scraper/package.json apps/scraper/
 COPY packages/db/package.json packages/db/
+COPY packages/concierge-core/package.json packages/concierge-core/
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/domain/package.json packages/domain/
 COPY packages/vista-client/package.json packages/vista-client/
