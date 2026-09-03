@@ -135,7 +135,7 @@ const SHORT_CODES: Record<string, string> = {
 
 /** Fallback coordinates for cinema pages that do not embed a map link. */
 const GEO_FALLBACK: Record<string, [string, string]> = {
-  "0045": ["25.1181", "55.2004"], // Kempinski, Mall of the Emirates
+  "0045": ["25.1168", "55.1992"], // Kempinski, Mall of the Emirates (hotel wing)
   "0009": ["25.6869", "55.7828"], // Al Hamra Mall, RAK
   "0104": ["24.4938", "54.4058"], // Reem Mall
   "0057": ["25.2287", "55.3195"], // Wafi Mall
