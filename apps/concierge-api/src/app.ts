@@ -103,12 +103,39 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
     const correlationId = c.req.header("x-correlation-id") ?? prefixedId("corr", 8);
     c.header("x-correlation-id", correlationId);
     // ElevenLabs sends tool params flat; we accept both {conversationId,..., input:{...}} and flat params.
+    // Only en/ar count as the *conversation* language; a tool may carry its own `language` param
+    // (e.g. search_films language:"Tamil"), which must not break context parsing.
+    const isLang = (v: unknown): v is "en" | "ar" => v === "en" || v === "ar";
+    const num = (v: unknown) =>
+      typeof v === "number"
+        ? v
+        : typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))
+          ? Number(v)
+          : undefined;
+    const str = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v : undefined);
     const ctxParsed = ConversationContext.safeParse({
-      ...body,
       conversationId: body.conversationId ?? body.system__conversation_id ?? body.conversation_id,
+      language: isLang(body.language) ? body.language : undefined,
+      channel: str(body.channel),
+      modality: str(body.modality),
+      customerId: str(body.customerId),
+      memberId: str(body.memberId),
+      lat: num(body.lat),
+      lng: num(body.lng),
     });
     if (!ctxParsed.success)
-      return c.json({ ok: false, error: { code: "VALIDATION", message: "conversationId is required" } }, 400);
+      return c.json(
+        {
+          ok: false,
+          error: {
+            code: "VALIDATION",
+            message: ctxParsed.error.issues
+              .map((i) => `${i.path.join(".") || "body"}: ${i.message}`)
+              .join("; "),
+          },
+        },
+        400,
+      );
     const { conversationId, language, channel, modality, customerId, memberId, lat, lng } = ctxParsed.data;
     const input =
       (body.input as Record<string, unknown> | undefined) ??
@@ -135,7 +162,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       lat,
       lng,
     });
-    const lang = (input.language as "en" | "ar" | undefined) ?? (conversation.language as "en" | "ar");
+    const lang = isLang(input.language) ? input.language : (conversation.language as "en" | "ar");
     const toolCtx: ToolCtx = {
       ...app,
       catalog,

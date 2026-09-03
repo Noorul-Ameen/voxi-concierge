@@ -20,6 +20,13 @@ describe("Phase 1 — information", () => {
     expect(r.speech).toMatch(/Spider-Man/);
     expect(r.ui.type).toBe("movie");
   });
+  it("accepts a film-language filter without breaking the conversation context (regression)", async () => {
+    const r = await h.tool("search_films", conv("f3"), { language: "Tamil", status: "now_showing", limit: 3 });
+    expect(r.ok).toBe(true);
+    expect(r.data.films.length).toBeGreaterThan(0);
+    expect(r.data.films.every((f: any) => /Tamil/i.test(f.language))).toBe(true);
+    expect(r.speech).not.toMatch(/undefined/);
+  });
   it("filters films by child age", async () => {
     const r = await h.tool("search_films", conv("f2"), { maxAge: 10, limit: 20 });
     expect(r.data.films.every((f: any) => !/^(15\+|18\+|18TC|21\+)$/.test(f.rating))).toBe(true);
