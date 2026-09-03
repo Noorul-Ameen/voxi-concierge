@@ -17,19 +17,22 @@ export function reportingRoutes(app: AppContext) {
       .where(gte(S.actions.createdAt, since))
       .groupBy(S.actions.type, S.actions.status);
     const total = convs.length;
-    const by = <K extends string>(f: (x: (typeof convs)[number]) => K) =>
-      convs.reduce<Record<string, number>>((m, x) => ({ ...m, [f(x)]: (m[f(x)] ?? 0) + 1 }), {});
+    const count = <T>(rows: T[], f: (x: T) => string) => {
+      const m: Record<string, number> = {};
+      for (const x of rows) m[f(x)] = (m[f(x)] ?? 0) + 1;
+      return m;
+    };
+    const by = (f: (x: (typeof convs)[number]) => string) => count(convs, f);
     const journeys: Record<string, { completed: number; abandoned: number; failed: number }> = {};
     for (const cv of convs)
-      for (const j of cv.journeys ?? [])
-        (journeys[j.name] ??= { completed: 0, abandoned: 0, failed: 0 })[j.status]++;
+      for (const j of cv.journeys ?? []) {
+        journeys[j.name] ??= { completed: 0, abandoned: 0, failed: 0 };
+        journeys[j.name]![j.status]++;
+      }
     const topics: Record<string, number> = {};
     for (const cv of convs) for (const tp of cv.topics ?? []) topics[tp] = (topics[tp] ?? 0) + 1;
     const transfers = await app.db.select().from(S.transfers).where(gte(S.transfers.createdAt, since));
-    const transferReasons = transfers.reduce<Record<string, number>>(
-      (m, t) => ({ ...m, [t.reason]: (m[t.reason] ?? 0) + 1 }),
-      {},
-    );
+    const transferReasons = count(transfers, (t) => t.reason);
     const durations = convs.filter((x) => x.durationSeconds).map((x) => x.durationSeconds!);
     return c.json({
       window: { days, since: since.toISOString() },
@@ -56,10 +59,7 @@ export function reportingRoutes(app: AppContext) {
       transfers: {
         total: transfers.length,
         reasons: transferReasons,
-        byAdapter: transfers.reduce<Record<string, number>>(
-          (m, t) => ({ ...m, [t.adapter]: (m[t.adapter] ?? 0) + 1 }),
-          {},
-        ),
+        byAdapter: count(transfers, (t) => t.adapter),
       },
       actions: actions.map((a) => ({ type: a.type, status: a.status, count: Number(a.n) })),
       feedback: {
@@ -67,22 +67,18 @@ export function reportingRoutes(app: AppContext) {
         avgRating: fb.length
           ? Math.round((fb.reduce((a, b) => a + b.rating, 0) / fb.length) * 100) / 100
           : null,
-        distribution: fb.reduce<Record<string, number>>(
-          (m, x) => ({ ...m, [x.rating]: (m[x.rating] ?? 0) + 1 }),
-          {},
-        ),
+        distribution: count(fb, (x) => String(x.rating)),
       },
       voice: {
-        byLanguage: convs
-          .filter((x) => x.modality !== "text")
-          .reduce<Record<string, { total: number; resolved: number }>>((m, x) => {
-            const k = x.language;
-            const cur = m[k] ?? { total: 0, resolved: 0 };
-            return {
-              ...m,
-              [k]: { total: cur.total + 1, resolved: cur.resolved + (x.outcome === "resolved" ? 1 : 0) },
-            };
-          }, {}),
+        byLanguage: (() => {
+          const m: Record<string, { total: number; resolved: number }> = {};
+          for (const x of convs.filter((x) => x.modality !== "text")) {
+            m[x.language] ??= { total: 0, resolved: 0 };
+            m[x.language]!.total++;
+            if (x.outcome === "resolved") m[x.language]!.resolved++;
+          }
+          return m;
+        })(),
       },
     });
   });

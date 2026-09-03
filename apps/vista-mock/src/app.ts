@@ -520,16 +520,14 @@ export function createApp(db: Db, cfg: MockConfig) {
         lastUpdatedAt: new Date(),
       })
       .where(eq(S.orders.userSessionId, order.userSessionId));
-    await db
-      .insert(S.offerRedemptions)
-      .values({
-        id: `rd_${shortId(10)}`,
-        offerId: offer.id,
-        memberId: body.MemberId ?? null,
-        orderUserSessionId: order.userSessionId,
-        discountCents: applied.discountCents,
-        status: "applied",
-      });
+    await db.insert(S.offerRedemptions).values({
+      id: `rd_${shortId(10)}`,
+      offerId: offer.id,
+      memberId: body.MemberId ?? null,
+      orderUserSessionId: order.userSessionId,
+      discountCents: applied.discountCents,
+      status: "applied",
+    });
     return c.json({
       ...(await orderResponse(order.userSessionId)),
       AppliedOffer: { Id: offer.id, Title: offer.title, DiscountCents: applied.discountCents },

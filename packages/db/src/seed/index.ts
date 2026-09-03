@@ -363,16 +363,14 @@ async function main() {
       if (r.showtime > cur.last) cur.last = r.showtime;
     }
   }
-  await db
-    .insert(s.scheduledFilms)
-    .values(
-      [...sf].map(([k, v]) => ({
-        cinemaId: k.split("|")[0]!,
-        hoCode: k.split("|")[1]!,
-        firstShowtime: v.first,
-        lastShowtime: v.last,
-      })),
-    );
+  await db.insert(s.scheduledFilms).values(
+    [...sf].map(([k, v]) => ({
+      cinemaId: k.split("|")[0]!,
+      hoCode: k.split("|")[1]!,
+      firstShowtime: v.first,
+      lastShowtime: v.last,
+    })),
+  );
   log(`sessions: ${sessionRows.length}; scheduled films: ${sf.size}`);
 
   // ---- ticket types ----
@@ -479,17 +477,15 @@ async function main() {
       demoPin: p.pin,
     })),
   );
-  await db
-    .insert(s.loyaltyAccounts)
-    .values(
-      PERSONAS.filter((p) => p.memberId).map((p) => ({
-        memberId: p.memberId!,
-        customerId: p.id,
-        tier: p.tier ?? "Blue",
-        sharePointsBalance: p.sharePoints ?? 0,
-        voxRewardsBalanceCents: p.voxRewardsCents ?? 0,
-      })),
-    );
+  await db.insert(s.loyaltyAccounts).values(
+    PERSONAS.filter((p) => p.memberId).map((p) => ({
+      memberId: p.memberId!,
+      customerId: p.id,
+      tier: p.tier ?? "Blue",
+      sharePointsBalance: p.sharePoints ?? 0,
+      voxRewardsBalanceCents: p.voxRewardsCents ?? 0,
+    })),
+  );
 
   // ---- bookings on real sessions ----
   const allSessions = sessionRows;
@@ -793,16 +789,14 @@ async function main() {
   await db.insert(s.purchaseHistory).values(extraHistory);
   // persist seat states touched by bookings
   await db.delete(s.sessionSeatState);
-  await db
-    .insert(s.sessionSeatState)
-    .values(
-      [...seatStates].map(([k, seats]) => ({
-        cinemaId: k.split("-")[0]!,
-        sessionId: k.split("-")[1]!,
-        seats,
-        version: 1,
-      })),
-    );
+  await db.insert(s.sessionSeatState).values(
+    [...seatStates].map(([k, seats]) => ({
+      cinemaId: k.split("-")[0]!,
+      sessionId: k.split("-")[1]!,
+      seats,
+      version: 1,
+    })),
+  );
   log(
     `bookings: ${bookingRows.length}; purchase history: ${historyRows.length + extraHistory.length}; seat states: ${seatStates.size}`,
   );

@@ -371,12 +371,9 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       if (inp.autoAllocate) {
         const cur = await ctx.vista.getOrder(inp.userSessionId);
         const tickets = (cur.Order?.Sessions?.[0]?.Tickets ?? []) as { TicketTypeCode: string }[];
-        const grouped = Object.entries(
-          tickets.reduce<Record<string, number>>(
-            (m, x) => ({ ...m, [x.TicketTypeCode]: (m[x.TicketTypeCode] ?? 0) + 1 }),
-            {},
-          ),
-        ).map(([TicketTypeCode, Qty]) => ({ TicketTypeCode, Qty }));
+        const counts: Record<string, number> = {};
+        for (const x of tickets) counts[x.TicketTypeCode] = (counts[x.TicketTypeCode] ?? 0) + 1;
+        const grouped = Object.entries(counts).map(([TicketTypeCode, Qty]) => ({ TicketTypeCode, Qty }));
         order = (
           await ctx.vista
             .addTickets({
@@ -633,18 +630,16 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         customerId?: string;
       };
       const id = prefixedId("fb", 10);
-      await ctx.db
-        .insert(S.feedback)
-        .values({
-          id,
-          conversationId: a.conversationId,
-          customerId: inp.customerId ?? null,
-          rating: inp.rating,
-          comment: inp.comment,
-          resolved: inp.resolved ?? null,
-          language: inp.language,
-          oneViewReference: `OV-FB-${id.slice(-6).toUpperCase()}`,
-        });
+      await ctx.db.insert(S.feedback).values({
+        id,
+        conversationId: a.conversationId,
+        customerId: inp.customerId ?? null,
+        rating: inp.rating,
+        comment: inp.comment,
+        resolved: inp.resolved ?? null,
+        language: inp.language,
+        oneViewReference: `OV-FB-${id.slice(-6).toUpperCase()}`,
+      });
       return {
         result: {
           speech: t(ctx.lang, "Thanks, your feedback is recorded.", "شكراً، تم تسجيل ملاحظاتك."),
@@ -688,25 +683,23 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
                 "Our team will respond by email within 48 hours.",
                 "سيرد فريقنا عبر البريد الإلكتروني خلال 48 ساعة.",
               );
-      await ctx.db
-        .insert(S.complaints)
-        .values({
-          id,
-          conversationId: a.conversationId,
-          customerId: inp.customerId ?? null,
-          customerName: inp.customerName,
-          customerEmail: inp.customerEmail,
-          customerPhone: inp.customerPhone,
-          category: inp.category,
-          severity: inp.severity,
-          cinemaId: inp.cinemaId ?? null,
-          bookingId: inp.bookingId ?? null,
-          visitDate: inp.visitDate ?? null,
-          description: inp.description,
-          resolutionOffered: resolution,
-          status: "open",
-          oneViewCaseId: `OV-${id}`,
-        });
+      await ctx.db.insert(S.complaints).values({
+        id,
+        conversationId: a.conversationId,
+        customerId: inp.customerId ?? null,
+        customerName: inp.customerName,
+        customerEmail: inp.customerEmail,
+        customerPhone: inp.customerPhone,
+        category: inp.category,
+        severity: inp.severity,
+        cinemaId: inp.cinemaId ?? null,
+        bookingId: inp.bookingId ?? null,
+        visitDate: inp.visitDate ?? null,
+        description: inp.description,
+        resolutionOffered: resolution,
+        status: "open",
+        oneViewCaseId: `OV-${id}`,
+      });
       const speech = t(
         ctx.lang,
         `Your complaint is logged with reference ${id}. ${resolution} Would you like me to connect you to an agent now as well?`,
@@ -788,17 +781,15 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           : "",
       ].filter(Boolean);
       const summary = lines.join("\n");
-      await ctx.db
-        .insert(S.transfers)
-        .values({
-          id: transferId,
-          conversationId: a.conversationId,
-          reason: inp.reason,
-          summary,
-          context: { bookingIds, complaintId: complaint?.id, toolsUsed },
-          adapter: ctx.handover.name,
-          status: "requested",
-        });
+      await ctx.db.insert(S.transfers).values({
+        id: transferId,
+        conversationId: a.conversationId,
+        reason: inp.reason,
+        summary,
+        context: { bookingIds, complaintId: complaint?.id, toolsUsed },
+        adapter: ctx.handover.name,
+        status: "requested",
+      });
       let res: Awaited<ReturnType<typeof ctx.handover.start>>;
       try {
         res = await ctx.handover.start({

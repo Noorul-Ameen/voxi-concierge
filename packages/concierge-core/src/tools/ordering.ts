@@ -201,12 +201,10 @@ export const orderingTools: Pick<
         type: "menu",
         title: t(ctx.lang, "Food & Drinks", "المأكولات والمشروبات"),
         items: cards,
-        actions: cards
-          .slice(0, 4)
-          .map((c) => ({
-            label: t(ctx.lang, `Add ${c.nameEn}`, `أضف ${c.name}`),
-            value: `add_item:${c.itemId}`,
-          })),
+        actions: cards.slice(0, 4).map((c) => ({
+          label: t(ctx.lang, `Add ${c.nameEn}`, `أضف ${c.name}`),
+          value: `add_item:${c.itemId}`,
+        })),
       },
       { name: "fnb_info", status: "completed" },
     );
@@ -745,26 +743,24 @@ export const offerTools: Pick<ToolHandlers, "list_offers" | "check_offer_eligibi
       type: input.type === "any" ? undefined : input.type,
       memberId,
     });
-    const cards = offers
-      .slice(0, input.limit)
-      .map((o) => ({
-        offerId: o.id,
-        title: ctx.lang === "ar" && o.titleAlt ? o.titleAlt : o.title,
-        titleEn: o.title,
-        description: ctx.lang === "ar" && o.shortDescriptionAlt ? o.shortDescriptionAlt : o.shortDescription,
-        benefit: describeBenefit(o.benefit, ctx.lang),
-        type: o.type,
-        imageUrl: o.imageUrl,
-        terms: o.terms,
-        howToRedeem: o.howToRedeem,
-        eligible: o.eligibility?.eligible,
-        requires: o.eligibility?.requires ?? [],
-        reasons: o.eligibility?.reasons ?? [],
-        remainingBudget: o.remainingBudget,
-        validDays: o.rules?.days,
-        experiences: o.rules?.experiences,
-        bankName: o.rules?.bankName,
-      }));
+    const cards = offers.slice(0, input.limit).map((o) => ({
+      offerId: o.id,
+      title: ctx.lang === "ar" && o.titleAlt ? o.titleAlt : o.title,
+      titleEn: o.title,
+      description: ctx.lang === "ar" && o.shortDescriptionAlt ? o.shortDescriptionAlt : o.shortDescription,
+      benefit: describeBenefit(o.benefit, ctx.lang),
+      type: o.type,
+      imageUrl: o.imageUrl,
+      terms: o.terms,
+      howToRedeem: o.howToRedeem,
+      eligible: o.eligibility?.eligible,
+      requires: o.eligibility?.requires ?? [],
+      reasons: o.eligibility?.reasons ?? [],
+      remainingBudget: o.remainingBudget,
+      validDays: o.rules?.days,
+      experiences: o.rules?.experiences,
+      bankName: o.rules?.bankName,
+    }));
     const eligible = cards.filter((c) => c.eligible || c.requires.length);
     const speech = t(
       ctx.lang,

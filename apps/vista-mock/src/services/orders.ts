@@ -717,16 +717,14 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
             .where(
               and(eq(S.loyaltyAccounts.memberId, memberId), eq(S.loyaltyAccounts.version, acct.version)),
             );
-          await tx
-            .insert(S.loyaltyLedger)
-            .values({
-              id: shortId(12),
-              memberId,
-              balanceType: "SHARE_POINTS",
-              delta: -pts,
-              reason: "Ticket purchase",
-              reference: req.UserSessionId,
-            });
+          await tx.insert(S.loyaltyLedger).values({
+            id: shortId(12),
+            memberId,
+            balanceType: "SHARE_POINTS",
+            delta: -pts,
+            reason: "Ticket purchase",
+            reference: req.UserSessionId,
+          });
         } else {
           if (acct.voxRewardsBalanceCents < p.PaymentValueCents)
             throw new VistaError(
@@ -744,16 +742,14 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
             .where(
               and(eq(S.loyaltyAccounts.memberId, memberId), eq(S.loyaltyAccounts.version, acct.version)),
             );
-          await tx
-            .insert(S.loyaltyLedger)
-            .values({
-              id: shortId(12),
-              memberId,
-              balanceType: "VOX_REWARDS",
-              delta: -p.PaymentValueCents,
-              reason: "Ticket purchase",
-              reference: req.UserSessionId,
-            });
+          await tx.insert(S.loyaltyLedger).values({
+            id: shortId(12),
+            memberId,
+            balanceType: "VOX_REWARDS",
+            delta: -p.PaymentValueCents,
+            reason: "Ticket purchase",
+            reference: req.UserSessionId,
+          });
         }
       }
     }
@@ -877,36 +873,32 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
             version: sql`${S.loyaltyAccounts.version} + 1`,
           })
           .where(eq(S.loyaltyAccounts.memberId, memberId));
-        await tx
-          .insert(S.loyaltyLedger)
-          .values({
-            id: shortId(12),
-            memberId,
-            balanceType: "SHARE_POINTS",
-            delta: earn,
-            reason: `Earned on booking ${bookingId}`,
-            reference: bookingId,
-          });
+        await tx.insert(S.loyaltyLedger).values({
+          id: shortId(12),
+          memberId,
+          balanceType: "SHARE_POINTS",
+          delta: earn,
+          reason: `Earned on booking ${bookingId}`,
+          reference: bookingId,
+        });
       }
     }
     if (booking!.customerId) {
-      await tx
-        .insert(S.purchaseHistory)
-        .values({
-          id: `ph_${bookingId}`,
-          customerId: booking!.customerId,
-          bookingId,
-          cinemaId: order.cinemaId,
-          hoCode: sess.hoCode,
-          filmTitle: film.title,
-          genres: film.genreNames ?? [],
-          language: film.language ?? "",
-          experience: sess.experience,
-          showtime: sess.showtime,
-          ticketCount: order.tickets.length,
-          concessionItemIds: order.concessions.map((c) => c.ItemId),
-          spendCents: order.totalValueCents,
-        });
+      await tx.insert(S.purchaseHistory).values({
+        id: `ph_${bookingId}`,
+        customerId: booking!.customerId,
+        bookingId,
+        cinemaId: order.cinemaId,
+        hoCode: sess.hoCode,
+        filmTitle: film.title,
+        genres: film.genreNames ?? [],
+        language: film.language ?? "",
+        experience: sess.experience,
+        showtime: sess.showtime,
+        ticketCount: order.tickets.length,
+        concessionItemIds: order.concessions.map((c) => c.ItemId),
+        spendCents: order.totalValueCents,
+      });
     }
     return { booking: booking!, order: { ...order, state: "paid" as const }, alreadyCompleted: false };
   });

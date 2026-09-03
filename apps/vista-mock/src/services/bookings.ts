@@ -152,16 +152,14 @@ export async function refundBooking(db: Db, req: RefundReq) {
             updatedAt: new Date(),
           })
           .where(eq(S.loyaltyAccounts.memberId, memberId));
-        await tx
-          .insert(S.loyaltyLedger)
-          .values({
-            id: shortId(12),
-            memberId,
-            balanceType: "VOX_REWARDS",
-            delta: amount,
-            reason: `Refund booking ${booking.vistaBookingId}`,
-            reference,
-          });
+        await tx.insert(S.loyaltyLedger).values({
+          id: shortId(12),
+          memberId,
+          balanceType: "VOX_REWARDS",
+          delta: amount,
+          reason: `Refund booking ${booking.vistaBookingId}`,
+          reference,
+        });
       } else {
         await tx
           .update(S.loyaltyAccounts)
@@ -171,16 +169,14 @@ export async function refundBooking(db: Db, req: RefundReq) {
             updatedAt: new Date(),
           })
           .where(eq(S.loyaltyAccounts.memberId, memberId));
-        await tx
-          .insert(S.loyaltyLedger)
-          .values({
-            id: shortId(12),
-            memberId,
-            balanceType: "SHARE_POINTS",
-            delta: amount,
-            reason: `Refund booking ${booking.vistaBookingId}`,
-            reference,
-          });
+        await tx.insert(S.loyaltyLedger).values({
+          id: shortId(12),
+          memberId,
+          balanceType: "SHARE_POINTS",
+          delta: amount,
+          reason: `Refund booking ${booking.vistaBookingId}`,
+          reference,
+        });
       }
     }
     const [refund] = await tx

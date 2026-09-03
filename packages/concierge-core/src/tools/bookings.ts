@@ -105,7 +105,7 @@ export function verifyOwnership(
     message: t(
       ctx.lang,
       `To protect this booking, please confirm the last four digits of the phone number on it (ending ${mask(phone, 2)}) or the email address used.`,
-      `لحماية هذا الحجز، يرجى تأكيد آخر أربعة أرقام من رقم الهاتف المسجل أو البريد الإلكتروني المستخدم.`,
+      "لحماية هذا الحجز، يرجى تأكيد آخر أربعة أرقام من رقم الهاتف المسجل أو البريد الإلكتروني المستخدم.",
     ),
   };
 }
@@ -446,7 +446,7 @@ export const bookingTools: Pick<
         t(
           ctx.lang,
           `Swaps are only for another showtime of the same movie. ${film?.title ?? "That session"} is a different film — I can cancel and rebook instead if you like.`,
-          `التبديل متاح فقط لموعد آخر لنفس الفيلم. يمكنني الإلغاء وإعادة الحجز بدلاً من ذلك.`,
+          "التبديل متاح فقط لموعد آخر لنفس الفيلم. يمكنني الإلغاء وإعادة الحجز بدلاً من ذلك.",
         ),
       );
     }
