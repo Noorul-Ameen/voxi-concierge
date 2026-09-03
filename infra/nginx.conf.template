@@ -1,11 +1,15 @@
-# Rendered by the nginx image's envsubst at start. Vars: PORT (default 80), API_UPSTREAM (concierge-api base URL).
+# Rendered by the nginx image's envsubst at start.
+# Vars: PORT (default 80), API_UPSTREAM (concierge-api base URL), NGINX_LOCAL_RESOLVERS (set by the image from resolv.conf).
 server {
   listen ${PORT};
   listen [::]:${PORT};
   root /usr/share/nginx/html;
+  resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=on;
   location / { try_files $uri /index.html; }
   location /api/ {
-    proxy_pass ${API_UPSTREAM}/;
+    set $api_upstream "${API_UPSTREAM}";
+    rewrite ^/api/(.*)$ /$1 break;
+    proxy_pass $api_upstream;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
