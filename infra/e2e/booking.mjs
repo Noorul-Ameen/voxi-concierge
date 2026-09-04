@@ -82,7 +82,7 @@ await page.click("text=/Confirm seats/");
 await page.waitForTimeout(2500);
 await run("add_concessions", {
   userSessionId: "__ACTIVE__",
-  items: [{ itemId: "160", quantity: 1, modifierIds: ["COKEZ"] }],
+  items: [{ itemId: "7747", quantity: 1, modifierIds: ["DIET"] }],
 });
 await run("prepare_payment", { userSessionId: "__ACTIVE__", method: "CARD" });
 await page.screenshot({ path: "/tmp/book-2.png" });

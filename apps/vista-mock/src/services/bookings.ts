@@ -1,5 +1,6 @@
 import type { Db } from "@voxi/db";
 import { schema as S, nowLocalDate, seatKey, shortId } from "@voxi/db";
+import { centsToPoints } from "@voxi/domain";
 /** Booking search / refund / cancel (Vista RESTBooking.svc-style). Refunds are transactional and idempotent by reference. */
 import { and, desc, eq, or, sql } from "drizzle-orm";
 import { RC, VistaError, loadSeatState, withSessionLock } from "./orders.js";
@@ -164,7 +165,7 @@ export async function refundBooking(db: Db, req: RefundReq) {
         await tx
           .update(S.loyaltyAccounts)
           .set({
-            sharePointsBalance: sql`${S.loyaltyAccounts.sharePointsBalance} + ${amount}`,
+            sharePointsBalance: sql`${S.loyaltyAccounts.sharePointsBalance} + ${centsToPoints(amount)}`,
             version: sql`${S.loyaltyAccounts.version} + 1`,
             updatedAt: new Date(),
           })

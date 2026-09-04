@@ -12,8 +12,8 @@ export function loadConfig(env = process.env): MockConfig & { port: number; data
     },
     order: {
       expiryMinutes: Number(env.VISTA_MOCK_ORDER_EXPIRY_MINUTES ?? 10),
-      bookingFeeCentsPerTicket: Number(env.VISTA_MOCK_BOOKING_FEE_CENTS ?? 250),
-      taxRate: 0.05,
+      bookingFeeCentsPerTicket: Number(env.VISTA_MOCK_BOOKING_FEE_CENTS ?? 0), // uae.voxcinemas.com shows no online booking fee
+      taxRate: 0.05, // 5% UAE VAT, included in displayed prices (46.00 = 43.81 + 2.19 VAT)
     },
     logging: env.NODE_ENV !== "test",
   };

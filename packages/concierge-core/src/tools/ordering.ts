@@ -186,13 +186,13 @@ export const orderingTools: Pick<
           )
         : t(
             ctx.lang,
-            `The menu has ${joinList(tabs)}. Best sellers include ${joinList(
+            `The menu has ${joinList(tabs.slice(0, 5))}${tabs.length > 5 ? " and more" : ""}. Best sellers include ${joinList(
               cards
                 .filter((c) => c.isBestSeller)
                 .slice(0, 3)
                 .map((c) => `${c.name} (${c.price})`),
             )}. I can filter by vegetarian, vegan or gluten-free too.`,
-            `تشمل القائمة ${joinList(tabs, "ar")}. الأكثر مبيعاً: ${joinList(
+            `تشمل القائمة ${joinList(tabs.slice(0, 5), "ar")}${tabs.length > 5 ? " وغيرها" : ""}. الأكثر مبيعاً: ${joinList(
               cards
                 .filter((c) => c.isBestSeller)
                 .slice(0, 3)
@@ -235,15 +235,21 @@ export const orderingTools: Pick<
       descriptionAlt: x.DescriptionAlt,
       priceCents: x.PriceInCents,
       price: money(x.PriceInCents, ctx.lang),
-      area: x.AreaCategoryCode === "0000000001" ? "premium_view" : "regular",
+      area:
+        x.AreaCategoryCode === "0000000001"
+          ? "premium"
+          : x.AreaCategoryCode === "0000000003"
+            ? "preferred_view"
+            : "regular",
       isChild: x.IsChildOnlyTicket,
       membersOnly: x.IsAvailableForLoyaltyMembersOnly,
       note: x.LongDescription,
     }));
     const regular = types.filter((x) => x.area === "regular");
+    const tiers = types.filter((x) => x.area !== "regular" && !x.isChild && !x.membersOnly);
     const speech = t(
       ctx.lang,
-      `For ${s.filmTitle} ${experienceLabel(s.experience, "en")} at ${fmtDateTime(s.showtime, "en", ctx.nowLocal)}: ${joinList(regular.map((x) => `${x.description.replace(/^[A-Z0-9 ]+? /, "").toLowerCase()} ${x.price}`))}${types.some((x) => x.area === "premium_view") ? ", plus premium view seats at a small extra" : ""}. ${noKids ? `This film is rated ${filmRating}, so adults only. How many tickets?` : "How many tickets, and adults or children?"}`,
+      `For ${s.filmTitle} ${experienceLabel(s.experience, "en")} at ${fmtDateTime(s.showtime, "en", ctx.nowLocal)}: ${joinList(regular.map((x) => `${x.description.replace(/^[A-Z0-9 ]+? /, "").toLowerCase()} ${x.price}`))}${tiers.length ? `, ${joinList(tiers.map((x) => `${x.description.replace(/^[A-Z0-9]+ /, "").toLowerCase()} ${x.price}`))}` : ""}. ${noKids ? `This film is rated ${filmRating}, so adults only. How many tickets?` : "How many tickets, and adults or children?"}`,
       `لفيلم ${s.filmTitle} ${experienceLabel(s.experience, "ar")} في ${fmtDateTime(s.showtime, "ar", ctx.nowLocal)}: ${joinList(
         regular.map((x) => `${x.descriptionAlt || x.description} ${x.price}`),
         "ar",
@@ -299,6 +305,22 @@ export const orderingTools: Pick<
       `${available} seats are free for this show${held.length ? `; you currently hold ${held.join(", ")}` : ""}. I've opened the seat map — tap seats or tell me a row and seat numbers, or say "pick the best available".`,
       `${available} مقعداً متاحاً لهذا العرض${held.length ? `؛ مقاعدك المحجوزة حالياً ${held.join("، ")}` : ""}. فتحت خريطة المقاعد — اختر بالضغط أو أخبرني بالصف وأرقام المقاعد، أو قل "اختر الأفضل".`,
     );
+    // price per seat tier, as the real site shows it ("x1 Regular – 46.00 AED per ticket")
+    const ttypes = await ctx.vista.ticketTypes(s.cinemaId, s.sessionId).catch(() => null);
+    const tierLabel = (code: string) =>
+      code === "0000000001" ? "Premium" : code === "0000000003" ? "Preferred View" : "Regular";
+    const tiers = [...new Set(rows.map((r: any) => String(r.areaCategoryCode)))].map((code) => {
+      const tt = (ttypes?.Tickets ?? []).find(
+        (x: any) =>
+          x.AreaCategoryCode === code && !x.IsChildOnlyTicket && !x.IsAvailableForLoyaltyMembersOnly,
+      );
+      return {
+        area: code,
+        label: tierLabel(code),
+        priceCents: tt?.PriceInCents ?? null,
+        price: tt ? money(tt.PriceInCents, ctx.lang) : null,
+      };
+    });
     return ok(
       {
         sessionKey: s.key,
@@ -308,6 +330,7 @@ export const orderingTools: Pick<
         rows,
         available,
         held,
+        tiers,
       },
       speech,
       {
@@ -319,6 +342,10 @@ export const orderingTools: Pick<
           userSessionId: usid,
           columnCount: plan.SeatLayoutData.ColumnCount,
           screenLabel: t(ctx.lang, "SCREEN", "الشاشة"),
+          tiers,
+          filmTitle: s.filmTitle,
+          experience: s.experience,
+          screenName: s.screenName,
         },
       },
     );
@@ -370,7 +397,12 @@ export const orderingTools: Pick<
       description: x.Description,
       priceCents: x.PriceInCents,
       price: money(x.PriceInCents, ctx.lang),
-      area: x.AreaCategoryCode === "0000000001" ? "premium_view" : "regular",
+      area:
+        x.AreaCategoryCode === "0000000001"
+          ? "premium"
+          : x.AreaCategoryCode === "0000000003"
+            ? "preferred_view"
+            : "regular",
       isChild: x.IsChildOnlyTicket,
     }));
     if (existing)
@@ -532,7 +564,7 @@ export const orderingTools: Pick<
       );
     const speech = t(
       ctx.lang,
-      `Your order: ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} for ${s.filmTitle}${s.seats ? `, seats ${s.seats}` : ""}${s.concessions.length ? `, plus ${joinList(s.concessions.map((c) => `${c.quantity}× ${c.description}`))}` : ""}${s.offers.length ? `, with ${joinList(s.offers.map((o: { title: string }) => o.title))} applied` : ""}. Total ${s.total} including booking fee. Ready to pay?`,
+      `Your order: ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} for ${s.filmTitle}${s.seats ? `, seats ${s.seats}` : ""}${s.concessions.length ? `, plus ${joinList(s.concessions.map((c) => `${c.quantity}× ${c.description}`))}` : ""}${s.offers.length ? `, with ${joinList(s.offers.map((o: { title: string }) => o.title))} applied` : ""}. Total ${s.total} including VAT. Ready to pay?`,
       `طلبك: ${s.tickets.length} تذكرة لفيلم ${s.filmTitle}${s.seats ? `، المقاعد ${s.seats}` : ""}${
         s.concessions.length
           ? `، بالإضافة إلى ${joinList(
@@ -576,9 +608,23 @@ export const orderingTools: Pick<
         ),
       );
     let customer = input.customer;
-    if (!customer && ctx.conversation.customerId) {
+    // logged-in members: pre-fill details and surface stored cards + balances, like the real "Review & pay" step
+    let savedCards: { token: string; brand: string; masked: string; expiry: string; default: boolean }[] = [];
+    let wallet: { sharePoints: number; sharePointsValueCents: number; voxCreditCents: number } | undefined;
+    if (ctx.conversation.customerId) {
       const c = await ctx.vista.customer(ctx.conversation.customerId);
-      customer = { name: `${c.firstName} ${c.lastName}`, email: c.email, phone: c.phone };
+      customer ??= { name: `${c.firstName} ${c.lastName}`, email: c.email, phone: c.phone };
+      savedCards = (c.savedCards ?? []) as typeof savedCards;
+      if (ctx.conversation.memberId) {
+        const bal = await ctx.vista.balances(ctx.conversation.memberId);
+        const pts = bal.Balances.find((x) => x.BalanceTypeId === "SHARE_POINTS");
+        const cr = bal.Balances.find((x) => x.BalanceTypeId === "VOX_REWARDS");
+        wallet = {
+          sharePoints: pts?.Points ?? 0,
+          sharePointsValueCents: pts?.ValueCents ?? 0,
+          voxCreditCents: cr?.ValueCents ?? 0,
+        };
+      }
     }
     if (!customer)
       return err(
@@ -620,6 +666,32 @@ export const orderingTools: Pick<
       APPLE_PAY: "Apple Pay",
       GOOGLE_PAY: "Google Pay",
     }[input.method];
+    // bank offers for this session — the real "Review & pay" step lists them with a card-verification box
+    const sessionKey = (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey;
+    const bankOffers = await ctx.vista
+      .offers({
+        sessionKey,
+        cinemaId: s.cinemaId,
+        type: "bank",
+        memberId: ctx.conversation.memberId ?? undefined,
+      })
+      .then((r) =>
+        (r.offers ?? [])
+          .filter((o: any) => o.rules?.bankName)
+          .slice(0, 8)
+          .map((o: any) => ({
+            offerId: o.id,
+            title: o.title,
+            benefit: describeBenefit(o.benefit, ctx.lang),
+            imageUrl: o.imageUrl,
+            bankName: o.rules?.bankName,
+            cardDigits: o.rules?.cardDigits ?? { first: 6, last: 4 },
+            monthlyLimit: o.rules?.monthlyLimit,
+            requiresMember: !!o.rules?.membersOnly,
+            eligible: o.eligibility?.eligible,
+          })),
+      )
+      .catch(() => []);
     const summary = {
       userSessionId: input.userSessionId,
       method: input.method,
@@ -634,7 +706,7 @@ export const orderingTools: Pick<
     };
     const spoken = t(
       ctx.lang,
-      `To confirm: ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} for ${s.filmTitle}, ${s.showtimeLabel} at ${s.cinemaName}, seats ${s.seats}${s.concessions.length ? `, with ${joinList(s.concessions.map((c) => `${c.quantity}× ${c.description}`))}` : ""}. Total ${s.total}, paying by ${methodText} for ${customer.name}, tickets to ${customer.email}. ${input.method === "CARD" || input.method === "APPLE_PAY" || input.method === "GOOGLE_PAY" ? "I've opened the secure payment sheet — complete it there and I'll confirm." : "Shall I complete the payment?"}`,
+      `To confirm: ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} for ${s.filmTitle}, ${s.showtimeLabel} at ${s.cinemaName}, seats ${s.seats}${s.concessions.length ? `, with ${joinList(s.concessions.map((c) => `${c.quantity}× ${c.description}`))}` : ""}. Total ${s.total}, paying by ${methodText} for ${customer.name}, tickets to ${customer.email}. ${input.method === "CARD" || input.method === "APPLE_PAY" || input.method === "GOOGLE_PAY" ? `I've opened the secure payment sheet${savedCards.length ? ` — your saved ${savedCards[0]!.brand === "MASTERCARD" ? "Mastercard" : savedCards[0]!.brand === "VISA" ? "Visa" : "card"} ending ${savedCards[0]!.masked.slice(-4)} is ready to use` : ""} — complete it there and I'll confirm.` : "Shall I complete the payment?"}`,
       `للتأكيد: ${s.tickets.length} تذكرة لفيلم ${s.filmTitle}، ${s.showtimeLabel} في ${s.cinemaName}، المقاعد ${s.seats}. الإجمالي ${s.total}، الدفع عبر ${methodText} باسم ${customer.name}، وتُرسل التذاكر إلى ${customer.email}. ${input.method === "CARD" ? "فتحت نافذة الدفع الآمن — أكمل الدفع هناك وسأؤكد." : "هل أكمل الدفع؟"}`,
     );
     const conf = await createConfirmation(ctx.db, {
@@ -654,6 +726,11 @@ export const orderingTools: Pick<
         userSessionId: input.userSessionId,
         method: input.method,
         amountCents: s.totalCents,
+        vat: { beforeVatCents: s.totalCents - s.taxCents, vatCents: s.taxCents, rate: 5 },
+        savedCards,
+        wallet,
+        bankOffers,
+        customer,
         requiresSheet:
           input.method === "CARD" || input.method === "APPLE_PAY" || input.method === "GOOGLE_PAY",
       },

@@ -15,6 +15,15 @@ export type Persona = {
   preferences: CustomerPreferences;
   persona: string;
   pin: string;
+  /** Cards stored on the account (masked, as on "Manage Saved Cards"). BINs match the seeded bank offers. */
+  savedCards?: {
+    token: string;
+    brand: "VISA" | "MASTERCARD" | "AMEX";
+    first6: string;
+    last4: string;
+    expiry: string;
+    default?: boolean;
+  }[];
   /** Booking scenarios to create for this customer. Sessions are picked from the live dataset at seed time. */
   bookings: BookingScenario[];
 };
@@ -38,13 +47,24 @@ export type BookingScenario = {
 export const PERSONAS: Persona[] = [
   {
     id: "cust_sara",
+    savedCards: [
+      {
+        token: "tok_saved_sara_3845",
+        brand: "MASTERCARD",
+        first6: "521334",
+        last4: "3845",
+        expiry: "09/2027",
+        default: true,
+      },
+      { token: "tok_saved_sara_8258", brand: "VISA", first6: "455533", last4: "8258", expiry: "12/2029" },
+    ],
     firstName: "Sara",
     lastName: "Al Mansoori",
     email: "sara.almansoori@example.com",
     phone: "+971501234567",
     memberId: "SHR100234",
     tier: "Gold",
-    sharePoints: 18500,
+    sharePoints: 2450,
     voxRewardsCents: 12000,
     preferredLanguage: "ar",
     homeCinemaId: "0002",
@@ -70,7 +90,7 @@ export const PERSONAS: Persona[] = [
           { code: "0001", qty: 2 },
           { code: "0002", qty: 2 },
         ],
-        concessions: [{ itemId: "161", quantity: 1 }],
+        concessions: [{ itemId: "9540", quantity: 1 }],
         payment: "CREDIT",
         bookingId: "VXA7K2M",
         genreHint: "Family",
@@ -95,7 +115,7 @@ export const PERSONAS: Persona[] = [
         experience: "MAX",
         cinemaId: "0005",
         tickets: [{ code: "0001", qty: 2 }],
-        concessions: [{ itemId: "160", quantity: 2 }],
+        concessions: [{ itemId: "7747", quantity: 2 }],
         payment: "CREDIT",
         status: "collected",
         collected: true,
@@ -104,13 +124,23 @@ export const PERSONAS: Persona[] = [
   },
   {
     id: "cust_rahul",
+    savedCards: [
+      {
+        token: "tok_saved_rahul_2211",
+        brand: "VISA",
+        first6: "409255",
+        last4: "2211",
+        expiry: "03/2028",
+        default: true,
+      },
+    ],
     firstName: "Rahul",
     lastName: "Menon",
     email: "rahul.menon@example.com",
     phone: "+971529876543",
     memberId: "SHR200877",
     tier: "Silver",
-    sharePoints: 4200,
+    sharePoints: 620,
     voxRewardsCents: 0,
     preferredLanguage: "en",
     homeCinemaId: "0013",
@@ -161,13 +191,30 @@ export const PERSONAS: Persona[] = [
   },
   {
     id: "cust_james",
+    savedCards: [
+      {
+        token: "tok_saved_james_0099",
+        brand: "VISA",
+        first6: "424141",
+        last4: "0099",
+        expiry: "11/2028",
+        default: true,
+      },
+      {
+        token: "tok_saved_james_7712",
+        brand: "MASTERCARD",
+        first6: "472937",
+        last4: "7712",
+        expiry: "06/2027",
+      },
+    ],
     firstName: "James",
     lastName: "Whitfield",
     email: "james.whitfield@example.com",
     phone: "+971551112233",
     memberId: "SHR300019",
     tier: "Platinum",
-    sharePoints: 62000,
+    sharePoints: 8800,
     voxRewardsCents: 45000,
     preferredLanguage: "en",
     homeCinemaId: "0046",
@@ -266,13 +313,23 @@ export const PERSONAS: Persona[] = [
   },
   {
     id: "cust_omar",
+    savedCards: [
+      {
+        token: "tok_saved_omar_4410",
+        brand: "VISA",
+        first6: "437745",
+        last4: "4410",
+        expiry: "01/2029",
+        default: true,
+      },
+    ],
     firstName: "Omar",
     lastName: "Khan",
     email: "omar.khan@example.com",
     phone: "+971544445566",
     memberId: "SHR400551",
     tier: "Blue",
-    sharePoints: 900,
+    sharePoints: 106,
     voxRewardsCents: 2500,
     preferredLanguage: "en",
     homeCinemaId: "0105",
@@ -294,7 +351,7 @@ export const PERSONAS: Persona[] = [
         experience: "Standard",
         cinemaId: "0105",
         tickets: [{ code: "0003", qty: 3 }],
-        concessions: [{ itemId: "160", quantity: 1 }],
+        concessions: [{ itemId: "7747", quantity: 1 }],
         payment: "CREDIT",
         bookingId: "OKGRP33",
         genreHint: "Action",

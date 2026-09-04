@@ -1,3 +1,8 @@
+/** SHARE loyalty: 10 points = AED 1 (uae.voxcinemas.com shows "105.8 points = 10.58 AED"). */
+export const SHARE_POINT_VALUE_CENTS = 10;
+export const pointsToCents = (pts: number) => Math.round(pts * SHARE_POINT_VALUE_CENTS);
+export const centsToPoints = (cents: number) => Math.round((cents / SHARE_POINT_VALUE_CENTS) * 10) / 10;
+
 /**
  * Offers engine rules — pure functions shared by the Offers Engine mock and the concierge.
  * Vista-agnostic: works on plain offer/order snapshots.
@@ -16,6 +21,10 @@ export type OfferRules = {
   tiers?: string[];
   bankBins?: string[];
   bankName?: string;
+  /** How the real site verifies the card for a bank offer: first N digits + last 4 ("Card Number (first 6 and last 4 digits)"). */
+  cardDigits?: { first: number; last: number };
+  /** Bank offers usually cap redemptions per card per calendar month (e.g. ENBD: 2–3 tickets). */
+  monthlyLimit?: number;
   promoCode?: string;
   validFrom?: string;
   validTo?: string;

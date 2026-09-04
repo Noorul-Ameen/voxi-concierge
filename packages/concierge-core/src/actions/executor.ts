@@ -1,5 +1,6 @@
 import type { Language } from "@voxi/contracts";
 import { schema as S, nowLocalIso, prefixedId } from "@voxi/db";
+import { centsToPoints } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 /**
  * Executes ledger actions against the ports (Vista, handover, DB). Runs in the worker.
@@ -131,8 +132,8 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           : inp.refundMethod === "SHARE_POINTS"
             ? t(
                 ctx.lang,
-                `${amount} Share Points have been added to your account`,
-                `تمت إضافة ${amount} نقطة شير إلى حسابك`,
+                `${centsToPoints(amount)} Share Points (${money(amount, "en")}) have been added to your account`,
+                `تمت إضافة ${centsToPoints(amount)} نقطة شير (${money(amount, "ar")}) إلى حسابك`,
               )
             : t(
                 ctx.lang,

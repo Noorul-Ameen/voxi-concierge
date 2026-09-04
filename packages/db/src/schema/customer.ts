@@ -12,6 +12,16 @@ export type CustomerPreferences = {
   seatPreference?: "front" | "middle" | "back" | "aisle";
 };
 
+/** Stored card as shown under "Manage Saved Cards": brand, first 6 + last 4 digits, expiry — never the PAN. */
+export type SavedCard = {
+  token: string;
+  brand: "VISA" | "MASTERCARD" | "AMEX";
+  first6: string;
+  last4: string;
+  expiry: string;
+  default?: boolean;
+};
+
 export const customers = pgTable(
   "customers",
   {
@@ -25,6 +35,7 @@ export const customers = pgTable(
     dateOfBirth: text("date_of_birth"),
     preferences: jsonb("preferences").$type<CustomerPreferences>().default({}),
     homeCinemaId: varchar("home_cinema_id", { length: 8 }),
+    savedCards: jsonb("saved_cards").$type<SavedCard[]>().default([]),
     persona: text("persona").default(""), // seed label for demo personas
     demoPin: varchar("demo_pin", { length: 8 }).default("0000"), // simulated login
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -42,7 +53,7 @@ export const loyaltyAccounts = pgTable("loyalty_accounts", {
     .notNull()
     .references(() => customers.id),
   tier: varchar("tier", { length: 16 }).notNull().default("Blue"), // Blue | Silver | Gold | Platinum
-  sharePointsBalance: integer("share_points_balance").notNull().default(0), // 1 point = AED 0.01 (100 pts = AED 1) — demo assumption
+  sharePointsBalance: integer("share_points_balance").notNull().default(0), // SHARE: 10 points = AED 1 (as shown on uae.voxcinemas.com)
   voxRewardsBalanceCents: integer("vox_rewards_balance_cents").notNull().default(0), // VOX credit wallet
   version: integer("version").notNull().default(1),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -78,6 +89,8 @@ export type OfferRules = {
   tiers?: string[];
   bankBins?: string[]; // first 6 digits of card
   bankName?: string;
+  cardDigits?: { first: number; last: number }; // verification format at checkout ("first 6 and last 4 digits")
+  monthlyLimit?: number; // redemptions per card per calendar month
   promoCode?: string;
   validFrom?: string; // ISO date
   validTo?: string;

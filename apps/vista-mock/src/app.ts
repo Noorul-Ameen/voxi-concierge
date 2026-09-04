@@ -1,5 +1,6 @@
 import type { Db } from "@voxi/db";
 import { schema as S, shortId } from "@voxi/db";
+import { centsToPoints, pointsToCents } from "@voxi/domain";
 import { type Offer, applyBenefit, evaluateOffer } from "@voxi/domain";
 /**
  * Vista-shaped mock API (VOX Apigee partner API + Vista RESTBooking/RESTLoyalty + Offers Engine + Customer).
@@ -550,8 +551,14 @@ export function createApp(db: Db, cfg: MockConfig) {
     if (!acct) throw new VistaError(RC.GENERAL, RC.INSUFFICIENT_FUNDS, "Loyalty account not found");
     const gross = recalc({ ...order, loyaltyPointsPayableValueInCents: 0 }, cfg.order).totalValueCents;
     const type = body.BalanceType ?? "SHARE_POINTS";
-    const available = type === "SHARE_POINTS" ? acct.sharePointsBalance : acct.voxRewardsBalanceCents;
-    const want = Math.min(body.Points ?? available, available, gross);
+    // Share Points are valued at 10 points = AED 1; VOX credit is already in fils
+    const available =
+      type === "SHARE_POINTS" ? pointsToCents(acct.sharePointsBalance) : acct.voxRewardsBalanceCents;
+    const want = Math.min(
+      body.Points != null ? (type === "SHARE_POINTS" ? pointsToCents(body.Points) : body.Points) : available,
+      available,
+      gross,
+    );
     if (want <= 0)
       throw new VistaError(
         RC.GENERAL,
@@ -750,7 +757,7 @@ export function createApp(db: Db, cfg: MockConfig) {
             BalanceTypeId: "SHARE_POINTS",
             Name: "Share Points",
             Points: acct.sharePointsBalance,
-            ValueCents: acct.sharePointsBalance,
+            ValueCents: pointsToCents(acct.sharePointsBalance),
           },
           {
             BalanceTypeId: "VOX_REWARDS",
@@ -895,6 +902,16 @@ export function createApp(db: Db, cfg: MockConfig) {
       tier: acct?.tier ?? null,
       sharePoints: acct?.sharePointsBalance ?? 0,
       voxRewardsCents: acct?.voxRewardsBalanceCents ?? 0,
+      // masked stored cards, as the account "Manage Saved Cards" page shows them
+      savedCards: (cust.savedCards ?? []).map((sc) => ({
+        token: sc.token,
+        brand: sc.brand,
+        first6: sc.first6,
+        last4: sc.last4,
+        expiry: sc.expiry,
+        default: !!sc.default,
+        masked: `${sc.first6.slice(0, 4)} ${sc.first6.slice(4)}XX XXXX ${sc.last4}`,
+      })),
       persona: cust.persona,
     });
   });

@@ -8,6 +8,7 @@ import {
   shortId,
 } from "@voxi/db";
 import { flattenLayout, nowLocalDate } from "@voxi/db";
+import { centsToPoints } from "@voxi/domain";
 /**
  * Order lifecycle (Vista V1 Ticketing/Order semantics) with real seat holds.
  * Every mutation runs in a transaction holding a Postgres advisory lock on the session's seat map,
@@ -154,7 +155,8 @@ export function recalc(
   const total = tickets + conc + fee - order.loyaltyPointsPayableValueInCents;
   return {
     totalValueCents: Math.max(0, total),
-    taxValueCents: Math.round((tickets + conc) * cfg.taxRate),
+    // prices are VAT-inclusive, as on the VOX site ("Total before VAT 43.81 · 5% VAT 2.19 · Amount due 46.00")
+    taxValueCents: Math.round(tickets + conc - (tickets + conc) / (1 + cfg.taxRate)),
     bookingFeeValueCents: fee,
     discountValueCents: discount,
   };
@@ -641,6 +643,39 @@ export type CompleteReq = {
   Source?: string;
 };
 
+/** Card descriptor for the receipt: a tokenised PAN never reaches Vista, so derive brand + masked number from the token. */
+function describeCard(
+  p: PaymentInfo,
+  savedCards: { token: string; brand: string; first6: string; last4: string }[],
+): { brand: string; masked: string } | undefined {
+  if (p.PaymentTenderCategory !== "CREDIT" && p.PaymentTenderCategory !== "CREDITCARD") return undefined;
+  const saved = p.PaymentToken ? savedCards.find((c) => c.token === p.PaymentToken) : undefined;
+  if (saved)
+    return {
+      brand: saved.brand,
+      masked: `${saved.first6.slice(0, 4)} ${saved.first6.slice(4)}XX XXXX ${saved.last4}`,
+    };
+  const pan = (p.CardNumber ?? "").replace(/\D/g, "");
+  if (pan)
+    return {
+      brand: pan.startsWith("4") ? "VISA" : pan.startsWith("3") ? "AMEX" : "MASTERCARD",
+      masked: `${pan.slice(0, 4)} ${pan.slice(4, 6)}XX XXXX ${pan.slice(-4)}`,
+    };
+  const m = /^tok_(visa|mc|mastercard|amex|applepay|googlepay)_(\d{4})/.exec(p.PaymentToken ?? "");
+  if (m) {
+    const brand = {
+      visa: "VISA",
+      mc: "MASTERCARD",
+      mastercard: "MASTERCARD",
+      amex: "AMEX",
+      applepay: "APPLE PAY",
+      googlepay: "GOOGLE PAY",
+    }[m[1]!]!;
+    return { brand, masked: `XXXX XXXX XXXX ${m[2]}` };
+  }
+  return { brand: "CARD", masked: "XXXX XXXX XXXX XXXX" };
+}
+
 /** Simulated Checkout: card rules for the demo. Returns null when approved, else the decline reason. */
 export function simulateCardDecision(p: PaymentInfo): string | null {
   const pan = (p.CardNumber ?? "").replace(/\D/g, "");
@@ -685,6 +720,10 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
   return withSessionLock(db, order.cinemaId, order.sessionId!, async (tx) => {
     const { state, sess } = await loadSeatState(tx, order.cinemaId, order.sessionId!);
     const film = (await tx.select().from(S.films).where(eq(S.films.hoCode, sess.hoCode)))[0]!;
+    const custId = req.CustomerId ?? order.customerId ?? null;
+    const savedCards = custId
+      ? ((await tx.select().from(S.customers).where(eq(S.customers.id, custId)))[0]?.savedCards ?? [])
+      : [];
     // Loyalty / wallet tenders debit the member account (with optimistic version check)
     const memberId = req.MemberId ?? req.PaymentInfoCollection.find((p) => p.MemberId)?.MemberId;
     for (const p of req.PaymentInfoCollection) {
@@ -700,7 +739,7 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
         )[0];
         if (!acct) throw new VistaError(RC.GENERAL, RC.INSUFFICIENT_FUNDS, "Loyalty account not found");
         if (p.PaymentTenderCategory === "LOYALTY") {
-          const pts = p.PointsRedeemed ?? p.PaymentValueCents; // 1 point = 1 fils (100 pts = AED 1)
+          const pts = p.PointsRedeemed ?? centsToPoints(p.PaymentValueCents); // 10 points = AED 1
           if (acct.sharePointsBalance < pts)
             throw new VistaError(
               RC.GENERAL,
@@ -818,19 +857,20 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
         })),
         concessions: order.concessions,
         appliedOffers: order.appliedOffers,
-        payments: req.PaymentInfoCollection.map((p, i) => ({
-          PaymentTenderCategory: (p.PaymentTenderCategory === "CREDITCARD"
-            ? "CREDIT"
-            : p.PaymentTenderCategory) as "CREDIT",
-          PaymentValueCents: p.PaymentValueCents,
-          CardNumberMasked: p.CardNumber
-            ? `${p.CardNumber.replace(/\D/g, "").slice(0, 4)} **** **** ${p.CardNumber.replace(/\D/g, "").slice(-4)}`
-            : undefined,
-          CardType: p.CardNumber ? (p.CardNumber.startsWith("4") ? "VISA" : "MASTERCARD") : undefined,
-          BankReference: p.BankReference,
-          PointsRedeemed: p.PointsRedeemed,
-          Reference: `${p.PaymentTenderCategory.slice(0, 3)}${t}${i}`,
-        })),
+        payments: req.PaymentInfoCollection.map((p, i) => {
+          const card = describeCard(p, savedCards);
+          return {
+            PaymentTenderCategory: (p.PaymentTenderCategory === "CREDITCARD"
+              ? "CREDIT"
+              : p.PaymentTenderCategory) as "CREDIT",
+            PaymentValueCents: p.PaymentValueCents,
+            CardNumberMasked: card?.masked,
+            CardType: card?.brand,
+            BankReference: p.BankReference,
+            PointsRedeemed: p.PointsRedeemed,
+            Reference: `${p.PaymentTenderCategory.slice(0, 3)}${t}${i}`,
+          };
+        }),
         totalValueCents: order.totalValueCents,
         taxValueCents: order.taxValueCents,
         bookingFeeValueCents: order.bookingFeeValueCents,
@@ -865,7 +905,7 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
         )
           ? 2
           : 1;
-        const earn = Math.round((order.totalValueCents / 100) * 10) * multiplier; // 10 points per AED (demo)
+        const earn = Math.round((order.totalValueCents / 100) * 1) * multiplier; // SHARE: 1 point per AED spent (demo)
         await tx
           .update(S.loyaltyAccounts)
           .set({

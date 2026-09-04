@@ -126,14 +126,14 @@ const t0 = Date.now();
     Array.from({ length: 10 }, () =>
       tool("add_concessions", c, {
         userSessionId: usid,
-        items: [{ itemId: "101", quantity: 1 }],
+        items: [{ itemId: "2402", quantity: 1 }],
         idempotencyKey: "retry-1",
       }),
     ),
   );
   const order = await tool("get_order", c, { userSessionId: usid });
   if (!order.ok) console.log(order, rs[0]);
-  const qty = order.data.order.concessions.find((x) => x.itemId === "101")?.quantity;
+  const qty = order.data.order.concessions.find((x) => x.itemId === "2402")?.quantity;
   check("10 retried add_concessions with one idempotency key → quantity 1", qty === 1, `quantity=${qty}`);
 }
 

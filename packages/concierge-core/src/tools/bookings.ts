@@ -80,6 +80,7 @@ export function bookingCard(b: VistaBooking, lang: "en" | "ar", nowLocal: string
       isMember: !!b.Customer?.MemberId,
     },
     qrPayload: b.QrPayload,
+    bookedAt: b.BookedAtUtc,
     offers: b.AppliedOffers ?? [],
     collected: !!b.TicketsCollected,
   };

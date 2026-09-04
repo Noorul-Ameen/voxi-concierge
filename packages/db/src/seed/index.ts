@@ -450,7 +450,7 @@ async function main() {
       shortDescriptionAlt: o.shortAlt,
       terms: o.terms,
       type: o.type,
-      imageUrl: `https://picsum.photos/seed/voxi-offer-${o.id}/640/360`,
+      imageUrl: o.image ?? `https://picsum.photos/seed/voxi-offer-${o.id}/640/360`,
       rules: o.rules,
       benefit: o.benefit,
       totalBudget: o.budget ?? null,
@@ -482,6 +482,7 @@ async function main() {
       homeCinemaId: p.homeCinemaId,
       persona: p.persona,
       demoPin: p.pin,
+      savedCards: p.savedCards ?? [],
     })),
   );
   await db.insert(s.loyaltyAccounts).values(
@@ -772,7 +773,7 @@ async function main() {
           : 19;
       const showtime = new Date(now.getTime() - daysAgo * 86400000);
       showtime.setUTCHours(hour, rnd.pick([0, 15, 30, 45]), 0, 0);
-      const price = EXPERIENCE_PRICING[exp]?.adult ?? 4500;
+      const price = EXPERIENCE_PRICING[exp]?.regular ?? 4600;
       const qty = rnd.int(1, 4);
       extraHistory.push({
         id: `ph_${p.id}_${k}`,

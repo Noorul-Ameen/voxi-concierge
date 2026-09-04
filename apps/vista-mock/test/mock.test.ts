@@ -76,7 +76,7 @@ describe("order lifecycle with seat holds", () => {
     const tt = await t.get(`/Data/Cinemas/${cinemaId}/sessions/${sessionId}/tickets?salesChannel=WWW`);
     expect(tt.json.ResponseCode).toBe(0);
     ticketCode = tt.json.Tickets.find(
-      (x: any) => /ADULT/.test(x.Description) && x.AreaCategoryCode === "0000000002",
+      (x: any) => /REGULAR$/.test(x.Description) && x.AreaCategoryCode === "0000000002",
     ).TicketTypeCode;
   });
   it("adds tickets with auto-allocation, then re-selects seats, adds F&B, pays and returns a booking", async () => {
@@ -115,7 +115,7 @@ describe("order lifecycle with seat holds", () => {
     const fnb = await t.post("/Ticketing/Order/concessions", {
       UserSessionId: usid,
       CinemaId: cinemaId,
-      Concessions: [{ ItemId: "160", Quantity: 1, Modifiers: ["COKEZ"] }],
+      Concessions: [{ ItemId: "7747", Quantity: 1, Modifiers: ["DIET"] }],
     });
     expect(fnb.json.Order.Concessions).toHaveLength(1);
     const order = await t.post("/Ticketing/order", { UserSessionId: usid });
@@ -243,7 +243,7 @@ describe("offers engine", () => {
     const usid = `offer-${Date.now()}`;
     const tt = await t.get(`/Data/Cinemas/0005/sessions/${monday.SessionId}/tickets`);
     const code = tt.json.Tickets.find(
-      (x: any) => /ADULT/.test(x.Description) && x.AreaCategoryCode === "0000000002",
+      (x: any) => /REGULAR$/.test(x.Description) && x.AreaCategoryCode === "0000000002",
     ).TicketTypeCode;
     const add = await t.post("/Ticketing/Order/tickets", {
       UserSessionId: usid,

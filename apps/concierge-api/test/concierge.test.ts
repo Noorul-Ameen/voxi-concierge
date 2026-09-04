@@ -200,7 +200,8 @@ describe("Phase 1 — swaps", () => {
       (s: any) =>
         `${s.cinemaId}-${s.sessionId}` !== `${b.cinemaId}-${b.sessionId}` &&
         s.seatsAvailable > 2 &&
-        s.showtime > nowLocalIso(),
+        s.showtime >
+          new Date(new Date(`${nowLocalIso()}Z`).getTime() + 3 * 3600000).toISOString().slice(0, 19), // not inside the swap cut-off
     );
     expect(target).toBeTruthy();
     const prep = await h.tool("prepare_swap", c, {
@@ -247,7 +248,7 @@ describe("Phase 2 — guided booking end to end", () => {
     expect(start.ok).toBe(true);
     const usid = start.data.userSessionId;
     const adult = start.data.ticketTypes.find(
-      (t: any) => /ADULT/.test(t.description) && t.area === "regular",
+      (t: any) => /REGULAR$/.test(t.description) && t.area === "regular",
     ).code;
     const child = start.data.ticketTypes.find((t: any) => t.isChild && t.area === "regular").code;
     const add = await h.tool("add_tickets", c, {
@@ -282,7 +283,7 @@ describe("Phase 2 — guided booking end to end", () => {
     expect(seatCmd.ok).toBe(true);
     const fnb = await h.tool("add_concessions", c, {
       userSessionId: usid,
-      items: [{ itemId: "160", quantity: 1, modifierIds: ["COKEZ"] }],
+      items: [{ itemId: "7747", quantity: 1, modifierIds: ["DIET"] }],
     });
     expect(fnb.ok).toBe(true);
     const isMonday = new Date(`${monday.showtime}Z`).getUTCDay() === 1;

@@ -7,7 +7,8 @@ type Spec = {
   rows: number;
   cols: number;
   aisleAfter?: number[]; // column indexes after which an aisle gap exists
-  premiumRows?: number; // last N rows are area 1 (premium view)
+  premiumRows?: number; // N rows in the middle block are area 1 (Premium)
+  preferredRows?: number; // last N rows (back) are area 3 (Preferred View)
   sofa?: boolean;
   wheelchairSeats?: [row: number, col: number][];
 };
@@ -21,6 +22,7 @@ const SPECS: Spec[] = [
     cols: 16,
     aisleAfter: [3, 11],
     premiumRows: 3,
+    preferredRows: 2,
     wheelchairSeats: [
       [0, 0],
       [0, 15],
@@ -34,6 +36,7 @@ const SPECS: Spec[] = [
     cols: 20,
     aisleAfter: [4, 14],
     premiumRows: 4,
+    preferredRows: 3,
     wheelchairSeats: [
       [0, 0],
       [0, 19],
@@ -47,6 +50,7 @@ const SPECS: Spec[] = [
     cols: 22,
     aisleAfter: [5, 15],
     premiumRows: 4,
+    preferredRows: 4,
     wheelchairSeats: [
       [0, 0],
       [0, 21],
@@ -60,6 +64,7 @@ const SPECS: Spec[] = [
     cols: 26,
     aisleAfter: [6, 18],
     premiumRows: 5,
+    preferredRows: 4,
     wheelchairSeats: [
       [0, 0],
       [0, 25],
@@ -101,6 +106,7 @@ const SPECS: Spec[] = [
     cols: 14,
     aisleAfter: [4, 9],
     premiumRows: 2,
+    preferredRows: 2,
     wheelchairSeats: [[0, 0]],
   },
   { id: "PVW-S", experience: "Premium", name: "Premium 5x10", rows: 5, cols: 10, aisleAfter: [4] },
@@ -114,7 +120,11 @@ const ROWS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 
 export function buildLayout(spec: Spec): { template: SeatLayoutTemplate; totalSeats: number } {
   const gaps = new Set(spec.aisleAfter ?? []);
-  const premiumStart = spec.premiumRows ? spec.rows - spec.premiumRows : spec.rows;
+  // Row order is front (A, nearest the screen) → back. Regular rows first, then Premium, then Preferred View.
+  const preferredRows = spec.preferredRows ?? 0;
+  const premiumRows = spec.premiumRows ?? 0;
+  const regularEnd = spec.rows - premiumRows - preferredRows;
+  const premiumEnd = regularEnd + premiumRows;
   const mk = (areaNumber: number, code: string, desc: string, fromRow: number, toRow: number) => {
     const rows = [];
     for (let r = fromRow; r < toRow; r++) {
@@ -143,9 +153,9 @@ export function buildLayout(spec: Spec): { template: SeatLayoutTemplate; totalSe
     };
   };
   const areas = [];
-  if (premiumStart > 0) areas.push(mk(1, "0000000002", "REGULAR", 0, premiumStart));
-  if (spec.premiumRows)
-    areas.push(mk(areas.length + 1, "0000000001", "PREMIUM VIEW", premiumStart, spec.rows));
+  if (regularEnd > 0) areas.push(mk(1, "0000000002", "REGULAR", 0, regularEnd));
+  if (premiumRows) areas.push(mk(areas.length + 1, "0000000001", "PREMIUM", regularEnd, premiumEnd));
+  if (preferredRows) areas.push(mk(areas.length + 1, "0000000003", "PREFERRED VIEW", premiumEnd, spec.rows));
   const columnCount = Math.max(...areas.map((a) => a._w));
   const cleaned = areas.map(({ _w, ...a }) => a);
   const totalSeats = spec.rows * spec.cols;
