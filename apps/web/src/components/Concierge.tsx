@@ -34,6 +34,7 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
   const bodyRef = useRef<HTMLDivElement>(null);
   const sessionRef = useRef<Session | null>(null);
   sessionRef.current = session;
+  const statusRef = useRef<string>("disconnected"); // live connection status for callbacks that outlive a render
   const push = useCallback((it: ItemBody) => setItems((xs) => [...xs, { ...it, id: nid() } as Item]), []);
 
   // ---------- client tools (called by the agent) ----------
@@ -110,6 +111,8 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
       push({ kind: "msg", role: m.source === "user" ? "user" : "agent", text: m.message });
     },
   });
+
+  statusRef.current = conversation.status;
 
   // link ElevenLabs conversation id ↔ concierge conversation
   useEffect(() => {
@@ -213,7 +216,7 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
         void sendCommand(session, { type: "human.message", transferId: humanMode.transferId, text });
         return;
       }
-      if (conversation.status === "connected") {
+      if (statusRef.current === "connected") {
         conversation.sendUserMessage(text);
         if (mode === "text") push({ kind: "msg", role: "user", text });
       } else push({ kind: "note", text: lang === "ar" ? "ابدأ المحادثة أولاً" : "Start the conversation first" });
@@ -249,8 +252,9 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
     : ["What's on tonight at Mall of the Emirates?", "Book two tickets for a family movie tomorrow", "Cancel my booking VXA7K2M", "Which bank offers are on?"];
   const ask = async (text: string) => {
     if (!connected) await start("text");
-    // the session connects asynchronously; give the socket a moment before the first message
-    setTimeout(() => say(text), connected ? 0 : 1200);
+    // the socket connects asynchronously — wait for it (up to 20 s) before sending the suggestion
+    for (let i = 0; i < 66 && statusRef.current !== "connected"; i++) await new Promise((r) => setTimeout(r, 300));
+    say(text);
   };
   const statusText = connected
     ? conversation.isSpeaking
