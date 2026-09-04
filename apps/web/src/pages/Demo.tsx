@@ -12,35 +12,35 @@ const PERSONAS = [
     tier: "SHARE Gold",
     login: "+971 50 123 4567 · PIN 1234",
     shows: "The happy path. Logged-in member with a refundable booking. Exercises login, booking status, cancellation with refund to VOX credit or Share Points, Share balance, personalised recommendations. Prefers Arabic — switch languages mid-conversation.",
-    say: "Hi, I'm Sara. Cancel my booking VXA7K2M and refund it to Share Points.",
+    say: "Hi, I'm Sara. Cancel my booking WXA7K2M and refund it to Share Points.",
   },
   {
     name: "Rahul Menon",
     tier: "SHARE member",
     login: "Member SHR200877 · PIN 2468",
-    shows: "The policy edge cases. Booking RM3PQ9X starts in 20 minutes (inside the 30-minute cut-off → cancellation refused, swap offered, human agent offered). RMB0GO1 was bought with a bank offer → non-refundable per policy.",
-    say: "Can I cancel RM3PQ9X? … Then what about RMB0GO1?",
+    shows: "The policy edge cases. Booking WM3PQ9X starts in 20 minutes (inside the 30-minute cut-off → cancellation refused, swap offered, human agent offered). WMB6GQ2 was bought with a bank offer → non-refundable per policy.",
+    say: "Can I cancel WM3PQ9X? … Then what about WMB6GQ2?",
   },
   {
     name: "James Whitfield",
     tier: "SHARE Platinum",
     login: "james.whitfield@example.com · PIN 9876",
-    shows: "Premium experiences. GOLD booking JWG0LD7 includes pre-ordered F&B (partial cancellation keeps the meal); IMAX booking JWIMX42 is the swap demo — move it to another IMAX showtime and pay/refund the difference.",
-    say: "Swap JWIMX42 to tomorrow's 9 pm IMAX show.",
+    shows: "Premium experiences. GOLD booking WJG8LD7 includes pre-ordered F&B (partial cancellation keeps the meal); IMAX booking WJMX42R is the swap demo — move it to another IMAX showtime and pay/refund the difference.",
+    say: "Swap WJMX42R to tomorrow's 9 pm IMAX show.",
   },
   {
     name: "Layla Haddad",
     tier: "Guest",
-    login: "No account · booking LHGUEST5 · verify with last 4 digits 4455",
+    login: "No account · booking WLHGST5 · verify with last 4 digits 4455",
     shows: "The guest flow. Not logged in, so Voxi finds the booking by reference and must verify identity (last 4 digits of phone or the email) before it touches anything. Refunds go back to the original card.",
-    say: "I don't have an account. My booking is LHGUEST5, phone ending 4455.",
+    say: "I don't have an account. My booking is WLHGST5, phone ending 4455.",
   },
   {
     name: "Omar Khan",
     tier: "SHARE member",
     login: "omar.khan@example.com · PIN 1111",
-    shows: "Group and collected tickets. OKGRP33 has 6 seats — cancel just two (partial refund with proportional fee). OK4DXC0's tickets were already collected at the kiosk → cannot be refunded; Voxi explains why and offers a complaint or human agent.",
-    say: "Cancel two of the six seats on OKGRP33.",
+    shows: "Group and collected tickets. WKGRP33 has 6 seats — cancel just two (partial refund with proportional fee). WK4DXC9's tickets were already collected at the kiosk → cannot be refunded; Voxi explains why and offers a complaint or human agent.",
+    say: "Cancel two of the six seats on WKGRP33.",
   },
   {
     name: "New guest",
@@ -86,8 +86,8 @@ export function Demo() {
         <p>{ar ? "اسأل بالصوت أو الكتابة: مواعيد العرض، الحجز واختيار المقاعد، الإلغاء والاسترداد، العروض، المأكولات والمشروبات، والتحويل إلى موظف خدمة العملاء." : "Talk or type: showtimes, guided booking with seat selection, cancellations and refunds, offers, food & drinks, and a seamless hand-over to Customer Care — in English or Arabic."}</p>
         <div className="chips">
           {(ar
-            ? ["ما الذي يُعرض في مول الإمارات الليلة؟", "ألغِ حجزي VXA7K2M", "احجز تذكرتين لفيلم سبايدرمان في ماكس", "هل يمكن لطفل عمره 10 سنوات مشاهدة فيلم PG13؟", "أين السينما داخل ياس مول؟", "ما هي عروض البنوك اليوم؟"]
-            : ["What's on at Mall of the Emirates tonight?", "Cancel my booking VXA7K2M", "Book two MAX tickets for Spider-Man", "Can my 10-year-old watch a PG13 movie?", "Where is the cinema inside Yas Mall?", "Which bank offers are on today?"]
+            ? ["ما الذي يُعرض في مول الإمارات الليلة؟", "ألغِ حجزي WXA7K2M", "احجز تذكرتين لفيلم سبايدرمان في ماكس", "هل يمكن لطفل عمره 10 سنوات مشاهدة فيلم PG13؟", "أين السينما داخل ياس مول؟", "ما هي عروض البنوك اليوم؟"]
+            : ["What's on at Mall of the Emirates tonight?", "Cancel my booking WXA7K2M", "Book two MAX tickets for Spider-Man", "Can my 10-year-old watch a PG13 movie?", "Where is the cinema inside Yas Mall?", "Which bank offers are on today?"]
           ).map((c) => (
             <span key={c} className="chip">
               {c}

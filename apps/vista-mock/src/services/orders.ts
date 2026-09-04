@@ -2,6 +2,7 @@ import type { Db } from "@voxi/db";
 import {
   schema as S,
   type SeatStatusMap,
+  bookingReference,
   generateSeatState,
   pickAdjacentSeats,
   seatKey,
@@ -793,7 +794,7 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
       }
     }
     // Seats: hold → sold
-    let bookingId = shortId(7);
+    let bookingId = bookingReference();
     while (
       (
         await tx
@@ -802,7 +803,7 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
           .where(eq(S.bookings.vistaBookingId, bookingId))
       ).length
     )
-      bookingId = shortId(7);
+      bookingId = bookingReference();
     for (const t of order.tickets) {
       const k = seatKey(t.SeatRowId!, t.SeatNumber!);
       const st = state.seats[k];

@@ -20,7 +20,7 @@ await run("nearest_cinemas", { lat: 25.1181, lng: 55.2004 });
 await run("list_offers", { experience: "MAX", limit: 3 });
 await page.screenshot({ path: "/tmp/cards-2.png" });
 await run("login_customer", { phone: "0501234567", pin: "1234" });
-await run("find_booking", { bookingId: "VXA7K2M" });
+await run("find_booking", { bookingId: "WXA7K2M" });
 await run("browse_menu", { tab: "Combos", limit: 3 });
 await page.screenshot({ path: "/tmp/cards-3.png" });
 // guided booking to seat map + payment

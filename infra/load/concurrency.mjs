@@ -31,21 +31,21 @@ const t0 = Date.now();
 {
   const c = `load_cancel_${Date.now()}`;
   const prep = await tool("prepare_cancellation", c, {
-    bookingId: "LHGUEST5",
+    bookingId: "WLHGST5",
     verification: { phoneLast4: "4455" },
   });
   if (!prep.ok) console.log("prep", prep);
   const rs = await Promise.all(
     Array.from({ length: 25 }, () =>
       tool("cancel_booking", c, {
-        bookingId: "LHGUEST5",
+        bookingId: "WLHGST5",
         confirmationId: prep.data.confirmationId,
         confirmed: true,
       }),
     ),
   );
   const ids = new Set(rs.map((r) => r.data?.action?.actionId).filter(Boolean));
-  const b = await tool("find_booking", c, { bookingId: "LHGUEST5", upcomingOnly: false });
+  const b = await tool("find_booking", c, { bookingId: "WLHGST5", upcomingOnly: false });
   check(
     "25 concurrent confirmations → 1 action",
     ids.size === 1,
@@ -61,11 +61,11 @@ const t0 = Date.now();
 {
   const c = `load_mix_${Date.now()}`;
   await tool("login_customer", c, { email: "james.whitfield@example.com", pin: "9876" });
-  const prep = await tool("prepare_cancellation", c, { bookingId: "JWIMX42" });
+  const prep = await tool("prepare_cancellation", c, { bookingId: "WJMX42R" });
   const started = Date.now();
   const [cancel, ...reads] = await Promise.all([
     tool("cancel_booking", c, {
-      bookingId: "JWIMX42",
+      bookingId: "WJMX42R",
       confirmationId: prep.data.confirmationId,
       confirmed: true,
     }),

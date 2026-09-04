@@ -46,7 +46,7 @@ Stop: `pkill -f "cli.mjs watch"; pkill -f "vite"`.
 
 ### Reseeding
 
-The seed is idempotent and destructive for demo data (`pnpm db:seed` truncates commerce/customer/concierge tables and rebuilds them). Reseed before a demo so fixture bookings (`LHGUEST5`, `RM3PQ9X`, …) are back in their starting state. The catalogue is dated to the scrape snapshot; sessions are shifted at seed time so "today" always has showtimes.
+The seed is idempotent and destructive for demo data (`pnpm db:seed` truncates commerce/customer/concierge tables and rebuilds them). Reseed before a demo so fixture bookings (`WLHGST5`, `WM3PQ9X`, …) are back in their starting state. The catalogue is dated to the scrape snapshot; sessions are shifted at seed time so "today" always has showtimes.
 
 ### Synthetic reporting history
 

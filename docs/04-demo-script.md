@@ -8,11 +8,11 @@ Run `pnpm db:seed` before the demo so every fixture is in its starting state. Op
 
 | Persona | Identity | What they are for |
 |---|---|---|
-| Sara Al Mansoori | +971 50 123 4567 · PIN 1234 · SHARE Gold `SHR100234` | Logged-in journey, Arabic, personalised recommendations (family / animation history), booking `VXA7K2M` refundable, Share Points redemption |
-| Rahul Menon | `SHR200877` · PIN 2468 | Cancellation edge cases: `RM3PQ9X` starts in ~20 min (inside cut-off), `RMB0GO1` bought with a bank offer (non-refundable), Malayalam/Hindi/Tamil history |
-| James Whitfield | james.whitfield@example.com · PIN 9876 · Platinum | GOLD booking `JWG0LD7` with F&B (partial cancel keeps F&B), IMAX `JWIMX42` paid with VOX credit, swap to another showtime |
-| Layla Haddad | guest, no account | Guest verification (last 4 digits `4455`), guest refund to original card only, `LHCANC01` already cancelled |
-| Omar Khan | omar.khan@example.com · PIN 1111 · Blue | Group booking `OKGRP33` (partial cancellation of 1 of 3), `OK4DXC0` tickets already collected (not refundable) |
+| Sara Al Mansoori | +971 50 123 4567 · PIN 1234 · SHARE Gold `SHR100234` | Logged-in journey, Arabic, personalised recommendations (family / animation history), booking `WXA7K2M` refundable, Share Points redemption |
+| Rahul Menon | `SHR200877` · PIN 2468 | Cancellation edge cases: `WM3PQ9X` starts in ~20 min (inside cut-off), `WMB6GQ2` bought with a bank offer (non-refundable), Malayalam/Hindi/Tamil history |
+| James Whitfield | james.whitfield@example.com · PIN 9876 · Platinum | GOLD booking `WJG8LD7` with F&B (partial cancel keeps F&B), IMAX `WJMX42R` paid with VOX credit, swap to another showtime |
+| Layla Haddad | guest, no account | Guest verification (last 4 digits `4455`), guest refund to original card only, `WLHCNC2` already cancelled |
+| Omar Khan | omar.khan@example.com · PIN 1111 · Blue | Group booking `WKGRP33` (partial cancellation of 1 of 3), `WK4DXC9` tickets already collected (not refundable) |
 | Fatima Al Zaabi | +971 50 555 6677 · PIN 5555 | New member with no history → cold-start recommendations |
 
 Cards (simulated Checkout): `4111 1111 1111 1111` approved · `4000 0000 0000 0002` declined.
@@ -27,7 +27,7 @@ Promo `MONDAY30` (Standard, Mondays) · Bank offer via ENBD BIN `455533` · Juni
 5. **Promos & offers** — "any bank offers today?" → offer cards with eligibility (bank BIN, day, experience, tier) and remaining redemptions.
 6. **Booking information** — "how do I book?" → steps + deep link to the session page on voxcinemas.com.
 7. **Cancellation (happy path)** — log in as Sara → "cancel my booking for Saturday" → booking found, eligibility check (30-min cut-off, not collected, not bank offer), summary of refund amount and method (VOX credit or Share Points), **confirmation card** → confirm → action runs in the ledger, refund processed, receipt card. Say "cancel it again" → idempotent, no double refund.
-8. **Cancellation (edge cases)** — as Rahul: `RM3PQ9X` is inside the cut-off → clear explanation, offer to swap; `RMB0GO1` bank offer → non-refundable per policy. As Layla (guest): agent asks for the last 4 digits of the phone before disclosing anything.
+8. **Cancellation (edge cases)** — as Rahul: `WM3PQ9X` is inside the cut-off → clear explanation, offer to swap; `WMB6GQ2` bank offer → non-refundable per policy. As Layla (guest): agent asks for the last 4 digits of the phone before disclosing anything.
 9. **Swap** — as James: "move my IMAX booking to tomorrow's later show" → price difference computed, seats re-allocated, old booking linked to new, one confirmation, compensation on failure.
 10. **Transfer to agent** — get frustrated ("this is the third time, I want a person") → sentiment-triggered offer → transfer with a chat summary; the widget shows the human agent joining (simulated adapter, or a real Genesys agent when configured). The transcript continues in the same window.
 11. **Reporting dashboard** — open `/dashboard`: conversations, success/drop-off, transfers, top topics, language split, CSAT, complaints; drill into the transcript of the conversation you just had.

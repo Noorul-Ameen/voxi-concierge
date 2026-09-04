@@ -92,7 +92,7 @@ export const PERSONAS: Persona[] = [
         ],
         concessions: [{ itemId: "9540", quantity: 1 }],
         payment: "CREDIT",
-        bookingId: "VXA7K2M",
+        bookingId: "WXA7K2M",
         genreHint: "Family",
       },
       {
@@ -163,7 +163,7 @@ export const PERSONAS: Persona[] = [
         cinemaId: "0013",
         tickets: [{ code: "0001", qty: 2 }],
         payment: "CREDIT",
-        bookingId: "RM3PQ9X",
+        bookingId: "WM3PQ9X",
         languageHint: "Malayalam",
       },
       {
@@ -173,7 +173,7 @@ export const PERSONAS: Persona[] = [
         tickets: [{ code: "0001", qty: 2 }],
         offerId: "BANK-ENBD-BOGO",
         payment: "CREDIT",
-        bookingId: "RMB0GO1",
+        bookingId: "WMB6GQ2",
         languageHint: "Hindi",
       },
       {
@@ -240,7 +240,7 @@ export const PERSONAS: Persona[] = [
           { itemId: "173", quantity: 2 },
         ],
         payment: "CREDIT",
-        bookingId: "JWG0LD7",
+        bookingId: "WJG8LD7",
       },
       {
         key: "james_imax",
@@ -248,7 +248,7 @@ export const PERSONAS: Persona[] = [
         experience: "IMAX",
         tickets: [{ code: "0131", qty: 2 }],
         payment: "EWALLET",
-        bookingId: "JWIMX42",
+        bookingId: "WJMX42R",
       },
       {
         key: "james_past_theatre",
@@ -296,7 +296,7 @@ export const PERSONAS: Persona[] = [
         cinemaId: "0035",
         tickets: [{ code: "0001", qty: 2 }],
         payment: "CREDIT",
-        bookingId: "LHGUEST5",
+        bookingId: "WLHGST5",
         languageHint: "Arabic",
       },
       {
@@ -307,7 +307,7 @@ export const PERSONAS: Persona[] = [
         tickets: [{ code: "0001", qty: 1 }],
         payment: "CREDIT",
         status: "cancelled",
-        bookingId: "LHCANC01",
+        bookingId: "WLHCNC2",
       },
     ],
   },
@@ -353,7 +353,7 @@ export const PERSONAS: Persona[] = [
         tickets: [{ code: "0003", qty: 3 }],
         concessions: [{ itemId: "7747", quantity: 1 }],
         payment: "CREDIT",
-        bookingId: "OKGRP33",
+        bookingId: "WKGRP33",
         genreHint: "Action",
       },
       {
@@ -364,7 +364,7 @@ export const PERSONAS: Persona[] = [
         payment: "CREDIT",
         status: "collected",
         collected: true,
-        bookingId: "OK4DXC0",
+        bookingId: "WK4DXC9",
       },
     ],
   },

@@ -155,7 +155,7 @@ describe("order lifecycle with seat holds", () => {
       ],
     });
     expect(pay.json.Result).toBe(0);
-    expect(pay.json.VistaBookingId).toHaveLength(7);
+    expect(pay.json.VistaBookingId).toMatch(/^W[A-Z0-9]{6}$/);
     // idempotent re-pay returns the same booking
     const again = await t.post("/Ticketing/order/payment", {
       UserSessionId: usid,
@@ -271,8 +271,8 @@ describe("offers engine", () => {
 
 describe("bookings & refunds", () => {
   it("searches by booking id, phone and email", async () => {
-    const byId = await t.post("/RESTBooking.svc/booking/search", { BookingId: "vxa7k2m" });
-    expect(byId.json.Bookings[0].VistaBookingId).toBe("VXA7K2M");
+    const byId = await t.post("/RESTBooking.svc/booking/search", { BookingId: "wxa7k2m" });
+    expect(byId.json.Bookings[0].VistaBookingId).toBe("WXA7K2M");
     const byPhone = await t.post("/RESTBooking.svc/booking/search", { Phone: "050 123 4567" });
     expect(byPhone.json.Bookings.length).toBeGreaterThan(0);
     const byEmail = await t.post("/RESTBooking.svc/booking/search", {
@@ -284,14 +284,14 @@ describe("bookings & refunds", () => {
     );
   });
   it("refunds to VOX credit idempotently and rejects a second refund", async () => {
-    const b = (await t.get("/RESTBooking.svc/booking/OKGRP33")).json.Booking;
+    const b = (await t.get("/RESTBooking.svc/booking/WKGRP33")).json.Booking;
     expect(b.Status).toBe("confirmed");
     const bal0 = (await t.get("/RESTLoyalty.svc/member/SHR400551/balances")).json.Balances.find(
       (x: any) => x.BalanceTypeId === "VOX_REWARDS",
     ).ValueCents;
     const ref = `TEST-${Date.now()}`;
     const r1 = await t.post("/RESTBooking.svc/booking/refund", {
-      BookingId: "OKGRP33",
+      BookingId: "WKGRP33",
       RefundTenderCategory: "EWALLET",
       Reference: ref,
       TicketIds: ["1"],
@@ -299,7 +299,7 @@ describe("bookings & refunds", () => {
     expect(r1.json.Result).toBe(0);
     expect(r1.json.Booking.Status).toBe("partially_refunded");
     const r2 = await t.post("/RESTBooking.svc/booking/refund", {
-      BookingId: "OKGRP33",
+      BookingId: "WKGRP33",
       RefundTenderCategory: "EWALLET",
       Reference: ref,
       TicketIds: ["1"],
@@ -311,12 +311,12 @@ describe("bookings & refunds", () => {
     ).ValueCents;
     expect(bal1 - bal0).toBe(r1.json.Refund.AmountCents);
     const full = await t.post("/RESTBooking.svc/booking/cancel", {
-      BookingId: "OKGRP33",
+      BookingId: "WKGRP33",
       RefundTenderCategory: "EWALLET",
     });
     expect(full.json.Booking.Status).toBe("refunded");
     const again = await t.post("/RESTBooking.svc/booking/cancel", {
-      BookingId: "OKGRP33",
+      BookingId: "WKGRP33",
       RefundTenderCategory: "EWALLET",
     });
     expect(again.json.Result).toBe(1);

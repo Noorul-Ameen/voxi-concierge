@@ -103,24 +103,24 @@ describe("Phase 1 — information", () => {
 
 describe("Phase 1 — booking lookup, cancellation, refund", () => {
   it("finds by reference, phone and email with eligibility", async () => {
-    const byRef = await h.tool("find_booking", conv("b1"), { bookingId: "vxa7k2m" });
-    expect(byRef.data.bookings[0].bookingId).toBe("VXA7K2M");
+    const byRef = await h.tool("find_booking", conv("b1"), { bookingId: "wxa7k2m" });
+    expect(byRef.data.bookings[0].bookingId).toBe("WXA7K2M");
     expect(byRef.data.bookings[0].eligibility.eligible).toBe(true);
-    const cutoff = await h.tool("find_booking", conv("b2"), { bookingId: "RM3PQ9X" });
+    const cutoff = await h.tool("find_booking", conv("b2"), { bookingId: "WM3PQ9X" });
     expect(cutoff.data.bookings[0].eligibility.code).toBe("CUTOFF_PASSED");
-    const bank = await h.tool("check_cancellation_eligibility", conv("b3"), { bookingId: "RMB0GO1" });
+    const bank = await h.tool("check_cancellation_eligibility", conv("b3"), { bookingId: "WMB6GQ2" });
     expect(bank.data.eligibility.eligible).toBe(false);
     expect(bank.speech).toMatch(/bank/i);
-    const collected = await h.tool("check_cancellation_eligibility", conv("b4"), { bookingId: "OK4DXC0" });
+    const collected = await h.tool("check_cancellation_eligibility", conv("b4"), { bookingId: "WK4DXC9" });
     expect(collected.data.eligibility.code).toBe("TICKETS_USED");
   });
   it("requires guest verification, then cancels with confirmation and refunds to VOX credit; duplicates are idempotent", async () => {
     const c = conv("cancel");
-    const denied = await h.tool("prepare_cancellation", c, { bookingId: "VXA7K2M" });
+    const denied = await h.tool("prepare_cancellation", c, { bookingId: "WXA7K2M" });
     expect(denied.ok).toBe(false);
     expect(denied.error.code).toBe("VERIFICATION_REQUIRED");
     const prep = await h.tool("prepare_cancellation", c, {
-      bookingId: "VXA7K2M",
+      bookingId: "WXA7K2M",
       refundMethod: "VOX_CREDIT",
       verification: { phoneLast4: "4567" },
     });
@@ -129,7 +129,7 @@ describe("Phase 1 — booking lookup, cancellation, refund", () => {
     const confirmationId = prep.data.confirmationId;
     // no confirmation → rejected
     const bad = await h.tool("cancel_booking", c, {
-      bookingId: "VXA7K2M",
+      bookingId: "WXA7K2M",
       confirmationId: "cnf_nope",
       confirmed: true,
     });
@@ -137,7 +137,7 @@ describe("Phase 1 — booking lookup, cancellation, refund", () => {
     // 8 concurrent identical confirmations → exactly one action, one refund
     const results = await Promise.all(
       Array.from({ length: 8 }, () =>
-        h.tool("cancel_booking", c, { bookingId: "VXA7K2M", confirmationId, confirmed: true }),
+        h.tool("cancel_booking", c, { bookingId: "WXA7K2M", confirmationId, confirmed: true }),
       ),
     );
     const okOnes = results.filter((r) => r.ok);
@@ -147,13 +147,13 @@ describe("Phase 1 — booking lookup, cancellation, refund", () => {
     const final = await h.tool("get_action_result", c, { actionId: [...actionIds][0], waitMs: 8000 });
     expect(final.data.action.status).toBe("succeeded");
     expect(final.speech).toMatch(/cancelled/);
-    const after = await h.tool("find_booking", c, { bookingId: "VXA7K2M", upcomingOnly: false });
+    const after = await h.tool("find_booking", c, { bookingId: "WXA7K2M", upcomingOnly: false });
     expect(after.data.bookings[0].status).toBe("refunded");
     const bal = await h.ctx.vista.balances("SHR100234");
     expect(bal.Balances.find((b) => b.BalanceTypeId === "VOX_REWARDS")!.ValueCents).toBeGreaterThan(12000);
     // cancelling again is a clean conflict, not a second refund
     const prep2 = await h.tool("prepare_cancellation", c, {
-      bookingId: "VXA7K2M",
+      bookingId: "WXA7K2M",
       verification: { phoneLast4: "4567" },
     });
     expect(prep2.ok).toBe(false);
@@ -162,7 +162,7 @@ describe("Phase 1 — booking lookup, cancellation, refund", () => {
   it("partial cancellation keeps F&B and refunds proportionally", async () => {
     const c = conv("partial");
     const prep = await h.tool("prepare_cancellation", c, {
-      bookingId: "OKGRP33",
+      bookingId: "WKGRP33",
       ticketIds: ["1"],
       refundMethod: "SHARE_POINTS",
       verification: { email: "omar.khan@example.com" },
@@ -170,13 +170,13 @@ describe("Phase 1 — booking lookup, cancellation, refund", () => {
     expect(prep.ok).toBe(true);
     expect(prep.data.summary.partial).toBe(true);
     const r = await h.tool("cancel_booking", c, {
-      bookingId: "OKGRP33",
+      bookingId: "WKGRP33",
       confirmationId: prep.data.confirmationId,
       confirmed: true,
     });
     expect(r.ok).toBe(true);
     expect(r.data.action.status).toBe("succeeded");
-    const after = await h.tool("find_booking", c, { bookingId: "OKGRP33", upcomingOnly: false });
+    const after = await h.tool("find_booking", c, { bookingId: "WKGRP33", upcomingOnly: false });
     expect(after.data.bookings[0].status).toBe("partially_refunded");
     expect(after.data.bookings[0].concessions.length).toBe(1);
   });
@@ -187,7 +187,7 @@ describe("Phase 1 — swaps", () => {
     const c = conv("swap");
     const login = await h.tool("login_customer", c, { email: "james.whitfield@example.com", pin: "9876" });
     expect(login.ok).toBe(true);
-    const b = (await h.tool("find_booking", c, { bookingId: "JWG0LD7" })).data.bookings[0];
+    const b = (await h.tool("find_booking", c, { bookingId: "WJG8LD7" })).data.bookings[0];
     const alts = await h.tool("search_sessions", c, {
       hoCode: b.tickets ? undefined : undefined,
       title: b.filmTitle,
@@ -205,19 +205,19 @@ describe("Phase 1 — swaps", () => {
     );
     expect(target).toBeTruthy();
     const prep = await h.tool("prepare_swap", c, {
-      bookingId: "JWG0LD7",
+      bookingId: "WJG8LD7",
       targetSessionKey: target.sessionKey,
       paymentMethodForDifference: "VOX_CREDIT",
     });
     expect(prep.ok).toBe(true);
     const r = await h.tool("swap_booking", c, {
-      bookingId: "JWG0LD7",
+      bookingId: "WJG8LD7",
       confirmationId: prep.data.confirmationId,
       confirmed: true,
     });
     expect(r.ok).toBe(true);
     expect(r.data.result.newBookingId).toHaveLength(7);
-    const old = await h.tool("find_booking", c, { bookingId: "JWG0LD7", upcomingOnly: false });
+    const old = await h.tool("find_booking", c, { bookingId: "WJG8LD7", upcomingOnly: false });
     expect(old.data.bookings[0].status).toBe("swapped");
     const fresh = await h.tool("find_booking", c, { bookingId: r.data.result.newBookingId });
     expect(fresh.data.bookings[0].status).toBe("confirmed");

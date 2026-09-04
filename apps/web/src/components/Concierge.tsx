@@ -248,8 +248,8 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
   }, [open]);
   const thinking = connected && !humanMode && lastItem?.kind === "msg" && lastItem.role === "user" && !conversation.isSpeaking;
   const suggestions = lang === "ar"
-    ? ["ماذا يُعرض الليلة في مول الإمارات؟", "احجز تذكرتين لفيلم عائلي غداً", "ألغِ حجزي VXA7K2M", "ما هي عروض البنوك؟"]
-    : ["What's on tonight at Mall of the Emirates?", "Book two tickets for a family movie tomorrow", "Cancel my booking VXA7K2M", "Which bank offers are on?"];
+    ? ["ماذا يُعرض الليلة في مول الإمارات؟", "احجز تذكرتين لفيلم عائلي غداً", "ألغِ حجزي WXA7K2M", "ما هي عروض البنوك؟"]
+    : ["What's on tonight at Mall of the Emirates?", "Book two tickets for a family movie tomorrow", "Cancel my booking WXA7K2M", "Which bank offers are on?"];
   const ask = async (text: string) => {
     if (!connected) await start("text");
     // the socket connects asynchronously — wait for it (up to 20 s) before sending the suggestion

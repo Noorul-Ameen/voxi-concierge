@@ -19,7 +19,7 @@ Voxi can complete a booking end to end in the chat: choose a movie, cinema, date
 6. Pay. Tickets arrive by email with a QR code — scan it at the entrance, no printing needed.
 
 ## Managing a booking
-- Find a booking with the booking reference (7 characters, e.g. VXA7K2M), the email or the mobile number used.
+- Find a booking with the booking reference (7 characters, e.g. WXA7K2M), the email or the mobile number used.
 - Cancel and refund: allowed up to 30 minutes before the showtime for tickets not yet collected/scanned and not bought with a bank/telco offer. Refunds go to VOX credit (registered accounts) or Share Points; guests receive refunds to the original payment method via Customer Care.
 - Swap: move the same tickets to another showtime of the same movie; price differences are charged or refunded.
 - Lost ticket: search by email/phone and Voxi can resend the QR.
