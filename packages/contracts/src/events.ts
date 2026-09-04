@@ -62,5 +62,7 @@ export const WidgetCommand = z.discriminatedUnion("type", [
     comment: z.string().optional(),
   }),
   z.object({ type: z.literal("card.action"), value: z.string() }),
+  // widget asks the concierge to (re)render the seat map for the active order
+  z.object({ type: z.literal("seat.plan"), sessionKey: z.string(), userSessionId: z.string().optional() }),
 ]);
 export type WidgetCommand = z.infer<typeof WidgetCommand>;

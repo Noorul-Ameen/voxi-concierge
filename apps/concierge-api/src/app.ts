@@ -523,6 +523,23 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         await appendEvent(app.db, null, conv.id, "ui.action", { value: cmd.value }, "user");
         return c.json({ ok: true });
       }
+      case "seat.plan": {
+        // run the read tool in-process so the widget can draw the map without a round-trip through the agent
+        const toolCtx: ToolCtx = {
+          ...app,
+          catalog,
+          conversation: conv,
+          lang: conv.language as "en" | "ar",
+          nowLocal: nowLocalIso(app.cfg.timeZone),
+          toolCallId: prefixedId("tc", 8),
+          correlationId: prefixedId("corr", 8),
+        };
+        const r = await runTool("get_seat_plan", toolCtx, {
+          sessionKey: cmd.sessionKey,
+          userSessionId: cmd.userSessionId,
+        });
+        return c.json({ ok: r.ok, ui: r.ok ? r.ui : undefined, error: r.ok ? undefined : r.error?.message });
+      }
     }
   });
 

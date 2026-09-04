@@ -31,6 +31,31 @@ describe("Phase 1 — information", () => {
     expect(r.data.films.every((f: any) => /Tamil/i.test(f.language))).toBe(true);
     expect(r.speech).not.toMatch(/undefined/);
   });
+  it("treats 'Dubai' as an emirate and a language code as a film language when searching sessions", async () => {
+    const f = await h.tool("search_films", conv("f4"), { language: "ta", status: "now_showing", limit: 1 });
+    expect(f.ok).toBe(true);
+    const r = await h.tool("search_sessions", conv("f4"), {
+      title: f.data.films[0].title,
+      cinemaName: "Dubai",
+      date: "weekend",
+      language: "ta",
+    });
+    expect(r.ok).toBe(true);
+    expect(r.speech).not.toMatch(/don't recognise|other languages/);
+  });
+  it("never offers child tickets for an 18+ film", async () => {
+    const f = await h.tool("search_films", conv("f5"), { rating: "18+", status: "now_showing", limit: 1 });
+    if (!f.ok || !f.data.films.length) return;
+    const s = await h.tool("search_sessions", conv("f5"), {
+      title: f.data.films[0].title,
+      dateTo: "next sunday",
+    });
+    if (!s.ok || !s.data.sessions.length) return;
+    const tt = await h.tool("get_ticket_types", conv("f5"), { sessionKey: s.data.sessions[0].sessionKey });
+    expect(tt.ok).toBe(true);
+    expect(tt.data.ticketTypes.some((x: any) => x.isChild)).toBe(false);
+    expect(tt.speech).toMatch(/adults only/);
+  });
   it("filters films by child age", async () => {
     const r = await h.tool("search_films", conv("f2"), { maxAge: 10, limit: 20 });
     expect(r.data.films.every((f: any) => !/^(15\+|18\+|18TC|21\+)$/.test(f.rating))).toBe(true);

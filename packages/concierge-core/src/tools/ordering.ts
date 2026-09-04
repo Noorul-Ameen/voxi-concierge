@@ -9,6 +9,11 @@ import { fmtDateTime, joinList, money, seatLabels, t } from "../services/format.
 import { experienceLabel } from "./movies.js";
 import { type ToolCtx, type ToolHandlers, err, ok } from "./types.js";
 
+/** Child-only ticket types make no sense for 15+/18+/21+ films — hide them so the agent never offers them. */
+function adultsOnly(rating: string | undefined) {
+  return /^(15|18|21)\+?$/.test((rating ?? "").trim());
+}
+
 export type VistaOrder = Record<string, any>;
 
 export function orderSummary(o: VistaOrder, lang: "en" | "ar", nowLocal: string, cinemaName?: string) {
@@ -218,8 +223,12 @@ export const orderingTools: Pick<
     const r = await ctx.vista.ticketTypes(s.cinemaId, s.sessionId);
     if (r.ResponseCode !== 0)
       return err(ErrorCodes.VISTA_ERROR, r.ErrorDescription ?? "Ticket types unavailable");
+    const filmRating = (await ctx.catalog.film(s.hoCode))?.rating;
+    const noKids = adultsOnly(filmRating);
     const types = r.Tickets.filter(
-      (x) => !x.IsAvailableForLoyaltyMembersOnly || ctx.conversation.memberId,
+      (x) =>
+        (!x.IsAvailableForLoyaltyMembersOnly || ctx.conversation.memberId) &&
+        !(noKids && x.IsChildOnlyTicket),
     ).map((x) => ({
       code: x.TicketTypeCode,
       description: x.Description,
@@ -234,7 +243,7 @@ export const orderingTools: Pick<
     const regular = types.filter((x) => x.area === "regular");
     const speech = t(
       ctx.lang,
-      `For ${s.filmTitle} ${experienceLabel(s.experience, "en")} at ${fmtDateTime(s.showtime, "en", ctx.nowLocal)}: ${joinList(regular.map((x) => `${x.description.replace(/^[A-Z0-9 ]+? /, "").toLowerCase()} ${x.price}`))}${types.some((x) => x.area === "premium_view") ? ", plus premium view seats at a small extra" : ""}. How many tickets, and adults or children?`,
+      `For ${s.filmTitle} ${experienceLabel(s.experience, "en")} at ${fmtDateTime(s.showtime, "en", ctx.nowLocal)}: ${joinList(regular.map((x) => `${x.description.replace(/^[A-Z0-9 ]+? /, "").toLowerCase()} ${x.price}`))}${types.some((x) => x.area === "premium_view") ? ", plus premium view seats at a small extra" : ""}. ${noKids ? `This film is rated ${filmRating}, so adults only. How many tickets?` : "How many tickets, and adults or children?"}`,
       `لفيلم ${s.filmTitle} ${experienceLabel(s.experience, "ar")} في ${fmtDateTime(s.showtime, "ar", ctx.nowLocal)}: ${joinList(
         regular.map((x) => `${x.descriptionAlt || x.description} ${x.price}`),
         "ar",
@@ -350,8 +359,12 @@ export const orderingTools: Pick<
       activeSessionKey: s.key,
     };
     const tt = await ctx.vista.ticketTypes(s.cinemaId, s.sessionId);
+    const filmRating = (await ctx.catalog.film(s.hoCode))?.rating;
+    const noKids = adultsOnly(filmRating);
     const types = tt.Tickets.filter(
-      (x) => !x.IsAvailableForLoyaltyMembersOnly || ctx.conversation.memberId,
+      (x) =>
+        (!x.IsAvailableForLoyaltyMembersOnly || ctx.conversation.memberId) &&
+        !(noKids && x.IsChildOnlyTicket),
     ).map((x) => ({
       code: x.TicketTypeCode,
       description: x.Description,
@@ -376,14 +389,14 @@ export const orderingTools: Pick<
           .filter((x) => x.area === "regular")
           .slice(0, 3)
           .map((x) => `${x.description.toLowerCase()} ${x.price}`),
-      )}. How many, and any children?`,
+      )}. ${noKids ? `It's rated ${filmRating}, so adults only — how many tickets?` : "How many, and any children?"}`,
       `بدأت حجزك لفيلم ${s.filmTitle}، ${experienceLabel(s.experience, "ar")} في ${await cinemaName(ctx, s.cinemaId)} ${fmtDateTime(s.showtime, "ar", ctx.nowLocal)}. التذاكر: ${joinList(
         types
           .filter((x) => x.area === "regular")
           .slice(0, 3)
           .map((x) => `${x.description} ${x.price}`),
         "ar",
-      )}. كم عدد التذاكر، وهل هناك أطفال؟`,
+      )}. ${noKids ? `الفيلم مصنف ${filmRating} للكبار فقط — كم عدد التذاكر؟` : "كم عدد التذاكر، وهل هناك أطفال؟"}`,
     );
     return ok(
       {

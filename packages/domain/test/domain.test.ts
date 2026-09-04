@@ -170,4 +170,15 @@ describe("spoken dates", () => {
     expect(resolveSpokenDate("weekend", now)).toBe("2026-09-05");
     expect(resolveSpokenDate("2026-09-20", now)).toBe("2026-09-20");
   });
+  it("treats the weekend as Saturday–Sunday and normalises emirates and film languages", async () => {
+    const { spokenDateRangeEnd, asEmirate, normaliseFilmLanguage } = await import("../src/index.js");
+    expect(spokenDateRangeEnd("this weekend", "2026-09-05")).toBe("2026-09-06");
+    expect(spokenDateRangeEnd("tomorrow", "2026-09-04")).toBe("2026-09-04");
+    expect(asEmirate("Dubai")).toBe("Dubai");
+    expect(asEmirate("in dubai")).toBe("Dubai");
+    expect(asEmirate("أبوظبي")).toBe("Abu Dhabi");
+    expect(asEmirate("Mall of the Emirates")).toBeUndefined();
+    expect(normaliseFilmLanguage("ta")).toBe("Tamil");
+    expect(normaliseFilmLanguage("Hindi")).toBe("Hindi");
+  });
 });

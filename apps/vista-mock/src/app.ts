@@ -665,7 +665,12 @@ export function createApp(db: Db, cfg: MockConfig) {
     return c.json(
       v1ok({
         Booking: bookingJson(r.booking),
-        Refund: { Reference: r.refund.reference, AmountCents: r.refund.amountCents, Method: r.refund.method },
+        Refund: {
+          Id: r.refund.id,
+          Reference: r.refund.reference,
+          AmountCents: r.refund.amountCents,
+          Method: r.refund.method,
+        },
         Idempotent: r.idempotent,
       }),
     );

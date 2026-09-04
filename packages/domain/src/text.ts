@@ -116,3 +116,75 @@ export function resolveSpokenDate(word: string | undefined, nowLocalIso: string)
   }
   return today;
 }
+
+/** Spoken language names/codes → catalogue language (so "ta" and "Tamil" both match). */
+const LANG_NAMES: Record<string, string> = {
+  ta: "Tamil",
+  tamil: "Tamil",
+  hi: "Hindi",
+  hindi: "Hindi",
+  ml: "Malayalam",
+  malayalam: "Malayalam",
+  te: "Telugu",
+  telugu: "Telugu",
+  kn: "Kannada",
+  kannada: "Kannada",
+  ar: "Arabic",
+  arabic: "Arabic",
+  العربية: "Arabic",
+  en: "English",
+  english: "English",
+  ur: "Urdu",
+  urdu: "Urdu",
+  tl: "Tagalog",
+  tagalog: "Tagalog",
+  filipino: "Tagalog",
+  fr: "French",
+  french: "French",
+  ko: "Korean",
+  korean: "Korean",
+  ja: "Japanese",
+  japanese: "Japanese",
+  ru: "Russian",
+  russian: "Russian",
+  pa: "Punjabi",
+  punjabi: "Punjabi",
+  bn: "Bengali",
+  bengali: "Bengali",
+  tr: "Turkish",
+  turkish: "Turkish",
+  es: "Spanish",
+  spanish: "Spanish",
+};
+export function normaliseFilmLanguage(v: string | undefined): string | undefined {
+  if (!v) return undefined;
+  const k = v.trim().toLowerCase();
+  return LANG_NAMES[k] ?? v.trim();
+}
+
+/** UAE emirates (and common spellings) → canonical emirate name as stored on cinemas. */
+const EMIRATES: [RegExp, string][] = [
+  [/^(dubai|دبي|dxb)$/i, "Dubai"],
+  [/^(abu ?dhabi|أبو ?ظبي|ابوظبي|auh)$/i, "Abu Dhabi"],
+  [/^(sharjah|الشارقة|shj)$/i, "Sharjah"],
+  [/^(ajman|عجمان)$/i, "Ajman"],
+  [/^(fujairah|الفجيرة)$/i, "Fujairah"],
+  [/^(ras ?al ?khaimah|rak|رأس الخيمة|راس الخيمة)$/i, "Ras Al Khaimah"],
+  [/^(umm ?al ?quwain|uaq|أم القيوين)$/i, "Umm Al Quwain"],
+];
+export function asEmirate(v: string | undefined): string | undefined {
+  if (!v) return undefined;
+  const s = v.trim().replace(/^(in|at)\s+/i, "");
+  for (const [re, name] of EMIRATES) if (re.test(s)) return name;
+  return undefined;
+}
+
+/** For range words ("weekend", "this weekend", "next weekend") the natural end date is the Sunday. */
+export function spokenDateRangeEnd(word: string | undefined, startIso: string): string {
+  if (word && /weekend$/i.test(word.trim())) {
+    const t = new Date(`${startIso}T00:00:00Z`);
+    t.setUTCDate(t.getUTCDate() + 1);
+    return t.toISOString().slice(0, 10);
+  }
+  return startIso;
+}

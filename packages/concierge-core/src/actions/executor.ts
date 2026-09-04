@@ -14,6 +14,16 @@ import { fmtDateTime, money, seatLabels, t } from "../services/format.js";
 import { bookingCard, orderSummary } from "../tools/index.js";
 import { type ActionRow, complete, fail } from "./ledger.js";
 
+/** "RF-7K2M9Q" style refund number derived from the Vista refund id (letters/digits that are easy to say). */
+export function spokenRefundRef(id: string): string {
+  const clean = id
+    .replace(/^(rf_|act_)/, "")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .toUpperCase()
+    .replace(/[0O1IL]/g, "");
+  return `RF-${(clean.slice(-6) || "000000").padStart(6, "7")}`;
+}
+
 type ExecCtx = AppContext & {
   catalog: Catalog;
   lang: Language;
@@ -109,6 +119,8 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           throw fromVista(e);
         });
       const amount = r.Refund.AmountCents as number;
+      // Customer-facing refund number: never read an internal id/idempotency key to the guest.
+      const refundRef = spokenRefundRef(String(r.Refund.Id ?? r.Refund.Reference ?? a.id));
       const methodText =
         inp.refundMethod === "VOX_CREDIT"
           ? t(
@@ -129,13 +141,13 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
               );
       const speech = t(
         ctx.lang,
-        `All done. ${inp.partial ? `${inp.ticketIds.length} tickets on booking` : "Booking"} ${inp.bookingId} for ${inp.filmTitle} on ${fmtDateTime(inp.showtime, "en", ctx.nowLocal)} ${inp.partial ? "have been" : "has been"} cancelled, and ${methodText}. Your refund reference is ${r.Refund.Reference}. A confirmation email is on its way.`,
-        `تم بنجاح. ${inp.partial ? `${inp.ticketIds.length} تذاكر من الحجز` : "الحجز"} ${inp.bookingId} لفيلم ${inp.filmTitle} في ${fmtDateTime(inp.showtime, "ar", ctx.nowLocal)} تم إلغاؤه، و${methodText}. رقم مرجع الاسترداد ${r.Refund.Reference}. سيصلك بريد تأكيد.`,
+        `All done. ${inp.partial ? `${inp.ticketIds.length} tickets on booking` : "Booking"} ${inp.bookingId} for ${inp.filmTitle} on ${fmtDateTime(inp.showtime, "en", ctx.nowLocal)} ${inp.partial ? "have been" : "has been"} cancelled, and ${methodText}. Your refund number is ${refundRef}. A confirmation email is on its way.`,
+        `تم بنجاح. ${inp.partial ? `${inp.ticketIds.length} تذاكر من الحجز` : "الحجز"} ${inp.bookingId} لفيلم ${inp.filmTitle} في ${fmtDateTime(inp.showtime, "ar", ctx.nowLocal)} تم إلغاؤه، و${methodText}. رقم الاسترداد ${refundRef}. سيصلك بريد تأكيد.`,
       );
       const card = {
         ...bookingCard(r.Booking, ctx.lang, ctx.nowLocal, await cname(ctx, inp.cinemaId)),
         refund: {
-          reference: r.Refund.Reference,
+          reference: refundRef,
           amountCents: amount,
           method: inp.refundMethod,
           eta: inp.eta,
@@ -145,7 +157,12 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       return {
         result: {
           speech,
-          refund: { reference: r.Refund.Reference, amountCents: amount, method: inp.refundMethod },
+          refund: {
+            reference: refundRef,
+            vistaReference: r.Refund.Reference,
+            amountCents: amount,
+            method: inp.refundMethod,
+          },
           bookingStatus: r.Booking.Status,
         },
         ui: {
@@ -292,7 +309,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         result: {
           speech,
           newBookingId: newBooking.VistaBookingId,
-          refundReference: refund.Reference,
+          refundReference: spokenRefundRef(String(refund.Id ?? refund.Reference)),
           refundAmountCents: refund.AmountCents,
           seats,
         },

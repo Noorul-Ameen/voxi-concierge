@@ -44,7 +44,9 @@ export const SearchSessionsInput = z.object({
   cinemaName: z
     .string()
     .optional()
-    .describe("Cinema or mall name, fuzzy matched, e.g. 'Mall of the Emirates', 'MOE', 'Deira'"),
+    .describe(
+      "Cinema or mall name, fuzzy matched, e.g. 'Mall of the Emirates', 'MOE', 'Deira' — or an emirate ('Dubai', 'Abu Dhabi', 'Sharjah') to search every cinema there",
+    ),
   date: dateStr
     .optional()
     .describe(
@@ -538,8 +540,9 @@ export const CLIENT_TOOLS = {
     params: z.object({ ui: z.record(z.unknown()) }),
   },
   render_seat_map: {
-    description: "Show the interactive seat map for the current order.",
-    params: z.object({ sessionKey: z.string(), userSessionId: z.string() }),
+    description:
+      "Draw the interactive seat map for the current order on the guest's screen (the widget fetches the live seat plan itself). Returns whether the map is on screen.",
+    params: z.object({ sessionKey: z.string(), userSessionId: z.string().optional() }),
   },
   render_order_summary: {
     description: "Show the order summary / cart.",

@@ -1,5 +1,11 @@
 import type { Experience } from "@voxi/contracts";
-import { resolveSpokenDate, similarity } from "@voxi/domain";
+import {
+  asEmirate,
+  normaliseFilmLanguage,
+  resolveSpokenDate,
+  similarity,
+  spokenDateRangeEnd,
+} from "@voxi/domain";
 import type { Film, Session } from "../services/catalog.js";
 import { fmtDate, fmtDateTime, fmtMinutes, fmtTime, joinList, t } from "../services/format.js";
 import { type ToolCtx, type ToolHandlers, err, ok } from "./types.js";
@@ -65,7 +71,7 @@ function matchFilm(
 ): number {
   if (q.status !== "any" && f.status !== q.status) return -1;
   if (q.genre && !f.genres.some((g) => similarity(g, q.genre!) > 0.7)) return -1;
-  if (q.language && similarity(f.language, q.language) < 0.7) return -1;
+  if (q.language && similarity(f.language, normaliseFilmLanguage(q.language) ?? q.language) < 0.7) return -1;
   if (q.rating && f.rating.toUpperCase() !== q.rating.toUpperCase()) return -1;
   if (q.maxAge != null && (ratingMinAge[f.rating] ?? 0) > q.maxAge) return -1;
   if (!q.query) return 1;
@@ -225,8 +231,13 @@ export const movieTools: Pick<
     // ---- resolve cinema(s) ----
     let cinemaIds: string[] = [];
     let cinemaLabel = "";
+    const emirate = asEmirate(input.cinemaName);
     if (input.cinemaId) cinemaIds = [input.cinemaId];
-    else if (input.cinemaName) {
+    else if (emirate) {
+      // "in Dubai" is an emirate, not a cinema — search every VOX cinema there
+      cinemaIds = (await ctx.catalog.cinemas()).filter((c) => c.emirate === emirate).map((c) => c.id);
+      cinemaLabel = emirate;
+    } else if (input.cinemaName) {
       const r = await ctx.catalog.resolveCinema(input.cinemaName);
       if (!r)
         return err(
@@ -262,7 +273,12 @@ export const movieTools: Pick<
       return c ? (ctx.lang === "ar" ? c.nameAlt || c.name : c.name) : id;
     };
     const date = resolveSpokenDate(input.date, ctx.nowLocal);
-    const dateTo = input.dateTo ? resolveSpokenDate(input.dateTo, ctx.nowLocal) : date;
+    const dateTo = input.dateTo
+      ? resolveSpokenDate(input.dateTo, ctx.nowLocal)
+      : spokenDateRangeEnd(input.date, date);
+    // Language is a film attribute: once the guest has named the film, don't second-guess it per session
+    // (dubbed/subtitled sessions may carry a different language tag than the film itself).
+    const wantLang = film ? undefined : normaliseFilmLanguage(input.language);
     const base = (await sessionsFor(ctx, cinemaIds)).filter(
       (s) => (!film || s.hoCode === film.hoCode) && s.showtime >= ctx.nowLocal,
     );
@@ -274,7 +290,7 @@ export const movieTools: Pick<
         if (f.time !== false && input.timeFrom && hm < input.timeFrom) return false;
         if (f.time !== false && input.timeTo && hm > input.timeTo) return false;
         if (f.exp !== false && input.experience && s.experience !== input.experience) return false;
-        if (f.lang !== false && input.language && similarity(s.language, input.language) < 0.7) return false;
+        if (f.lang !== false && wantLang && similarity(s.language, wantLang) < 0.7) return false;
         return true;
       });
     let rows = apply(base, {});

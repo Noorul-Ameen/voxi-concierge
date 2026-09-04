@@ -43,7 +43,17 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
         if (p?.ui?.type) push({ kind: "cards", ui: p.ui });
         return "rendered";
       },
-      render_seat_map: async () => "The seat map will appear when get_seat_plan runs.",
+      render_seat_map: async (p: { sessionKey: string; userSessionId?: string }) => {
+        // fetch the live seat plan for this order and draw it — no need for the agent to call get_seat_plan first
+        const s = sessionRef.current;
+        if (!s) return "widget not ready";
+        const r = (await sendCommand(s, { type: "seat.plan", sessionKey: p.sessionKey, userSessionId: p.userSessionId })) as { ok: boolean; ui?: any; error?: string };
+        if (r.ok && r.ui) {
+          push({ kind: "cards", ui: r.ui });
+          return "seat map is on screen";
+        }
+        return `could not show the seat map: ${r.error ?? "unknown"}`;
+      },
       render_order_summary: async () => "The order summary is shown after each order step.",
       render_payment_sheet: async () => "The payment sheet appears after prepare_payment.",
       render_qr: async () => "The QR is shown when payment succeeds.",
