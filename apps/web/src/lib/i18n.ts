@@ -52,6 +52,16 @@ const STR = {
   openMaps: { en: "Open in Maps", ar: "افتح الخريطة" },
   micDenied: { en: "Microphone access was denied — switching to text.", ar: "تم رفض الوصول إلى الميكروفون — التحويل إلى النص." },
   demoHint: { en: "Demo tips", ar: "نصائح العرض" },
+  minimise: { en: "Minimise", ar: "تصغير" },
+  askVoxi: { en: "Ask Voxi", ar: "اسأل فوكسي" },
+  thinking: { en: "Voxi is thinking…", ar: "فوكسي يفكر…" },
+  tryAsking: { en: "Try asking", ar: "جرّب أن تسأل" },
+  online: { en: "Online", ar: "متصل" },
+  tapToTalk: { en: "Tap the mic to talk, or type below", ar: "اضغط على الميكروفون للتحدث أو اكتب أدناه" },
+  moreTimes: { en: "more", ar: "المزيد" },
+  today: { en: "Today", ar: "اليوم" },
+  secure: { en: "Secure payment · card details never leave your browser", ar: "دفع آمن · بيانات البطاقة لا تغادر متصفحك" },
+  admitOne: { en: "Admit", ar: "دخول" },
 } as const;
 
 export type Key = keyof typeof STR;

@@ -228,6 +228,19 @@ export const movieTools: Pick<
           t(ctx.lang, `I couldn't find a movie called ${input.title}.`, `لم أجد فيلماً باسم ${input.title}.`),
         );
     }
+    // The same title can exist as several language versions (e.g. Tamil + Malayalam prints). Unless the guest
+    // asked for a language, show every version's showtimes and let the cards carry the language tag.
+    const wantLangForVersions = normaliseFilmLanguage(input.language);
+    const versionCodes = new Set<string>();
+    if (film) {
+      const sameTitle = (await ctx.catalog.films()).filter(
+        (f) =>
+          f.title.toLowerCase() === film!.title.toLowerCase() &&
+          (!wantLangForVersions || similarity(f.language, wantLangForVersions) >= 0.7),
+      );
+      for (const f of sameTitle.length ? sameTitle : [film]) versionCodes.add(f.hoCode);
+      if (wantLangForVersions && sameTitle.length) film = sameTitle[0]!;
+    }
     // ---- resolve cinema(s) ----
     let cinemaIds: string[] = [];
     let cinemaLabel = "";
@@ -280,7 +293,7 @@ export const movieTools: Pick<
     // (dubbed/subtitled sessions may carry a different language tag than the film itself).
     const wantLang = film ? undefined : normaliseFilmLanguage(input.language);
     const base = (await sessionsFor(ctx, cinemaIds)).filter(
-      (s) => (!film || s.hoCode === film.hoCode) && s.showtime >= ctx.nowLocal,
+      (s) => (!film || versionCodes.has(s.hoCode)) && s.showtime >= ctx.nowLocal,
     );
     const apply = (rows: Session[], f: { date?: boolean; time?: boolean; exp?: boolean; lang?: boolean }) =>
       rows.filter((s) => {
@@ -318,7 +331,7 @@ export const movieTools: Pick<
             ctx,
             cinemas.map((c) => c.id),
           )
-        ).filter((s) => s.hoCode === film!.hoCode && s.showtime >= ctx.nowLocal);
+        ).filter((s) => versionCodes.has(s.hoCode) && s.showtime >= ctx.nowLocal);
         rows = apply(all, {}).length ? apply(all, {}) : apply(all, { time: false, exp: false });
         if (rows.length) relaxed = t(ctx.lang, "at other cinemas", "في سينمات أخرى");
       }
@@ -336,27 +349,72 @@ export const movieTools: Pick<
         { name: "movie_info", status: "completed" },
       );
     }
-    const items = rows.map((s) => sessionCard(s, ctx.lang, ctx.nowLocal, cname(s.cinemaId)));
-    const byCinema = new Map<string, typeof items>();
-    for (const it of items) byCinema.set(it.cinemaId, [...(byCinema.get(it.cinemaId) ?? []), it]);
-    const summary = [...byCinema.entries()]
-      .slice(0, 3)
-      .map(([cid, its]) => {
-        const exps = [...new Set(its.map((i) => i.experience))];
-        return t(
-          ctx.lang,
-          `${cname(cid)}: ${its
-            .slice(0, 5)
-            .map((i) => `${i.time}${exps.length > 1 ? ` (${i.experience})` : ""}`)
-            .join(", ")}${its.length > 5 ? ` and ${its.length - 5} more` : ""}`,
-          `${cname(cid)}: ${its
-            .slice(0, 5)
-            .map((i) => `${i.time}${exps.length > 1 ? ` (${i.experience})` : ""}`)
-            .join("، ")}${its.length > 5 ? ` و${its.length - 5} أخرى` : ""}`,
+    const filmsById = new Map((await ctx.catalog.films()).map((f) => [f.hoCode, f] as const));
+    const items = rows.map((s) => {
+      const f = filmsById.get(s.hoCode);
+      return {
+        ...sessionCard(s, ctx.lang, ctx.nowLocal, cname(s.cinemaId)),
+        posterUrl: f?.posterUrl,
+        rating: f?.rating,
+        filmLanguage: f?.language,
+      };
+    });
+    // ---- spoken summary: at most 3 slots, grouped the way a human would say it; the cards carry the rest
+    const ar = ctx.lang === "ar";
+    const dayOf = (i: (typeof items)[number]) => i.dateLabel;
+    const slot = (i: (typeof items)[number], withExp: boolean) =>
+      `${i.time}${withExp ? ` ${i.experience}` : ""}`;
+    let spoken: string;
+    let remaining = 0;
+    if (film) {
+      // one film: "DC at City Centre Deira — tomorrow 5:15 pm and 8:40 pm, Sunday 3:00 pm"
+      const byDay = new Map<string, typeof items>();
+      for (const it of items) byDay.set(dayOf(it), [...(byDay.get(dayOf(it)) ?? []), it]);
+      const cinemasUsed = [...new Set(items.map((i) => i.cinemaName))];
+      const multiCinema = cinemasUsed.length > 1;
+      const multiExp = new Set(items.map((i) => i.experience)).size > 1;
+      const parts: string[] = [];
+      let used = 0;
+      for (const [day, its] of byDay) {
+        if (used >= 3) break;
+        // late-night prints (before 6 am) are rarely what a guest means — mention daytime/evening slots first
+        const ordered = [...its].sort(
+          (a, b) => Number(a.showtime.slice(11, 13) < "06") - Number(b.showtime.slice(11, 13) < "06"),
         );
-      })
-      .join(". ");
-    const speech = `${relaxed ? t(ctx.lang, `Nothing exactly matched, but I found options ${relaxed}. `, `لم أجد تطابقاً دقيقاً، لكن هناك خيارات ${relaxed}. `) : ""}${film ? film.title : t(ctx.lang, "Showtimes", "مواعيد")} ${fmtDate(rows[0]!.showtime, ctx.lang, ctx.nowLocal)}: ${summary}. ${t(ctx.lang, "Shall I book one of these?", "هل أحجز أحد هذه المواعيد؟")}`;
+        const take = ordered.slice(0, 3 - used);
+        used += take.length;
+        parts.push(
+          `${day} ${joinList(
+            take.map(
+              (i) => `${slot(i, multiExp)}${multiCinema ? ` ${ar ? "في" : "at"} ${i.cinemaName}` : ""}`,
+            ),
+            ctx.lang,
+          )}`,
+        );
+      }
+      remaining = items.length - used;
+      spoken = `${film.title}${!multiCinema ? ` ${ar ? "في" : "at"} ${cinemasUsed[0]}` : ""} — ${parts.join(ar ? "؛ " : "; ")}`;
+    } else {
+      // many films (cinema/time query): "Tomorrow at City Centre Deira after 8 pm: Immortal 10:50 pm, Insidious 8:00 pm GOLD, …"
+      const byFilm = new Map<string, typeof items>();
+      for (const it of items) byFilm.set(it.filmTitle, [...(byFilm.get(it.filmTitle) ?? []), it]);
+      const cinemasUsed = [...new Set(items.map((i) => i.cinemaName))];
+      const top = [...byFilm.entries()].slice(0, 3);
+      const parts = top.map(
+        ([title, its]) =>
+          `${title} ${slot(its[0]!, false)}${its[0]!.dateLabel !== items[0]!.dateLabel ? ` ${its[0]!.dateLabel}` : ""}`,
+      );
+      remaining = byFilm.size - top.length;
+      spoken = `${items[0]!.dateLabel}${cinemasUsed.length === 1 ? ` ${ar ? "في" : "at"} ${cinemasUsed[0]}` : ""}${input.timeFrom ? ` ${ar ? "بعد" : "after"} ${fmtTime(`2000-01-01T${input.timeFrom}:00`, ctx.lang)}` : ""}: ${joinList(parts, ctx.lang)}`;
+      if (remaining > 0)
+        spoken += ar
+          ? `، و${remaining} أفلام أخرى على الشاشة`
+          : `, and ${remaining} more film${remaining > 1 ? "s" : ""} on screen`;
+      remaining = 0;
+    }
+    if (remaining > 0)
+      spoken += ar ? ` — و${remaining} مواعيد أخرى على الشاشة` : ` — and ${remaining} more on screen`;
+    const speech = `${relaxed ? t(ctx.lang, `Nothing exactly matched, but I found options ${relaxed}. `, `لم أجد تطابقاً دقيقاً، لكن هناك خيارات ${relaxed}. `) : ""}${spoken}. ${t(ctx.lang, "Shall I book one of these?", "هل أحجز أحد هذه المواعيد؟")}`;
     return ok(
       { film: film ? filmCard(film, ctx.lang) : undefined, sessions: items, relaxed },
       speech,
@@ -364,7 +422,7 @@ export const movieTools: Pick<
         type: "showtimes",
         title: film ? film.title : t(ctx.lang, "Showtimes", "مواعيد العرض"),
         items,
-        meta: { film: film ? filmCard(film, ctx.lang) : undefined, groupBy: "cinema" },
+        meta: { film: film ? filmCard(film, ctx.lang) : undefined, groupBy: film ? "cinema" : "film" },
       },
       { name: "movie_info", status: "completed" },
     );

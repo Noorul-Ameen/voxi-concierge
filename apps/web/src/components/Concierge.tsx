@@ -231,18 +231,59 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
 
   const connected = conversation.status === "connected";
   const dir = isRtl(lang) ? "rtl" : "ltr";
+  // ---------- presentation-only state (launcher, unread badge, typing indicator, suggestions) ----------
+  const [open, setOpen] = useState(true);
+  const [unread, setUnread] = useState(0);
+  const lastItem = items[items.length - 1];
+  useEffect(() => {
+    if (!open && lastItem && lastItem.kind !== "note") setUnread((n) => n + 1);
+  }, [lastItem?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (open) setUnread(0);
+  }, [open]);
+  const thinking = connected && !humanMode && lastItem?.kind === "msg" && lastItem.role === "user" && !conversation.isSpeaking;
+  const suggestions = lang === "ar"
+    ? ["ماذا يُعرض الليلة في مول الإمارات؟", "احجز تذكرتين لفيلم عائلي غداً", "ألغِ حجزي VXA7K2M", "ما هي عروض البنوك؟"]
+    : ["What's on tonight at Mall of the Emirates?", "Book two tickets for a family movie tomorrow", "Cancel my booking VXA7K2M", "Which bank offers are on?"];
+  const ask = async (text: string) => {
+    if (!connected) await start("text");
+    // the session connects asynchronously; give the socket a moment before the first message
+    setTimeout(() => say(text), connected ? 0 : 1200);
+  };
+  const statusText = connected
+    ? conversation.isSpeaking
+      ? t(lang, "speaking")
+      : mode === "voice"
+        ? t(lang, "listening")
+        : t(lang, "online")
+    : conversation.status === "connecting"
+      ? t(lang, "connecting")
+      : "";
+  const voiceState = !connected ? "off" : conversation.isSpeaking ? "speaking" : mode === "voice" ? "listening" : "idle";
+
+  if (!open)
+    return (
+      <button className="launcher" dir={dir} onClick={() => setOpen(true)} aria-label={t(lang, "askVoxi")}>
+        <span className={`orb ${voiceState}`} />
+        <span className="lbl">{t(lang, "askVoxi")}</span>
+        {unread ? <span className="unread">{unread}</span> : null}
+      </button>
+    );
+
   return (
-    <div className={`widget ${expanded ? "expanded" : ""}`} dir={dir}>
+    <div className={`widget ${expanded ? "expanded" : ""} state-${voiceState}`} dir={dir}>
       <div className="widget-head">
-        <div className={`orb ${conversation.isSpeaking ? "speaking" : ""}`} />
+        <div className={`orb ${voiceState}`} aria-hidden="true">
+          <i /><i /><i />
+        </div>
         <div className="titles">
           <b>{t(lang, "title")}</b>
-          <small>{humanMode ? `${t(lang, "human")}${humanMode.agentName ? ` · ${humanMode.agentName}` : ""}` : t(lang, "subtitle")}</small>
+          <small>
+            {statusText ? <span className={`dot ${voiceState}`} /> : null}
+            {humanMode ? `${t(lang, "human")}${humanMode.agentName ? ` · ${humanMode.agentName}` : ""}` : statusText || t(lang, "subtitle")}
+          </small>
         </div>
-        <span className="status" title={`events: ${sseStatus}`}>
-          {connected ? (conversation.isSpeaking ? t(lang, "speaking") : mode === "voice" ? t(lang, "listening") : "●") : conversation.status === "connecting" ? t(lang, "connecting") : ""}
-        </span>
-        <div className="langtoggle" role="group" aria-label="language">
+        <div className="langtoggle" role="group" aria-label="language" title={`events: ${sseStatus}`}>
           <button className={lang === "en" ? "on" : ""} onClick={() => { setLang("en"); if (connected) conversation.sendUserMessage("Please continue in English."); }}>
             EN
           </button>
@@ -250,34 +291,54 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
             ع
           </button>
         </div>
-        <button className="iconbtn" onClick={() => setExpanded((x) => !x)} title="expand">
-          {expanded ? "⤡" : "⤢"}
+        <button className="iconbtn" onClick={() => setExpanded((x) => !x)} title="expand" aria-label="expand">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{expanded ? <path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
         </button>
         {connected ? (
-          <button className="iconbtn" onClick={() => conversation.endSession()}>
+          <button className="iconbtn end" onClick={() => conversation.endSession()} title={t(lang, "end")}>
             {t(lang, "end")}
           </button>
         ) : null}
+        <button className="iconbtn" onClick={() => setOpen(false)} title={t(lang, "minimise")} aria-label={t(lang, "minimise")}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M5 12h14" /></svg>
+        </button>
       </div>
 
       <div className="widget-body" ref={bodyRef}>
         {mode === "idle" && !items.length ? (
           <div className="start">
-            <div className="orb" style={{ width: 64, height: 64, borderRadius: "50%", background: "conic-gradient(from 180deg, var(--vox-blue), #7fd3f5, var(--vox-blue))" }} />
-            <p>{lang === "ar" ? "اسألني عن الأفلام والمواعيد والحجوزات والاسترداد والعروض والمأكولات — بالصوت أو الكتابة." : "Ask me about movies, showtimes, bookings, refunds, offers and food — by voice or text."}</p>
-            <button className="btn primary" onClick={() => start("voice")}>
-              🎙 {t(lang, "startVoice")}
-            </button>
-            <button className="btn ghost" onClick={() => start("text")}>
-              💬 {t(lang, "startText")}
-            </button>
+            <div className="hero-orb"><i /><i /><i /></div>
+            <h3>{lang === "ar" ? "مرحباً، أنا فوكسي" : "Hi, I'm Voxi"}</h3>
+            <p>{lang === "ar" ? "اسألني عن الأفلام والمواعيد والحجوزات والاسترداد والعروض والمأكولات — بالصوت أو الكتابة." : "Movies, showtimes, bookings, refunds, offers and food — by voice or text, in English or Arabic."}</p>
+            <div className="startbtns">
+              <button className="btn primary big" onClick={() => start("voice")}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
+                {t(lang, "startVoice")}
+              </button>
+              <button className="btn ghost big" onClick={() => start("text")}>
+                {t(lang, "startText")}
+              </button>
+            </div>
+            <div className="suggest">
+              <small>{t(lang, "tryAsking")}</small>
+              {suggestions.map((s) => (
+                <button key={s} type="button" className="chip" onClick={() => ask(s)}>
+                  {s}
+                </button>
+              ))}
+            </div>
           </div>
         ) : null}
-        {items.map((it) =>
-          it.kind === "msg" ? (
-            <div key={it.id} className={`msg ${it.role}`}>
-              {it.role !== "user" ? <span className="who">{it.role === "human" ? (it.who ?? t(lang, "human")) : t(lang, "agent")}</span> : null}
-              {it.text}
+        {items.map((it, idx) => {
+          const prev = items[idx - 1];
+          const first = !(prev && prev.kind === "msg" && it.kind === "msg" && prev.role === it.role);
+          return it.kind === "msg" ? (
+            <div key={it.id} className={`msgrow ${it.role} ${first ? "first" : ""}`}>
+              {it.role !== "user" ? <span className={`avatar ${it.role}`}>{it.role === "human" ? (it.who?.[0] ?? "☺") : ""}</span> : null}
+              <div className={`msg ${it.role}`}>
+                {it.role !== "user" && first ? <span className="who">{it.role === "human" ? (it.who ?? t(lang, "human")) : t(lang, "agent")}</span> : null}
+                {it.text}
+              </div>
             </div>
           ) : it.kind === "cards" ? (
             <Cards key={it.id} ui={it.ui} lang={lang} act={act} />
@@ -289,8 +350,14 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
             <div key={it.id} className="sysnote">
               {it.text}
             </div>
-          ),
-        )}
+          );
+        })}
+        {thinking && mode === "text" ? (
+          <div className="msgrow agent first">
+            <span className="avatar agent" />
+            <div className="msg agent typing" aria-label={t(lang, "thinking")}><i /><i /><i /></div>
+          </div>
+        ) : null}
         {humanMode && humanMode.status !== "ended" ? <div className="transfer">{humanMode.status === "connected" ? `${t(lang, "connectedTo")} ${humanMode.agentName ?? t(lang, "human")}` : t(lang, "transferring")}</div> : null}
       </div>
 
@@ -313,31 +380,42 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
           </button>
         </div>
       ) : null}
-      <div className="widget-foot">
-        {mode === "voice" && connected ? (
-          <div className="voicebar" style={{ flex: 1 }}>
-            <button className="btn ghost" onClick={() => conversation.setVolume({ volume: 1 })} title="volume">
-              🔊
-            </button>
-            <div className="level">
-              <i style={{ width: `${Math.round(level * 100)}%` }} />
-            </div>
+
+      {mode === "voice" && connected ? (
+        <div className={`voicestage ${voiceState}`}>
+          <div className="wave" aria-hidden="true">
+            {Array.from({ length: 9 }, (_, i) => (
+              <i key={i} style={{ height: `${Math.max(14, Math.round((conversation.isSpeaking ? 40 + 30 * Math.abs(Math.sin((Date.now() / 160 + i) % Math.PI)) : 14 + level * 70 * (1 - Math.abs(i - 4) / 5)) ))}%` }} />
+            ))}
           </div>
-        ) : null}
+          <span className="vs-text">{conversation.isSpeaking ? t(lang, "speaking") : t(lang, "listening")}</span>
+          <button className="btn ghost small" onClick={() => conversation.setVolume({ volume: 1 })} title="volume">🔊</button>
+        </div>
+      ) : null}
+
+      <div className="widget-foot">
         {!humanMode ? (
           <button
             className={`iconbtn mic ${mode === "voice" ? "on" : ""}`}
             title={mode === "voice" ? t(lang, "switchToText") : t(lang, "switchToVoice")}
+            aria-label={mode === "voice" ? t(lang, "switchToText") : t(lang, "switchToVoice")}
             onClick={() => switchMode(mode === "voice" ? "text" : "voice")}
           >
-            {mode === "voice" ? "💬" : "🎙"}
+            {mode === "voice" ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a8 8 0 0 1-8 8H8l-5 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z" /></svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
+            )}
           </button>
         ) : null}
-        <input value={input} placeholder={t(lang, "placeholder")} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { say(input); setInput(""); } }} onFocus={() => connected && conversation.sendUserActivity()} disabled={mode === "idle" && !humanMode} />
-        <button className="btn primary" disabled={(!connected && !humanMode) || !input.trim()} onClick={() => { say(input); setInput(""); }}>
-          {t(lang, "send")}
-        </button>
+        <div className="composer">
+          <input value={input} placeholder={mode === "idle" && !humanMode ? t(lang, "tapToTalk") : t(lang, "placeholder")} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { say(input); setInput(""); } }} onFocus={() => connected && conversation.sendUserActivity()} disabled={mode === "idle" && !humanMode} />
+          <button className="sendbtn" disabled={(!connected && !humanMode) || !input.trim()} onClick={() => { say(input); setInput(""); }} aria-label={t(lang, "send")} title={t(lang, "send")}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
+          </button>
+        </div>
       </div>
+      <div className="powered">VOX Cinemas · <span>Voxi</span></div>
     </div>
   );
 }

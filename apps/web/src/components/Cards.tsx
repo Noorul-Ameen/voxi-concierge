@@ -19,7 +19,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
       case "recommendation":
         return <MovieRow items={items} lang={lang} act={act} />;
       case "showtimes":
-        return <Showtimes items={items} lang={lang} act={act} film={ui.meta?.film} />;
+        return <Showtimes items={items} lang={lang} act={act} film={ui.meta?.film} groupBy={ui.meta?.groupBy} />;
       case "cinema":
         return items.map((c, i) => <CinemaCard key={i} c={c} lang={lang} act={act} />);
       case "offer":
@@ -29,7 +29,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
       case "booking":
         return items.map((b, i) => <BookingCard key={i} b={b} lang={lang} act={act} confirmationId={ui.meta?.confirmationId} />);
       case "order":
-        return items[0] && "tickets" in items[0] ? <OrderSummary o={items[0]} lang={lang} act={act} /> : <TicketTypes items={items} lang={lang} act={act} sessionKey={ui.meta?.sessionKey} />;
+        return items[0] && "tickets" in items[0] ? <OrderSummary o={items[0]} lang={lang} act={act} hideActions={!!ui.actions?.length} /> : <TicketTypes items={items} lang={lang} act={act} sessionKey={ui.meta?.sessionKey} />;
       case "seatmap":
         return <SeatMap rows={items} meta={ui.meta ?? {}} lang={lang} act={act} />;
       case "payment":
@@ -62,7 +62,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
   })();
   return (
     <div className="cards" data-type={ui.type}>
-      {ui.title && <h4>{ui.title}</h4>}
+      {ui.title && !(ui.type === "showtimes" && ui.meta?.film?.posterUrl) && <h4>{ui.title}</h4>}
       {body}
       {ui.actions?.length ? (
         <div className="actionsrow">
@@ -155,32 +155,62 @@ function MovieRow({ items, lang, act }: { items: any[]; lang: Lang; act: CardAct
   );
 }
 
-function Showtimes({ items, lang, act, film }: { items: any[]; lang: Lang; act: CardActions; film?: any }) {
+function Showtimes({ items, lang, act, film, groupBy }: { items: any[]; lang: Lang; act: CardActions; film?: any; groupBy?: string }) {
+  const ar = lang === "ar";
+  const days = [...new Set(items.map((s) => s.date))].sort();
+  const [day, setDay] = useState<string>(days[0] ?? "");
+  const activeDay = days.includes(day) ? day : (days[0] ?? "");
+  const dayLabel = (d: string) => items.find((s) => s.date === d)?.dateLabel ?? d;
+  const visible = items.filter((s) => s.date === activeDay);
+  const byFilm = groupBy === "film" || !film;
   const groups = new Map<string, any[]>();
-  for (const s of items) groups.set(s.cinemaName ?? s.cinemaId, [...(groups.get(s.cinemaName ?? s.cinemaId) ?? []), s]);
+  for (const s of visible) {
+    const k = byFilm ? s.filmTitle : (s.cinemaName ?? s.cinemaId);
+    groups.set(k, [...(groups.get(k) ?? []), s]);
+  }
+  const book = (s: any) => act.say(ar ? `احجز ${s.filmTitle} في ${s.cinemaName} ${s.dateLabel} الساعة ${s.time} (${s.experience})` : `Book ${s.filmTitle} at ${s.cinemaName} ${s.dateLabel} at ${s.time} (${s.experience})`);
   return (
-    <div>
+    <div className="showtimes">
       {film?.posterUrl ? (
-        <div style={{ display: "flex", gap: 10, marginBottom: 10, fontSize: 12 }}>
-          <div className="p" style={{ width: 54, aspectRatio: "2/3", borderRadius: 6, background: `#ddd url(${film.posterUrl}) center/cover` }} />
-          <div>
+        <div className="filmhead" style={{ backgroundImage: film.heroUrl ? `linear-gradient(90deg, rgba(31,36,40,0.92) 30%, rgba(31,36,40,0.55)), url(${film.heroUrl})` : undefined }}>
+          <div className="p" style={{ backgroundImage: `url(${film.posterUrl})` }} />
+          <div className="fh">
             <b>{film.title}</b>
-            <div style={{ color: "#6b6b76" }}>
-              {film.rating} · {film.runTime}m · {film.language}
-            </div>
+            <span>{[film.rating, film.runTime ? `${film.runTime} min` : null, film.language].filter(Boolean).join(" · ")}</span>
+            {film.youtubeId ? (
+              <button className="btn ghost small light" onClick={() => act.playTrailer(film.youtubeId, film.title)}>▶ {t(lang, "trailer")}</button>
+            ) : null}
           </div>
         </div>
       ) : null}
-      {[...groups.entries()].map(([cinema, ss]) => (
-        <div className="showgroup" key={cinema}>
-          <b>{cinema}</b>
+      {days.length > 1 ? (
+        <div className="daytabs" role="tablist">
+          {days.map((d) => (
+            <button key={d} type="button" role="tab" aria-selected={d === activeDay} className={d === activeDay ? "on" : ""} onClick={() => setDay(d)}>
+              {dayLabel(d)}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {[...groups.entries()].map(([k, ss]) => (
+        <div className="showgroup" key={k}>
+          {byFilm ? (
+            <div className="sg-film">
+              {ss[0]?.posterUrl ? <span className="mini" style={{ backgroundImage: `url(${ss[0].posterUrl})` }} /> : null}
+              <div>
+                <b>{k}</b>
+                <small>{[ss[0]?.rating, ss[0]?.filmLanguage, ss[0]?.cinemaName].filter(Boolean).join(" · ")}</small>
+              </div>
+            </div>
+          ) : (
+            <b className="sg-cinema">📍 {k}</b>
+          )}
           <div className="times">
             {ss.map((s) => (
-              <button key={s.sessionKey} className={`time ${s.soldOut ? "soldout" : ""}`} disabled={s.soldOut} title={s.screenName} onClick={() => act.say(lang === "ar" ? `احجز ${s.filmTitle} في ${cinema} ${s.dateLabel} الساعة ${s.time} (${s.experience})` : `Book ${s.filmTitle} at ${cinema} ${s.dateLabel} at ${s.time} (${s.experience})`)}>
+              <button key={s.sessionKey} type="button" className={`time ${s.soldOut ? "soldout" : ""} ${s.seatsAvailable > 0 && s.seatsAvailable <= 10 ? "few" : ""}`} disabled={s.soldOut} title={`${s.screenName ?? ""} · ${s.seatsAvailable} ${ar ? "مقعد" : "seats"}`} onClick={() => book(s)}>
                 <span>{s.time}</span>
-                <small>
-                  {s.dateLabel} · {s.experience}
-                </small>
+                <small>{s.experience}{byFilm && !film ? "" : ""}</small>
+                {s.seatsAvailable > 0 && s.seatsAvailable <= 10 ? <em>{ar ? "مقاعد قليلة" : "few left"}</em> : null}
               </button>
             ))}
           </div>
@@ -354,7 +384,7 @@ function TicketTypes({ items, lang, act }: { items: any[]; lang: Lang; act: Card
   );
 }
 
-export function OrderSummary({ o, lang, act }: { o: any; lang: Lang; act: CardActions }) {
+export function OrderSummary({ o, lang, act, hideActions }: { o: any; lang: Lang; act: CardActions; hideActions?: boolean }) {
   return (
     <div className="order">
       <div style={{ marginBottom: 6 }}>
@@ -392,6 +422,7 @@ export function OrderSummary({ o, lang, act }: { o: any; lang: Lang; act: CardAc
         <span>{t(lang, "total")}</span>
         <span>{o.total ?? money(o.totalCents, lang)}</span>
       </div>
+      {hideActions ? null : (
       <div className="actions">
         <button className="btn ghost" onClick={() => routeAction("seatmap:open", "", act, lang)}>
           {lang === "ar" ? "المقاعد" : "Seats"}
@@ -403,6 +434,7 @@ export function OrderSummary({ o, lang, act }: { o: any; lang: Lang; act: CardAc
           {t(lang, "pay")}
         </button>
       </div>
+      )}
     </div>
   );
 }
@@ -540,20 +572,28 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
 function QRTicket({ b, lang, qr }: { b: any; lang: Lang; qr?: string }) {
   const [src, setSrc] = useState("");
   useEffect(() => {
-    QRCode.toDataURL(qr ?? b.qrPayload ?? b.bookingId ?? "VOX", { width: 360, margin: 1 }).then(setSrc).catch(() => setSrc(""));
+    QRCode.toDataURL(qr ?? b.qrPayload ?? b.bookingId ?? "VOX", { width: 360, margin: 1, color: { dark: "#1f2428", light: "#ffffff" } }).then(setSrc).catch(() => setSrc(""));
   }, [qr, b.qrPayload, b.bookingId]);
   return (
-    <div className="qr">
-      {src ? <img src={src} alt="QR" /> : null}
-      <div className="ref">{b.bookingId}</div>
-      <div style={{ fontSize: 13 }}>
-        <b>{b.filmTitle}</b> · {b.experience}
-        <br />
-        {b.showtimeLabel} · {b.cinemaName ?? b.cinemaId}
-        <br />
-        {t(lang, "seats")}: {b.seats}
+    <div className="ticket">
+      <div className="t-top">
+        <div className="t-brand">VOX <span>CINEMAS</span></div>
+        <div className="t-exp">{b.experience}</div>
       </div>
-      <small style={{ color: "#6b6b76" }}>{t(lang, "scanQr")}</small>
+      <div className="t-main">
+        <div className="t-film">{b.filmTitle}</div>
+        <div className="t-grid">
+          <div><small>{lang === "ar" ? "السينما" : "Cinema"}</small><b>{b.cinemaName ?? b.cinemaId}</b></div>
+          <div><small>{lang === "ar" ? "الموعد" : "When"}</small><b>{b.showtimeLabel}</b></div>
+          <div><small>{t(lang, "seats")}</small><b>{b.seats}</b></div>
+          <div><small>{t(lang, "bookingRef")}</small><b className="mono">{b.bookingId}</b></div>
+        </div>
+      </div>
+      <div className="t-tear"><i /><i /></div>
+      <div className="t-qr">
+        {src ? <img src={src} alt="QR" /> : null}
+        <small>{t(lang, "scanQr")}</small>
+      </div>
     </div>
   );
 }
