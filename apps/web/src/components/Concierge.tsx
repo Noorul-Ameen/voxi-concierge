@@ -183,7 +183,9 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
         : /in\.residency/.test(wsOrigin ?? "")
           ? "in-residency"
           : "us";
-      const origin = { serverLocation };
+      // `textOnly` at the top level selects the SDK's text transport (no microphone / AudioContext at all);
+      // the conversation override only tells the agent side. Without it, text mode still waits on a mic permission.
+      const origin = { serverLocation, textOnly: m === "text" };
       if (signedUrl)
         await conversation.startSession({ signedUrl, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never);
       else await conversation.startSession({ agentId, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never);
@@ -305,6 +307,12 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
       </div>
 
       <div className="widget-body" ref={bodyRef}>
+        {mode !== "idle" && !items.length && !connected ? (
+          <div className="start">
+            <div className="hero-orb listening"><i /><i /><i /></div>
+            <p>{t(lang, "connecting")}</p>
+          </div>
+        ) : null}
         {mode === "idle" && !items.length ? (
           <div className="start">
             <div className="hero-orb"><i /><i /><i /></div>
