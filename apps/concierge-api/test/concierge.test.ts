@@ -237,11 +237,12 @@ describe("Phase 2 — guided booking end to end", () => {
       limit: 60,
     });
     const soon = new Date(new Date(`${nowLocalIso()}Z`).getTime() + 2 * 3600000).toISOString().slice(0, 19);
+    // needs a family-rated film so both adult and child tickets exist (adults-only films hide child tickets)
+    const familyOk = (s: any) =>
+      !/^(15|18|21)\+?$/.test(s.rating ?? "") && s.seatsAvailable > 10 && s.showtime > soon;
     const monday =
-      sessions.data.sessions.find(
-        (s: any) =>
-          new Date(`${s.showtime}Z`).getUTCDay() === 1 && s.seatsAvailable > 10 && s.showtime > soon,
-      ) ?? sessions.data.sessions.find((s: any) => s.seatsAvailable > 10 && s.showtime > soon);
+      sessions.data.sessions.find((s: any) => new Date(`${s.showtime}Z`).getUTCDay() === 1 && familyOk(s)) ??
+      sessions.data.sessions.find(familyOk);
     const start = await h.tool("start_order", c, { sessionKey: monday.sessionKey });
     expect(start.ok).toBe(true);
     const usid = start.data.userSessionId;
