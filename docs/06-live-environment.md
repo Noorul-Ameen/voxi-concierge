@@ -22,6 +22,9 @@
 - `ELEVENLABS_API_KEY` on Railway enables signed URLs (private agent) — currently the agent is public with an origin allowlist (`web-production-f54a1.up.railway.app`, `localhost`, `elevenlabs.io`).
 - Genesys Open Messaging (`HANDOVER_ADAPTER=genesys`, `GENESYS_*`) — simulated adapter is active.
 
+## Real-site alignment (4 Sep 2026)
+Commit `9b6ca87` aligned the demo's structures with what a logged-in member sees on uae.voxcinemas.com (reference: `docs/07-real-site-reference.md`): seat tiers and per-area pricing, the real Deira F&B menu with images, the Review & Pay sheet (bank offers, SHARE redeem at 10 pts = 1 AED, VAT info, saved cards / ADCB TouchPoints / new card / Apple Pay), and the receipt/e-ticket card. Production was reseeded by setting `SEED_FORCE=true` on concierge-api for one deploy (then removed); conversation history was kept. The ElevenLabs agent prompt was updated and a new KB document `voxi/checkout-payments-and-receipts` (id `hSlmfgAfDCIairgU3rUc`) attached.
+
 ## Live verification (3 Sep 2026)
 - Backend: 25 read/write tools exercised over HTTPS from Dubai; 3 concurrent confirmations → 1 action; full booking (tickets → seats → F&B → ENBD BOGO → card → QR `VNVWSA8`); swap `JWIMX42 → X9HJLRH`; bank-offer and cut-off refusals; complaint `CMP-2026-000001`; simulated transfer; feedback; dashboard populated.
 - Agent (text, via ElevenLabs EU): login → find → prepare → confirm → cancel `VXA7K2M` (action ledger `cancel_booking: succeeded`); Arabic offers query answered in Arabic; guided booking started with tools; widget in Chrome connected, showtime cards rendered.
