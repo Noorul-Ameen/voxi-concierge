@@ -480,7 +480,11 @@ export const movieTools: Pick<
       const top = [...byFilm.entries()].slice(0, 3);
       const parts = top.map(
         ([title, its]) =>
-          `${title} ${slot(its[0]!, false)}${its[0]!.dateLabel !== items[0]!.dateLabel ? ` ${its[0]!.dateLabel}` : ""}`,
+          `${title} ${slot(its[0]!, false)}${its[0]!.dateLabel !== items[0]!.dateLabel ? ` ${its[0]!.dateLabel}` : ""}${
+            cinemasUsed.length > 1
+              ? ` ${ar ? "في" : "at"} ${its[0]!.cinemaName}${its[0]!.distanceKm != null ? ` (${its[0]!.distanceKm} ${ar ? "كم" : "km"})` : ""}`
+              : ""
+          }`,
       );
       remaining = byFilm.size - top.length;
       spoken = `${items[0]!.dateLabel}${cinemasUsed.length === 1 ? ` ${ar ? "في" : "at"} ${cinemasUsed[0]}` : ""}${input.timeFrom ? ` ${ar ? "بعد" : "after"} ${fmtTime(`2000-01-01T${input.timeFrom}:00`, ctx.lang)}` : ""}: ${joinList(parts, ctx.lang)}`;
