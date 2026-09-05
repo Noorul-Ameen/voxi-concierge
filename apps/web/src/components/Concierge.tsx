@@ -191,7 +191,7 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
-    const toBottom = () => el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+    const toBottom = () => el.scrollTo({ top: el.scrollHeight, behavior: "instant" as ScrollBehavior });
     toBottom();
     const t1 = setTimeout(toBottom, 150);
     const t2 = setTimeout(toBottom, 700);
@@ -205,7 +205,7 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
       const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 240;
-      if (nearBottom) el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+      if (nearBottom) el.scrollTo({ top: el.scrollHeight, behavior: "instant" as ScrollBehavior });
     });
     for (const child of Array.from(el.children)) ro.observe(child);
     const mo = new MutationObserver(() => {

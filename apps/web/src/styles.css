@@ -117,7 +117,7 @@ a { color: inherit; }
 .langtoggle button { border: 0; background: transparent; color: #fff; padding: 6px 9px; font-size: 12px; font-weight: 600; }
 .langtoggle button.on { background: var(--vox-blue); }
 
-.widget-body { flex: 1; overflow-y: auto; padding: 14px 14px 10px; background: radial-gradient(900px 300px at 50% -80px, #e6f5fc 0%, var(--panel-2) 70%); display: flex; flex-direction: column; gap: 10px; scroll-behavior: smooth; }
+.widget-body { flex: 1; overflow-y: auto; padding: 14px 14px 10px; background: radial-gradient(900px 300px at 50% -80px, #e6f5fc 0%, var(--panel-2) 70%); display: flex; flex-direction: column; gap: 10px; }
 .widget-body::-webkit-scrollbar { width: 8px; } .widget-body::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 4px; }
 .msgrow { display: flex; gap: 8px; align-items: flex-end; animation: pop 180ms ease-out; }
 .msgrow.user { justify-content: flex-end; }
