@@ -65,6 +65,13 @@ export function fmtDateTime(iso: string, lang: Language = "en", todayIso?: strin
     : `${fmtDate(iso, lang, todayIso)} at ${fmtTime(iso, lang)}`;
 }
 
+/** "tomorrow at 7:45 pm" / "on Monday 7 September at 7:45 pm" — English needs "on" only before a calendar date. */
+export function onDateTime(iso: string, lang: Language = "en", todayIso?: string): string {
+  const d = fmtDateTime(iso, lang, todayIso);
+  if (lang === "ar") return d;
+  return /^(today|tomorrow|tonight|this )/i.test(d) ? d : `on ${d}`;
+}
+
 export function fmtMinutes(min: number, lang: Language = "en"): string {
   const h = Math.floor(min / 60);
   const m = min % 60;

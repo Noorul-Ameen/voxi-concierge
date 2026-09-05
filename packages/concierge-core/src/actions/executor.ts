@@ -11,7 +11,7 @@ import type { AppContext } from "../context.js";
 import { appendEvent } from "../events.js";
 import type { Catalog } from "../services/catalog.js";
 import { markJourney, updateConversation } from "../services/conversation.js";
-import { fmtDateTime, money, seatLabels, t } from "../services/format.js";
+import { fmtDateTime, money, onDateTime, seatLabels, t } from "../services/format.js";
 import { bookingCard, orderSummary } from "../tools/index.js";
 import { type ActionRow, complete, fail } from "./ledger.js";
 
@@ -142,7 +142,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
               );
       const speech = t(
         ctx.lang,
-        `All done. ${inp.partial ? `${inp.ticketIds.length} tickets on booking` : "Booking"} ${inp.bookingId} for ${inp.filmTitle} on ${fmtDateTime(inp.showtime, "en", ctx.nowLocal)} ${inp.partial ? "have been" : "has been"} cancelled, and ${methodText}. Your refund number is ${refundRef}. A confirmation email is on its way.`,
+        `All done. ${inp.partial ? `${inp.ticketIds.length} tickets on booking` : "Booking"} ${inp.bookingId} for ${inp.filmTitle} ${onDateTime(inp.showtime, "en", ctx.nowLocal)} ${inp.partial ? "have been" : "has been"} cancelled, and ${methodText}. Your refund number is ${refundRef}. A confirmation email is on its way.`,
         `تم بنجاح. ${inp.partial ? `${inp.ticketIds.length} تذاكر من الحجز` : "الحجز"} ${inp.bookingId} لفيلم ${inp.filmTitle} في ${fmtDateTime(inp.showtime, "ar", ctx.nowLocal)} تم إلغاؤه، و${methodText}. رقم الاسترداد ${refundRef}. سيصلك بريد تأكيد.`,
       );
       const card = {
@@ -303,7 +303,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
             );
       const speech = t(
         ctx.lang,
-        `Swapped! Your new booking is ${newBooking.VistaBookingId}: ${inp.ticketCount} tickets for ${inp.filmTitle}, ${inp.targetExperience} at ${await cname(ctx, inp.targetCinemaId)} on ${fmtDateTime(inp.targetShowtime, "en", ctx.nowLocal)}, seats ${seats}. ${diffText} The original booking ${inp.bookingId} is cancelled and new tickets are on their way by email.`,
+        `Swapped! Your new booking is ${newBooking.VistaBookingId}: ${inp.ticketCount} tickets for ${inp.filmTitle}, ${inp.targetExperience} at ${await cname(ctx, inp.targetCinemaId)} ${onDateTime(inp.targetShowtime, "en", ctx.nowLocal)}, seats ${seats}. ${diffText} The original booking ${inp.bookingId} is cancelled and new tickets are on their way by email.`,
         `تم التبديل! حجزك الجديد ${newBooking.VistaBookingId}: ${inp.ticketCount} تذاكر لفيلم ${inp.filmTitle}، ${inp.targetExperience} في ${await cname(ctx, inp.targetCinemaId)} بتاريخ ${fmtDateTime(inp.targetShowtime, "ar", ctx.nowLocal)}، المقاعد ${seats}. ${diffText} تم إلغاء الحجز الأصلي ${inp.bookingId} وستصلك التذاكر الجديدة بالبريد.`,
       );
       return {

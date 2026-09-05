@@ -3,7 +3,7 @@ import { type BookingSnapshot, evaluateCancellation, evaluateSwap } from "@voxi/
 import { VistaClientError } from "@voxi/vista-client";
 import { enqueue, findByKey, idem, toRef } from "../actions/ledger.js";
 import { consumeConfirmation, createConfirmation } from "../services/confirmations.js";
-import { fmtDateTime, money, seatLabels, t } from "../services/format.js";
+import { fmtDateTime, money, onDateTime, seatLabels, t } from "../services/format.js";
 import { type ToolCtx, type ToolHandlers, type ToolResult, err, ok } from "./types.js";
 
 export type VistaBooking = Record<string, any>;
@@ -144,7 +144,7 @@ function eligibilitySpeech(ctx: ToolCtx, b: VistaBooking, e: ReturnType<typeof e
   );
   return t(
     ctx.lang,
-    `Good news — ${b.FilmTitle} on ${fmtDateTime(b.Showtime, "en", ctx.nowLocal)} can be cancelled. You'd get ${methods.join(" or ")}. ${e.notes.join(" ")}`,
+    `Good news — ${b.FilmTitle} ${onDateTime(b.Showtime, "en", ctx.nowLocal)} can be cancelled. You'd get ${methods.join(" or ")}. ${e.notes.join(" ")}`,
     `خبر جيد — يمكن إلغاء حجز ${b.FilmTitle} في ${fmtDateTime(b.Showtime, "ar", ctx.nowLocal)}. ستسترد ${methods.join(" أو ")}. ${e.notes.join(" ")}`,
   );
 }
@@ -358,7 +358,7 @@ export const bookingTools: Pick<
             );
     const spoken = t(
       ctx.lang,
-      `To confirm: I'll cancel ${partial ? `${e.refundableTicketIds.length} of your tickets` : "your booking"} ${b.VistaBookingId} for ${b.FilmTitle} on ${fmtDateTime(b.Showtime, "en", ctx.nowLocal)} at ${await cinemaName(ctx, b.CinemaId)}, and refund ${refundText}. This can't be undone. Shall I go ahead?`,
+      `To confirm: I'll cancel ${partial ? `${e.refundableTicketIds.length} of your tickets` : "your booking"} ${b.VistaBookingId} for ${b.FilmTitle} ${onDateTime(b.Showtime, "en", ctx.nowLocal)} at ${await cinemaName(ctx, b.CinemaId)}, and refund ${refundText}. This can't be undone. Shall I go ahead?`,
       `للتأكيد: سألغي ${partial ? `${e.refundableTicketIds.length} من تذاكرك` : "حجزك"} ${b.VistaBookingId} لفيلم ${b.FilmTitle} في ${fmtDateTime(b.Showtime, "ar", ctx.nowLocal)} في ${await cinemaName(ctx, b.CinemaId)}، وأسترد ${refundText}. لا يمكن التراجع عن ذلك. هل أتابع؟`,
     );
     const conf = await createConfirmation(ctx.db, {

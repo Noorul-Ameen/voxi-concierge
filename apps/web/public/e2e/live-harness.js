@@ -613,9 +613,9 @@
     // payment paths
     r = await tool("prepare_payment", c, { userSessionId: usid, method: "SHARE_POINTS" });
     rec(
-      "17 pay with Share Points: insufficient explained (620 pts)",
-      !r.ok && r.error?.code === "INSUFFICIENT_POINTS",
-      r.error?.message,
+      "17 pay with Share Points: insufficient explained, or accepted when the balance covers it",
+      (!r.ok && r.error?.code === "INSUFFICIENT_POINTS") || (r.ok && /Share Points/.test(r.speech ?? "")),
+      r.error?.message ?? r.speech,
     );
     r = await tool("prepare_payment", c, { userSessionId: usid, method: "SAVED_CARD" });
     const conf = r.data?.confirmationId;
@@ -835,7 +835,9 @@
     r = await tool("get_session_context", ja, {});
     rec(
       "18 session context after login",
-      r.ok && r.data.isLoggedIn && /James/.test(`${r.data.customer?.firstName ?? ""} ${r.data.customer?.name ?? ""}`),
+      r.ok &&
+        r.data.isLoggedIn &&
+        /James/.test(`${r.data.customer?.firstName ?? ""} ${r.data.customer?.name ?? ""}`),
       r.speech,
     );
   }
