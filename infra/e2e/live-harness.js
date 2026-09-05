@@ -620,16 +620,16 @@
     r = await tool("prepare_payment", c, { userSessionId: usid, method: "SAVED_CARD" });
     const conf = r.data?.confirmationId;
     const s = await session(c);
-    const pay = await lastUi(s, "payment");
+    const paySheet = await lastUi(s, "payment");
     rec(
       "17 prepare payment: saved card, sheet with saved cards + wallet + VAT",
-      r.ok && pay?.meta?.savedCards?.length === 2 && pay.meta.wallet && pay.meta.vat,
-      r.speech + " | meta=" + JSON.stringify(pay?.meta).slice(0, 120),
+      r.ok && paySheet?.meta?.savedCards?.length === 2 && paySheet.meta.wallet && paySheet.meta.vat,
+      r.speech + " | meta=" + JSON.stringify(paySheet?.meta).slice(0, 120),
     );
     rec(
       "17 prepare payment: bank offers listed for member",
-      (pay?.meta?.bankOffers?.length ?? 0) > 0,
-      `bankOffers=${pay?.meta?.bankOffers?.length}`,
+      (paySheet?.meta?.bankOffers?.length ?? 0) > 0,
+      `bankOffers=${paySheet?.meta?.bankOffers?.length}`,
     );
     let pay = await cmd(s, {
       type: "payment.token",
@@ -775,7 +775,7 @@
     );
     const hm = await cmd(s, {
       type: "human.message",
-      transferId: st.transfer?.transferId ?? "",
+      transferId: st.transfer?.id ?? st.transfer?.transferId ?? "",
       text: "Hello, is anyone there?",
     });
     rec("12 transfer: guest message reaches the (simulated) agent", hm.ok === true, JSON.stringify(hm));
@@ -835,7 +835,7 @@
     r = await tool("get_session_context", ja, {});
     rec(
       "18 session context after login",
-      r.ok && r.data.isLoggedIn && /James/.test(r.data.customer?.name ?? ""),
+      r.ok && r.data.isLoggedIn && /James/.test(`${r.data.customer?.firstName ?? ""} ${r.data.customer?.name ?? ""}`),
       r.speech,
     );
   }
