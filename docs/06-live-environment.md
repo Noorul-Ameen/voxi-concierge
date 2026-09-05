@@ -25,6 +25,9 @@
 ## Real-site alignment (4 Sep 2026)
 Commit `9b6ca87` aligned the demo's structures with what a logged-in member sees on uae.voxcinemas.com (reference: `docs/07-real-site-reference.md`): seat tiers and per-area pricing, the real Deira F&B menu with images, the Review & Pay sheet (bank offers, SHARE redeem at 10 pts = 1 AED, VAT info, saved cards / ADCB TouchPoints / new card / Apple Pay), and the receipt/e-ticket card. Production was reseeded by setting `SEED_FORCE=true` on concierge-api for one deploy (then removed); conversation history was kept. The ElevenLabs agent prompt was updated and a new KB document `voxi/checkout-payments-and-receipts` (id `hSlmfgAfDCIairgU3rUc`) attached.
 
+## Widget feedback round (5 Sep 2026)
+Commit `2bc3a78`: three demo profiles (UAE / India / UK) plus a non-account guest booking, personalised recommendations with the children question, location bar (near-me showtimes with Google Maps links), Samsung Pay / Apple Pay / saved-card / new-card payment choice, guest checkout nudge, bank-filtered offers with saved-card hints, strict BOGO validation and same-bank card check at payment, compact F&B tiles. Production reseeded once more (`SEED_FORCE=true` for one deploy, then off); prompt and the checkout KB doc re-synced to the ElevenLabs agent.
+
 ## Live verification (3 Sep 2026)
 - Backend: 25 read/write tools exercised over HTTPS from Dubai; 3 concurrent confirmations → 1 action; full booking (tickets → seats → F&B → ENBD BOGO → card → QR `VNVWSA8`); swap `WJMX42R → X9HJLRH`; bank-offer and cut-off refusals; complaint `CMP-2026-000001`; simulated transfer; feedback; dashboard populated.
 - Agent (text, via ElevenLabs EU): login → find → prepare → confirm → cancel `WXA7K2M` (action ledger `cancel_booking: succeeded`); Arabic offers query answered in Arabic; guided booking started with tools; widget in Chrome connected, showtime cards rendered.
