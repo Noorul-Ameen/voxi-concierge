@@ -186,9 +186,37 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
     return () => clearInterval(iv);
   }, [mode, conversation]);
 
+  // keep the transcript pinned to the newest card: cards and images change height after they mount,
+  // so scroll now, again shortly after, and whenever the content resizes while the user is near the bottom
   useEffect(() => {
-    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight });
+    const el = bodyRef.current;
+    if (!el) return;
+    const toBottom = () => el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+    toBottom();
+    const t1 = setTimeout(toBottom, 150);
+    const t2 = setTimeout(toBottom, 700);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
   }, [items]);
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 240;
+      if (nearBottom) el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+    });
+    for (const child of Array.from(el.children)) ro.observe(child);
+    const mo = new MutationObserver(() => {
+      for (const child of Array.from(el.children)) ro.observe(child);
+    });
+    mo.observe(el, { childList: true });
+    return () => {
+      ro.disconnect();
+      mo.disconnect();
+    };
+  }, []);
   useEffect(() => onExpand?.(expanded), [expanded, onExpand]);
   // a location chosen before the conversation started is sent as soon as a session exists
   useEffect(() => {

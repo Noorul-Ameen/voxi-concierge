@@ -22,6 +22,18 @@ const ratingMinAge: Record<string, number> = {
   "21+": 21,
 };
 
+/** Arabic count phrases: dual, 3–10 plural, 11+ singular accusative ("و20 موعداً آخر"). */
+function arMore(n: number, kind: "film" | "showtime") {
+  const f =
+    kind === "film"
+      ? ["فيلم آخر", "فيلمان آخران", "أفلام أخرى", "فيلماً آخر"]
+      : ["موعد آخر", "موعدان آخران", "مواعيد أخرى", "موعداً آخر"];
+  if (n === 1) return f[0];
+  if (n === 2) return f[1];
+  if (n <= 10) return `${n} ${f[2]}`;
+  return `${n} ${f[3]}`;
+}
+
 export function filmCard(f: Film, lang: "en" | "ar") {
   return {
     hoCode: f.hoCode,
@@ -490,12 +502,12 @@ export const movieTools: Pick<
       spoken = `${items[0]!.dateLabel}${cinemasUsed.length === 1 ? ` ${ar ? "في" : "at"} ${cinemasUsed[0]}` : ""}${input.timeFrom ? ` ${ar ? "بعد" : "after"} ${fmtTime(`2000-01-01T${input.timeFrom}:00`, ctx.lang)}` : ""}: ${joinList(parts, ctx.lang)}`;
       if (remaining > 0)
         spoken += ar
-          ? `، و${remaining} أفلام أخرى على الشاشة`
+          ? `، و${arMore(remaining, "film")} على الشاشة`
           : `, and ${remaining} more film${remaining > 1 ? "s" : ""} on screen`;
       remaining = 0;
     }
     if (remaining > 0)
-      spoken += ar ? ` — و${remaining} مواعيد أخرى على الشاشة` : ` — and ${remaining} more on screen`;
+      spoken += ar ? ` — و${arMore(remaining, "showtime")} على الشاشة` : ` — and ${remaining} more on screen`;
     const asked = [
       wantLang ? t(ctx.lang, `${wantLang} films`, `أفلام ${wantLang}`) : film ? film.title : "",
       cinemaLabel ? t(ctx.lang, `at ${cinemaLabel}`, `في ${cinemaLabel}`) : "",

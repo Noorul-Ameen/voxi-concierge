@@ -497,7 +497,10 @@ export function OrderSummary({ o, lang, act, hideActions }: { o: any; lang: Lang
 
 /** Seat plan mirroring the real booking step: curved screen, tiered colours, "Your Selected Seats" price list. */
 function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, any>; lang: Lang; act: CardActions }) {
-  const [picked, setPicked] = useState<{ row: string; number: string; area: string }[]>([]);
+  // seats already held for this order start out selected, as on the site after auto-allocation
+  const [picked, setPicked] = useState<{ row: string; number: string; area: string }[]>(() =>
+    rows.flatMap((r) => r.seats.filter((s: any) => s.status === 2).map((s: any) => ({ row: r.row, number: String(s.id), area: r.areaCategoryCode }))),
+  );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const held = rows.flatMap((r) => r.seats.filter((s: any) => s.status === 2).map(() => 1)).length;
@@ -671,7 +674,12 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
     setBusy(false);
     if (r.ok) {
       setDone(true);
-      act.say(ar ? "أكملت الدفع في نافذة الدفع." : "I've completed the payment in the payment sheet.");
+      const ref = r.action?.result?.bookingId as string | undefined;
+      act.say(
+        ar
+          ? `أكملت الدفع في نافذة الدفع${ref ? ` — رقم الحجز ${ref}` : ""}.`
+          : `I've completed the payment in the payment sheet${ref ? ` — my booking reference is ${ref}` : ""}.`,
+      );
     } else setErr(r.action?.error?.message ?? r.error ?? "Payment failed");
   };
   if (done) return <div className="sheet">✅ {ar ? "تم الدفع" : "Payment received"}</div>;

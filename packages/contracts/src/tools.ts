@@ -255,7 +255,9 @@ export const RedeemPointsInput = z.object({
 export const GetOrderInput = z.object({ userSessionId: z.string() });
 export const PreparePaymentInput = z.object({
   userSessionId: z.string(),
-  method: PaymentMethod,
+  method: PaymentMethod.describe(
+    "SAVED_CARD when the guest names a card they already have on file ('my saved Mastercard', 'the Visa ending 2211', 'my usual card'); CARD only for a new card; APPLE_PAY / SAMSUNG_PAY for wallets; VOX_CREDIT / SHARE_POINTS for members' balances.",
+  ),
   customer: z.object({ name: z.string(), email: z.string().email(), phone: z.string() }).optional(),
 });
 export const PayOrderInput = z.object({
@@ -458,7 +460,7 @@ export const TOOL_REGISTRY = {
     input: PreparePaymentInput,
     kind: "read",
     description:
-      "Create the payment summary the customer must confirm and open the payment sheet in the widget. Returns confirmationId.",
+      "Create the payment summary the customer must confirm. For CARD / SAVED_CARD / APPLE_PAY / SAMSUNG_PAY it opens the secure Review & Pay sheet in the widget — the guest completes payment there and you do NOT call pay_order. For VOX_CREDIT / SHARE_POINTS read the summary, get a yes, then call pay_order with the confirmationId. Never read the confirmationId aloud.",
   },
   get_loyalty_balance: {
     input: GetLoyaltyBalanceInput,
@@ -530,7 +532,7 @@ export const TOOL_REGISTRY = {
     input: PayOrderInput,
     kind: "write",
     description:
-      "Complete payment and create the booking (QR + reference). Requires confirmationId and confirmed=true.",
+      "Complete payment and create the booking (QR + reference) for VOX_CREDIT or SHARE_POINTS payments only — card, saved card, Apple Pay and Samsung Pay are completed by the guest in the widget's payment sheet, so never call this for those. Requires confirmationId and confirmed=true.",
   },
   cancel_order: {
     input: CancelOrderInput,

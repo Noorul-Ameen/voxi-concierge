@@ -187,12 +187,12 @@ function Heat({ heat, tip }: { heat: number[][]; tip: ReturnType<typeof useTip> 
 }
 
 function Funnel({ steps }: { steps: { step: string; n: number }[] }) {
-  const top = Math.max(1, steps[0]?.n ?? 1);
+  const top = Math.max(1, ...steps.map((s) => s.n));
   return (
     <div className="funnel">
       {steps.map((s, i) => (
         <div className="step" key={s.step}>
-          <div className="box"><i style={{ height: `${Math.max(4, (s.n / top) * 100)}%` }} /></div>
+          <div className="box"><i style={{ height: `${Math.min(100, Math.max(4, (s.n / top) * 100))}%` }} /></div>
           <b>{s.n}</b>
           <small>{s.step}</small>
           {i > 0 ? <div className="conv">{steps[i - 1]!.n ? Math.round((s.n / steps[i - 1]!.n) * 100) : 0}% of previous</div> : <div className="conv">100%</div>}

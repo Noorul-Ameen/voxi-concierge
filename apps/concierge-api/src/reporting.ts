@@ -160,11 +160,20 @@ export function reportingRoutes(app: AppContext) {
     const stepConvs = (type: string) =>
       new Set(actions.filter((a) => a.type === type && a.status === "succeeded").map((a) => a.conversationId))
         .size;
-    const bookingStarted = convs.filter(
-      (x) =>
-        (x.journeys ?? []).some((j) => j.name === "guided_booking") ||
-        actions.some((a) => a.conversationId === x.id && a.type === "start_order"),
-    ).length;
+    // a conversation "started a booking" if it logged the journey or ran any order step (so later steps never exceed it)
+    const orderSteps = new Set([
+      "start_order",
+      "add_tickets",
+      "select_seats",
+      "add_concessions",
+      "apply_offer",
+      "pay_order",
+    ]);
+    const started = new Set<string>(
+      actions.filter((a) => orderSteps.has(a.type) && a.status === "succeeded").map((a) => a.conversationId),
+    );
+    for (const x of convs) if ((x.journeys ?? []).some((j) => j.name === "guided_booking")) started.add(x.id);
+    const bookingStarted = started.size;
     const funnel = [
       { step: "Booking started", n: bookingStarted },
       { step: "Tickets added", n: stepConvs("add_tickets") },

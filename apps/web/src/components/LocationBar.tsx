@@ -50,7 +50,7 @@ export function LocationBar({ lang, loc, onChange }: { lang: Lang; loc: Loc | nu
     <div className={`locbar ${loc ? "set" : ""}`}>
       <button className="locbtn" onClick={() => setOpen((x) => !x)} title={ar ? "الموقع" : "Location"}>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z" /><circle cx="12" cy="10" r="2.5" /></svg>
-        <span>{loc ? loc.label : ar ? "حدد موقعك لعرض أقرب السينمات" : "Set your location for nearby cinemas"}</span>
+        <span>{loc ? (loc.source === "gps" ? (ar ? "موقعي الحالي" : "My current location") : loc.label) : ar ? "حدد موقعك لعرض أقرب السينمات" : "Set your location for nearby cinemas"}</span>
         <i className={open ? "up" : ""} />
       </button>
       {loc ? (

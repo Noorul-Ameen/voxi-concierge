@@ -835,7 +835,9 @@
     r = await tool("get_session_context", ja, {});
     rec(
       "18 session context after login",
-      r.ok && r.data.isLoggedIn && /James/.test(`${r.data.customer?.firstName ?? ""} ${r.data.customer?.name ?? ""}`),
+      r.ok &&
+        r.data.isLoggedIn &&
+        /James/.test(`${r.data.customer?.firstName ?? ""} ${r.data.customer?.name ?? ""}`),
       r.speech,
     );
   }
