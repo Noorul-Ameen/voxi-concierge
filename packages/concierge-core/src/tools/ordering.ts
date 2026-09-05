@@ -308,11 +308,6 @@ export const orderingTools: Pick<
     const held = rows.flatMap((r) =>
       r.seats.filter((x: any) => x.status === 2).map((x: any) => `${r.row}${x.id}`),
     );
-    const speech = t(
-      ctx.lang,
-      `${available} seats are free for this show${held.length ? `; you currently hold ${held.join(", ")}` : ""}. I've opened the seat map — tap seats or tell me a row and seat numbers, or say "pick the best available".`,
-      `${available} مقعداً متاحاً لهذا العرض${held.length ? `؛ مقاعدك المحجوزة حالياً ${held.join("، ")}` : ""}. فتحت خريطة المقاعد — اختر بالضغط أو أخبرني بالصف وأرقام المقاعد، أو قل "اختر الأفضل".`,
-    );
     // price per seat tier, as the real site shows it ("x1 Regular – 46.00 AED per ticket")
     const ttypes = await ctx.vista.ticketTypes(s.cinemaId, s.sessionId).catch(() => null);
     const tierLabel = (code: string) =>
@@ -329,6 +324,61 @@ export const orderingTools: Pick<
         price: tt ? money(tt.PriceInCents, ctx.lang) : null,
       };
     });
+    // 2–3 concrete options per area of the room so the agent can offer instead of pick: adjacent free seats
+    // near the centre, with the tier and price of that row (back rows are often Preferred View at a higher price)
+    const need = Math.max(1, held.length || 1);
+    const sorted = [...rows].sort((a: any, b: any) => (a.rowIndex ?? 0) - (b.rowIndex ?? 0));
+    const third = Math.max(1, Math.ceil(sorted.length / 3));
+    const regions: [string, string, any[]][] = [
+      ["front", t(ctx.lang, "front", "الأمام"), sorted.slice(0, third)],
+      ["middle", t(ctx.lang, "middle", "الوسط"), sorted.slice(third, third * 2)],
+      ["back", t(ctx.lang, "back", "الخلف"), sorted.slice(third * 2)],
+    ];
+    const centreCol = Number(plan.SeatLayoutData.ColumnCount ?? 20) / 2;
+    const suggestions = regions
+      .map(([region, label, rs]) => {
+        const options: { seats: string[]; row: string; tier: string; price: string | null }[] = [];
+        for (const r of rs) {
+          const free = r.seats
+            .filter((x: any) => x.status === 0 || x.status === 2)
+            .sort((a: any, b: any) => a.col - b.col);
+          let best: any[] | null = null;
+          for (let i = 0; i + need <= free.length; i++) {
+            const run = free.slice(i, i + need);
+            if (run[run.length - 1].col - run[0].col !== need - 1) continue;
+            const off = Math.abs((run[0].col + run[run.length - 1].col) / 2 - centreCol);
+            if (!best || off < Math.abs((best[0].col + best[best.length - 1].col) / 2 - centreCol))
+              best = run;
+          }
+          if (best) {
+            const code = String(r.areaCategoryCode);
+            options.push({
+              seats: best.map((x: any) => `${r.row}${x.id}`),
+              row: r.row,
+              tier: tierLabel(code),
+              price: tiers.find((tt) => tt.area === code)?.price ?? null,
+            });
+          }
+          if (options.length >= 2) break;
+        }
+        return { region, label, options };
+      })
+      .filter((x) => x.options.length);
+    const optionText = suggestions
+      .map(
+        (sg) =>
+          `${sg.label}: ${sg.options.map((o) => `${o.seats.join("-")} (${o.tier}${o.price ? ` ${o.price}` : ""})`).join(" or ")}`,
+      )
+      .join("; ");
+    const tierText = tiers
+      .filter((x) => x.price)
+      .map((x) => `${x.label} ${x.price}`)
+      .join(", ");
+    const speech = t(
+      ctx.lang,
+      `${available} seats are free${held.length ? `; you currently hold ${held.join(", ")}` : ""}. The map is on screen. ${tierText ? `Seat prices: ${tierText}. ` : ""}${optionText ? `Good options — ${optionText}. ` : ""}Which would you like, or tap seats on the map?`,
+      `${available} مقعداً متاحاً${held.length ? `؛ مقاعدك المحجوزة حالياً ${held.join("، ")}` : ""}. الخريطة على الشاشة. ${tierText ? `أسعار المقاعد: ${tierText}. ` : ""}${optionText ? `خيارات جيدة — ${optionText}. ` : ""}أيها تفضل، أم تختار من الخريطة؟`,
+    );
     return ok(
       {
         sessionKey: s.key,
@@ -339,6 +389,7 @@ export const orderingTools: Pick<
         available,
         held,
         tiers,
+        suggestions,
       },
       speech,
       {

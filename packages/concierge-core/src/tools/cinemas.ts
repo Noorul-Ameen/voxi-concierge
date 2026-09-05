@@ -114,8 +114,8 @@ export const cinemaTools: Pick<ToolHandlers, "list_cinemas" | "get_cinema" | "ne
   },
 
   async nearest_cinemas(ctx, input) {
-    const lat = input.lat ?? ctx.conversation.geo?.lat;
-    const lng = input.lng ?? ctx.conversation.geo?.lng;
+    const lat = ctx.conversation.geo?.lat;
+    const lng = ctx.conversation.geo?.lng;
     if (lat == null || lng == null)
       return err(
         "LOCATION_REQUIRED",
@@ -132,7 +132,7 @@ export const cinemaTools: Pick<ToolHandlers, "list_cinemas" | "get_cinema" | "ne
         t(ctx.lang, "I couldn't find cinemas near that location.", "لم أجد سينمات قريبة من هذا الموقع."),
       );
     const items = near.map((c) => cinemaCard(c, ctx.lang));
-    const where = ctx.conversation.geo?.label && input.lat == null ? ` to ${ctx.conversation.geo.label}` : "";
+    const where = ctx.conversation.geo?.label ? ` to ${ctx.conversation.geo.label}` : "";
     const speech = t(
       ctx.lang,
       `The nearest VOX cinemas${where} are ${joinList(near.map((c) => `${c.name} (${c.distanceKm} km)`))}. Which one would you like showtimes for?`,

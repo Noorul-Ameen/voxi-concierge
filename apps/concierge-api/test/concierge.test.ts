@@ -56,6 +56,19 @@ describe("Phase 1 — information", () => {
     expect(tt.data.ticketTypes.some((x: any) => x.isChild)).toBe(false);
     expect(tt.speech).toMatch(/adults only/);
   });
+  it("relaxes one constraint at a time and keeps the requested language", async () => {
+    // Arabic films at a cinema that has none → other cinemas with Arabic films, not other languages at the same cinema
+    const r = await h.tool("search_sessions", conv("s3"), {
+      language: "Arabic",
+      cinemaName: "City Centre Deira",
+      dateTo: "next sunday",
+    });
+    expect(r.ok).toBe(true);
+    if (r.data.sessions.length) {
+      expect(r.data.sessions.every((x: any) => /arabic/i.test(x.filmLanguage ?? x.language))).toBe(true);
+      if (r.data.relaxed) expect(r.speech).toMatch(/No Arabic films/);
+    }
+  });
   it("filters films by child age", async () => {
     const r = await h.tool("search_films", conv("f2"), { maxAge: 10, limit: 20 });
     expect(r.data.films.every((f: any) => !/^(15\+|18\+|18TC|21\+)$/.test(f.rating))).toBe(true);
@@ -81,9 +94,35 @@ describe("Phase 1 — information", () => {
     expect(none.ok).toBe(true);
     expect(none.data.relaxed).toBeTruthy();
   });
-  it("nearest cinemas and cinema details incl. in-mall directions", async () => {
-    const n = await h.tool("nearest_cinemas", conv("c1"), { lat: 25.1181, lng: 55.2004 });
+  it("nearest cinemas use the location set in the widget (never coordinates from the agent)", async () => {
+    const c = conv("c1");
+    const none = await h.tool("nearest_cinemas", c, {});
+    expect(none.ok).toBe(false);
+    expect(none.error.code).toBe("LOCATION_REQUIRED");
+    const session = await h.api
+      .request("/widget/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ conversationId: c }),
+      })
+      .then((r) => r.json() as any);
+    await h.widget("command", session.token, {
+      type: "location",
+      lat: 25.1181,
+      lng: 55.2004,
+      label: "Al Barsha",
+      source: "manual",
+    });
+    const n = await h.tool("nearest_cinemas", c, {});
     expect(n.data.cinemas[0].cinemaId).toBe("0002");
+    expect(n.speech).toMatch(/Al Barsha/);
+    const ctx = await h.tool("get_session_context", c, {});
+    expect(ctx.data.location).toBe("Al Barsha");
+    // near-me showtimes: nearest cinema first, with distance and a map link
+    const near = await h.tool("search_sessions", c, { title: "spider-man", dateTo: "2099-01-01" });
+    expect(near.ok).toBe(true);
+    expect(near.data.sessions[0].distanceKm).toBeDefined();
+    expect(near.data.sessions[0].mapUrl).toMatch(/google\.com\/maps/);
     const d = await h.tool("get_cinema", conv("c2"), { name: "Deira City Centre" });
     expect(d.data.cinema.cinemaId).toBe("0001");
     expect(d.data.cinema.directions).toMatch(/Level 2/);
@@ -286,6 +325,18 @@ describe("Phase 2 — guided booking end to end", () => {
       items: [{ itemId: "7747", quantity: 1, modifierIds: ["DIET"] }],
     });
     expect(fnb.ok).toBe(true);
+    // the guest rejects a drink: quantity 0 removes it and the replacement is added in the same call
+    const swap = await h.tool("add_concessions", c, {
+      userSessionId: usid,
+      items: [
+        { itemId: "7747", quantity: 0 },
+        { itemId: "2402", quantity: 1 },
+      ],
+    });
+    expect(swap.ok).toBe(true);
+    expect(swap.data.result.speech).toMatch(/removed/i);
+    expect(swap.data.result.order.concessions).toHaveLength(1);
+    expect(swap.data.result.order.concessions[0].itemId).toBe("2402");
     const isMonday = new Date(`${monday.showtime}Z`).getUTCDay() === 1;
     if (isMonday) {
       const promo = await h.tool("apply_offer", c, { userSessionId: usid, promoCode: "MONDAY30" });

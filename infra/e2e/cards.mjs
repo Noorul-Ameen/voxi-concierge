@@ -16,7 +16,7 @@ const run = async (name, input) => {
 await run("search_films", { query: "spider" });
 await run("search_sessions", { title: "spider-man", cinemaName: "MOE", dateTo: "2099-01-01", limit: 12 });
 await page.screenshot({ path: "/tmp/cards-1.png" });
-await run("nearest_cinemas", { lat: 25.1181, lng: 55.2004 });
+await run("nearest_cinemas", {});
 await run("list_offers", { experience: "MAX", limit: 3 });
 await page.screenshot({ path: "/tmp/cards-2.png" });
 await run("login_customer", { phone: "0501234567", pin: "1234" });

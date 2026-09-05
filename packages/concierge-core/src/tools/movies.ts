@@ -264,10 +264,15 @@ export const movieTools: Pick<
         );
       cinemaIds = [r.cinema.id];
       cinemaLabel = ctx.lang === "ar" ? r.cinema.nameAlt || r.cinema.name : r.cinema.name;
-    } else if (input.nearLat != null && input.nearLng != null) {
-      nearby = await ctx.catalog.nearestCinemas(input.nearLat, input.nearLng, 3);
-      cinemaIds = nearby.map((c) => c.id);
-      cinemaLabel = t(ctx.lang, "near you", "بالقرب منك");
+    } else if (input.nearMe && !ctx.conversation.geo) {
+      return err(
+        "LOCATION_REQUIRED",
+        t(
+          ctx.lang,
+          "I don't have your location yet — tap the location button in the chat to share it or pick an area, or tell me which area you're in.",
+          "ليس لدي موقعك بعد — اضغط زر الموقع في المحادثة لمشاركته أو اختيار منطقة، أو أخبرني بالمنطقة التي أنت فيها.",
+        ),
+      );
     } else if (ctx.conversation.geo) {
       // the guest shared or picked a location in the widget — nearest cinemas win over booking history
       nearby = await ctx.catalog.nearestCinemas(ctx.conversation.geo.lat, ctx.conversation.geo.lng, 3);
@@ -315,31 +320,65 @@ export const movieTools: Pick<
     let rows = apply(base, {});
     let relaxed: string | null = null;
     if (!rows.length && input.suggestAlternatives) {
-      const order: [keyof Parameters<typeof apply>[1], string][] = [
-        ["time", t(ctx.lang, "at other times", "في أوقات أخرى")],
-        ["exp", t(ctx.lang, "in other experiences", "في تجارب أخرى")],
-        ["date", t(ctx.lang, "on other days", "في أيام أخرى")],
-        ["lang", t(ctx.lang, "in other languages", "بلغات أخرى")],
+      // Relax ONE constraint at a time (never several at once, so "Arabic tomorrow at Deira" can't turn into
+      // "Hindi today"). A named language or film is what the guest wants — look at other cinemas (nearest
+      // first) before other days, and only fall back to other languages as a last resort.
+      const allCinemaIds = cinemas.map((c) => c.id);
+      const otherCinemaRows = async () => {
+        if (cinemaIds.length >= allCinemaIds.length) return [] as Session[];
+        const all = (await sessionsFor(ctx, allCinemaIds)).filter(
+          (s) =>
+            (!film || versionCodes.has(s.hoCode)) &&
+            s.showtime >= ctx.nowLocal &&
+            !cinemaIds.includes(s.cinemaId),
+        );
+        let r = apply(all, {});
+        if (!r.length && (input.timeFrom || input.timeTo)) r = apply(all, { time: false });
+        if (r.length && ctx.conversation.geo) {
+          const near = await ctx.catalog.nearestCinemas(
+            ctx.conversation.geo.lat,
+            ctx.conversation.geo.lng,
+            22,
+          );
+          const dist = new Map(near.map((c) => [c.id, c.distanceKm]));
+          const closest = [...new Set(r.map((x) => x.cinemaId))]
+            .sort((a, b) => (dist.get(a) ?? 99) - (dist.get(b) ?? 99))
+            .slice(0, 3);
+          r = r.filter((x) => closest.includes(x.cinemaId));
+          nearby = near.filter((c) => closest.includes(c.id));
+        }
+        return r;
+      };
+      const single = (flag: string) => apply(base, { [flag]: false });
+      const steps: (() => Promise<[Session[], string]>)[] = [
+        async () => [single("time"), t(ctx.lang, "at other times", "في أوقات أخرى")],
+        async () => [single("exp"), t(ctx.lang, "in other experiences", "في تجارب أخرى")],
+        ...((wantLang || film) && !input.cinemaId && !emirate
+          ? [
+              async (): Promise<[Session[], string]> => [
+                await otherCinemaRows(),
+                t(ctx.lang, "at other cinemas", "في سينمات أخرى"),
+              ],
+            ]
+          : []),
+        async () => [single("date"), t(ctx.lang, "on other days", "في أيام أخرى")],
+        ...(film || wantLang
+          ? [
+              async (): Promise<[Session[], string]> => [
+                await otherCinemaRows(),
+                t(ctx.lang, "at other cinemas", "في سينمات أخرى"),
+              ],
+            ]
+          : []),
+        async () => [single("lang"), t(ctx.lang, "in other languages", "بلغات أخرى")],
       ];
-      const relaxedFlags: Record<string, boolean> = {};
-      for (const [flag, label] of order) {
-        relaxedFlags[flag] = false;
-        rows = apply(base, relaxedFlags);
-        if (rows.length) {
+      for (const step of steps) {
+        const [r, label] = await step();
+        if (r.length) {
+          rows = r;
           relaxed = label;
           break;
         }
-      }
-      if (!rows.length && cinemaIds.length === 1 && film) {
-        // other cinemas
-        const all = (
-          await sessionsFor(
-            ctx,
-            cinemas.map((c) => c.id),
-          )
-        ).filter((s) => versionCodes.has(s.hoCode) && s.showtime >= ctx.nowLocal);
-        rows = apply(all, {}).length ? apply(all, {}) : apply(all, { time: false, exp: false });
-        if (rows.length) relaxed = t(ctx.lang, "at other cinemas", "في سينمات أخرى");
       }
     }
     const rank = new Map(nearby.map((c) => [c.id, c.distanceKm]));
@@ -453,7 +492,14 @@ export const movieTools: Pick<
     }
     if (remaining > 0)
       spoken += ar ? ` — و${remaining} مواعيد أخرى على الشاشة` : ` — and ${remaining} more on screen`;
-    const speech = `${relaxed ? t(ctx.lang, `Nothing exactly matched, but I found options ${relaxed}. `, `لم أجد تطابقاً دقيقاً، لكن هناك خيارات ${relaxed}. `) : ""}${spoken}. ${t(ctx.lang, "Shall I book one of these?", "هل أحجز أحد هذه المواعيد؟")}`;
+    const asked = [
+      wantLang ? t(ctx.lang, `${wantLang} films`, `أفلام ${wantLang}`) : film ? film.title : "",
+      cinemaLabel ? t(ctx.lang, `at ${cinemaLabel}`, `في ${cinemaLabel}`) : "",
+      input.date ? fmtDate(date, ctx.lang, ctx.nowLocal) : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    const speech = `${relaxed ? t(ctx.lang, `No ${asked || "exact match"}, but I found options ${relaxed}. `, `لا يوجد ${asked || "تطابق دقيق"}، لكن هناك خيارات ${relaxed}. `) : ""}${spoken}. ${t(ctx.lang, "Shall I book one of these?", "هل أحجز أحد هذه المواعيد؟")}`;
     return ok(
       { film: film ? filmCard(film, ctx.lang) : undefined, sessions: items, relaxed },
       speech,

@@ -57,8 +57,12 @@ export const SearchSessionsInput = z.object({
   timeTo: timeStr.optional(),
   experience: Experience.optional(),
   language: z.string().optional(),
-  nearLat: z.number().optional(),
-  nearLng: z.number().optional(),
+  nearMe: z
+    .boolean()
+    .optional()
+    .describe(
+      "Search the cinemas nearest to the location the guest shared/picked in the widget (never invent coordinates)",
+    ),
   limit: z.number().int().min(1).max(60).default(30),
   suggestAlternatives: z
     .boolean()
@@ -73,8 +77,6 @@ export const ListCinemasInput = z.object({
 });
 export const GetCinemaInput = z.object({ cinemaId: z.string().optional(), name: z.string().optional() });
 export const NearestCinemasInput = z.object({
-  lat: z.number().optional().describe("Omit to use the location the guest shared in the widget"),
-  lng: z.number().optional(),
   limit: z.number().int().min(1).max(5).default(3),
   experience: Experience.optional(),
 });
@@ -223,7 +225,14 @@ export const AddConcessionsInput = z.object({
     .array(
       z.object({
         itemId: z.string(),
-        quantity: z.number().int().min(1).max(10),
+        quantity: z
+          .number()
+          .int()
+          .min(0)
+          .max(10)
+          .describe(
+            "Quantity to have in the order for this item; 0 removes the item (use it to swap a drink the guest rejected)",
+          ),
         modifierIds: z.array(z.string()).optional(),
       }),
     )
@@ -369,7 +378,7 @@ export const TOOL_REGISTRY = {
     input: NearestCinemasInput,
     kind: "read",
     description:
-      "Three nearest cinemas to GPS coordinates. Ask the widget for location first (request_location client tool).",
+      "Three nearest cinemas to the location the guest shared or picked in the widget (no coordinates needed — never invent any). If it returns LOCATION_REQUIRED, ask the guest to tap the location button or name an area, or call request_location.",
   },
   get_age_rules: {
     input: GetAgeRulesInput,
@@ -437,7 +446,8 @@ export const TOOL_REGISTRY = {
   get_seat_plan: {
     input: GetSeatPlanInput,
     kind: "read",
-    description: "Seat map and availability for a session; renders the interactive seat map in the widget.",
+    description:
+      "Seat map and availability for a session; renders the interactive seat map in the widget and returns 2–3 suggested seats per area (front/middle/back) with their tier and price so you can offer choices instead of picking.",
   },
   get_order: {
     input: GetOrderInput,
@@ -503,7 +513,8 @@ export const TOOL_REGISTRY = {
   add_concessions: {
     input: AddConcessionsInput,
     kind: "write",
-    description: "Add food & beverage items to the order.",
+    description:
+      "Add food & beverage items to the order, or remove one with quantity 0. Only add what the guest explicitly chose — never a guess.",
   },
   apply_offer: {
     input: ApplyOfferInput,

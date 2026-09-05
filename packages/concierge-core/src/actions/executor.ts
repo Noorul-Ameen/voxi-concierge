@@ -466,9 +466,21 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         userSessionId: inp.userSessionId,
         summary: s,
       });
+      const tierNames = [
+        ...new Set(
+          s.tickets.map((tk: any) =>
+            String(tk.description)
+              .replace(/^[A-Z0-9]+ /, "")
+              .toLowerCase(),
+          ),
+        ),
+      ];
+      const tierNote = tierNames.some((x) => /premium|preferred/.test(x))
+        ? ` (${tierNames.join(", ")} — ${money(s.tickets[0]?.finalCents ?? s.tickets[0]?.priceCents ?? 0, "en")} per ticket)`
+        : "";
       const speech = t(
         ctx.lang,
-        `Seats ${s.seats} are yours. Total so far ${money(s.totalCents, "en")}. Want to add food and drinks, apply an offer, or go to payment?`,
+        `Seats ${s.seats} are yours${tierNote}. Total so far ${money(s.totalCents, "en")}. Want to add food and drinks, apply an offer, or go to payment?`,
         `المقاعد ${s.seats} لك. الإجمالي حتى الآن ${money(s.totalCents, "ar")}. هل تريد إضافة طعام أو تطبيق عرض أو الانتقال إلى الدفع؟`,
       );
       return {
@@ -491,30 +503,53 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       };
       const cur = await ctx.vista.getOrder(inp.userSessionId);
       if (!cur.Order) throw new ActionError("NOT_FOUND", "No active order");
-      const r = await ctx.vista
-        .addConcessions({
-          UserSessionId: inp.userSessionId,
-          CinemaId: cur.Order.CinemaId,
-          Concessions: inp.items.map((i) => ({
-            ItemId: i.itemId,
-            Quantity: i.quantity,
-            Modifiers: i.modifierIds,
-          })),
-        })
-        .catch((e) => {
-          throw fromVista(e);
-        });
+      // quantity 0 = take that item out (the guest rejected it) — remove its lines, never rebuild the order
+      const removals = inp.items.filter((i) => i.quantity === 0);
+      const removed: string[] = [];
+      let order = cur.Order;
+      for (const rm of removals) {
+        const lines = (
+          (order.Concessions ?? []) as { Id: string; ItemId: string; Description: string }[]
+        ).filter((c) => c.ItemId === rm.itemId);
+        for (const line of lines) {
+          const rr = await ctx.vista.removeConcession(inp.userSessionId, line.Id).catch((e) => {
+            throw fromVista(e);
+          });
+          order = rr.Order ?? order;
+          removed.push(line.Description);
+        }
+      }
+      const adds = inp.items.filter((i) => i.quantity > 0);
+      let r: { Order: Record<string, any>; FailedConcessions?: unknown } = {
+        Order: order,
+        FailedConcessions: [],
+      };
+      if (adds.length)
+        r = await ctx.vista
+          .addConcessions({
+            UserSessionId: inp.userSessionId,
+            CinemaId: cur.Order.CinemaId,
+            Concessions: adds.map((i) => ({
+              ItemId: i.itemId,
+              Quantity: i.quantity,
+              Modifiers: i.modifierIds,
+            })),
+          })
+          .catch((e) => {
+            throw fromVista(e);
+          });
       const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cname(ctx, cur.Order.CinemaId));
       const failed = (r.FailedConcessions as { ItemId: string; Reason: string }[] | null) ?? [];
       await appendEvent(ctx.db, ctx.events, a.conversationId, "order.updated", {
         userSessionId: inp.userSessionId,
         summary: s,
       });
-      const added = s.concessions.filter((c) => inp.items.some((i) => i.itemId === c.itemId));
+      const added = s.concessions.filter((c) => adds.some((i) => i.itemId === c.itemId));
+      const addedText = added.map((c) => `${c.quantity}× ${c.description}`).join(", ");
       const speech = t(
         ctx.lang,
-        `${added.map((c) => `${c.quantity}× ${c.description}`).join(", ")} added${failed.length ? ` (couldn't add ${failed.map((f) => f.ItemId).join(", ")})` : ""}. Total is now ${money(s.totalCents, "en")}. Anything else, or shall we pay?`,
-        `تمت إضافة ${added.map((c) => `${c.quantity}× ${c.description}`).join("، ")}. الإجمالي الآن ${money(s.totalCents, "ar")}. هل تريد شيئاً آخر أم ننتقل إلى الدفع؟`,
+        `${removed.length ? `${removed.join(", ")} removed. ` : ""}${addedText ? `${addedText} added` : removed.length ? "" : "Nothing changed"}${failed.length ? ` (couldn't add ${failed.map((f) => f.ItemId).join(", ")})` : ""}${addedText || !removed.length ? ". " : ""}Total is now ${money(s.totalCents, "en")}. Anything else, or shall we pay?`,
+        `${removed.length ? `تمت إزالة ${removed.join("، ")}. ` : ""}${addedText ? `تمت إضافة ${addedText}. ` : ""}الإجمالي الآن ${money(s.totalCents, "ar")}. هل تريد شيئاً آخر أم ننتقل إلى الدفع؟`,
       );
       return {
         result: { speech, order: s, failed },
