@@ -508,9 +508,26 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       const removed: string[] = [];
       let order = cur.Order;
       for (const rm of removals) {
-        const lines = (
-          (order.Concessions ?? []) as { Id: string; ItemId: string; Description: string }[]
+        // match on item, and on the chosen modifiers when given (so "remove the Pepsi combo" keeps the 7 Up combo)
+        const want = (rm.modifierIds ?? []).map(String).sort().join("|");
+        const all = (
+          (order.Concessions ?? []) as {
+            Id: string;
+            ItemId: string;
+            Description: string;
+            Modifiers?: { Id: string }[];
+          }[]
         ).filter((c) => c.ItemId === rm.itemId);
+        const exact = want
+          ? all.filter(
+              (c) =>
+                (c.Modifiers ?? [])
+                  .map((m) => String(m.Id))
+                  .sort()
+                  .join("|") === want,
+            )
+          : [];
+        const lines = exact.length ? exact : want ? all.slice(0, 1) : all;
         for (const line of lines) {
           const rr = await ctx.vista.removeConcession(inp.userSessionId, line.Id).catch((e) => {
             throw fromVista(e);
