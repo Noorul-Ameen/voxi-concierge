@@ -337,7 +337,17 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       const key = (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey;
       const sess = key ? await ctx.catalog.sessionByKey(key) : null;
       if (!sess) throw new ActionError("ORDER_INVALID_STATE", "No session selected for this order");
-      const r = await ctx.vista
+      // offers already on the order are dropped by Vista when tickets change — re-check them afterwards
+      const before = await ctx.vista.getOrder(inp.userSessionId).catch(() => null);
+      const prevOffers = (
+        (before?.Order?.AppliedOffers ?? []) as {
+          offerId: string;
+          title: string;
+          type: string;
+          cardBin?: string;
+        }[]
+      ).filter((o) => o.type === "bank" || o.type === "promo" || o.type === "member");
+      let r = await ctx.vista
         .addTickets({
           UserSessionId: inp.userSessionId,
           CinemaId: sess.cinemaId,
@@ -350,11 +360,42 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           throw fromVista(e);
         });
       ctx.catalog.invalidateSessions(sess.cinemaId);
+      const offerNotes: string[] = [];
+      for (const o of prevOffers) {
+        const elig = await ctx.vista
+          .offerEligibility(o.offerId, {
+            sessionKey: key,
+            memberId: ctx.conversation.memberId ?? undefined,
+            cardBin: o.cardBin,
+            ticketCount: inp.tickets.reduce((n, x) => n + x.qty, 0),
+          })
+          .catch(() => null);
+        if (elig?.eligible) {
+          const re = await ctx.vista
+            .applyOffer({
+              UserSessionId: inp.userSessionId,
+              OfferId: o.offerId,
+              CardBin: o.cardBin,
+              MemberId: ctx.conversation.memberId ?? undefined,
+            })
+            .catch(() => null);
+          if (re?.Order) {
+            r = { ...r, Order: re.Order };
+            offerNotes.push(t(ctx.lang, `${o.title} still applies.`, `لا يزال عرض ${o.title} سارياً.`));
+            continue;
+          }
+        }
+        const why =
+          elig?.reasons?.[0] ?? t(ctx.lang, "its conditions no longer match", "لم تعد شروطه مطابقة");
+        offerNotes.push(
+          t(ctx.lang, `${o.title} was removed — ${why}.`, `تمت إزالة عرض ${o.title} — ${why}.`),
+        );
+      }
       const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cname(ctx, sess.cinemaId));
       const speech = t(
         ctx.lang,
-        `Done — ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} added and I've held seats ${s.seats} (${s.tickets[0]?.description.includes("PREMIUM") ? "premium view" : "regular"}). Subtotal ${money(s.totalCents, "en")}. Happy with those seats, or would you like to pick from the map? You can also add popcorn and drinks.`,
-        `تم — أضفت ${s.tickets.length} تذكرة وحجزت المقاعد ${s.seats}. الإجمالي ${money(s.totalCents, "ar")}. هل تناسبك هذه المقاعد أم تفضل الاختيار من الخريطة؟ يمكنك أيضاً إضافة الفشار والمشروبات.`,
+        `Done — ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} added and I've held seats ${s.seats} (${s.tickets[0]?.description.includes("PREMIUM") ? "premium view" : "regular"}). Subtotal ${money(s.totalCents, "en")}.${offerNotes.length ? ` ${offerNotes.join(" ")}` : ""} Happy with those seats, or would you like to pick from the map? You can also add popcorn and drinks.`,
+        `تم — أضفت ${s.tickets.length} تذكرة وحجزت المقاعد ${s.seats}. الإجمالي ${money(s.totalCents, "ar")}.${offerNotes.length ? ` ${offerNotes.join(" ")}` : ""} هل تناسبك هذه المقاعد أم تفضل الاختيار من الخريطة؟ يمكنك أيضاً إضافة الفشار والمشروبات.`,
       );
       await appendEvent(ctx.db, ctx.events, a.conversationId, "order.updated", {
         userSessionId: inp.userSessionId,
@@ -928,31 +969,37 @@ export async function executeAction(app: AppContext, catalog: Catalog, a: Action
             `The payment was declined (${err.message}). Would you like to try another card or pay with VOX credit?`,
             `تم رفض الدفع (${err.message}). هل تريد تجربة بطاقة أخرى أو الدفع برصيد فوكس؟`,
           )
-        : err.code === "SEATS_UNAVAILABLE"
+        : err.code === "OFFER_NOT_ELIGIBLE"
           ? t(
               ctx.lang,
-              "Those seats were just taken by someone else. Shall I pick the next best seats?",
-              "تم حجز هذه المقاعد للتو من قبل شخص آخر. هل أختار أفضل المقاعد التالية؟",
+              `I can't apply that offer: ${err.message}. Shall I remove it, or change the tickets or card so it qualifies?`,
+              `لا يمكنني تطبيق هذا العرض: ${err.message}. هل أزيله، أم نغيّر التذاكر أو البطاقة ليصبح مؤهلاً؟`,
             )
-          : err.code === "BOOKING_ALREADY_CANCELLED"
+          : err.code === "SEATS_UNAVAILABLE"
             ? t(
                 ctx.lang,
-                "That booking was already cancelled a moment ago, so there's nothing more to do.",
-                "تم إلغاء هذا الحجز بالفعل قبل لحظات، فلا يوجد ما يمكن فعله.",
+                "Those seats were just taken by someone else. Shall I pick the next best seats?",
+                "تم حجز هذه المقاعد للتو من قبل شخص آخر. هل أختار أفضل المقاعد التالية؟",
               )
-            : err.code === "ORDER_EXPIRED"
+            : err.code === "BOOKING_ALREADY_CANCELLED"
               ? t(
                   ctx.lang,
-                  "The order timed out and the seats were released. Let's start again — it only takes a moment.",
-                  "انتهت مهلة الطلب وتم تحرير المقاعد. لنبدأ من جديد — لن يستغرق سوى لحظة.",
+                  "That booking was already cancelled a moment ago, so there's nothing more to do.",
+                  "تم إلغاء هذا الحجز بالفعل قبل لحظات، فلا يوجد ما يمكن فعله.",
                 )
-              : err.code === "VISTA_UNAVAILABLE"
+              : err.code === "ORDER_EXPIRED"
                 ? t(
                     ctx.lang,
-                    "The booking system is slow to respond right now. I'll retry automatically.",
-                    "نظام الحجز بطيء الاستجابة حالياً. سأعيد المحاولة تلقائياً.",
+                    "The order timed out and the seats were released. Let's start again — it only takes a moment.",
+                    "انتهت مهلة الطلب وتم تحرير المقاعد. لنبدأ من جديد — لن يستغرق سوى لحظة.",
                   )
-                : err.message;
+                : err.code === "VISTA_UNAVAILABLE"
+                  ? t(
+                      ctx.lang,
+                      "The booking system is slow to respond right now. I'll retry automatically.",
+                      "نظام الحجز بطيء الاستجابة حالياً. سأعيد المحاولة تلقائياً.",
+                    )
+                  : err.message;
     return fail(
       app.db,
       app.events,

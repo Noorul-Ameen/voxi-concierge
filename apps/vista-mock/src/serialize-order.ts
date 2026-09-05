@@ -144,6 +144,7 @@ export function orderJson(
     VistaBookingNumber: 0,
     LastUpdated: msJsonDate(o.lastUpdatedAt),
     LastUpdatedUtc: o.lastUpdatedAt.toISOString(),
+    Version: o.version,
     CreatedDateUtc: o.createdAt.toISOString(),
     ExpiryDate: msJsonDate(o.expiryAt),
     ExpiryDateUtc: o.expiryAt.toISOString(),

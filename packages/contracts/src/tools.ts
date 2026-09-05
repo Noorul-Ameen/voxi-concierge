@@ -73,8 +73,8 @@ export const ListCinemasInput = z.object({
 });
 export const GetCinemaInput = z.object({ cinemaId: z.string().optional(), name: z.string().optional() });
 export const NearestCinemasInput = z.object({
-  lat: z.number(),
-  lng: z.number(),
+  lat: z.number().optional().describe("Omit to use the location the guest shared in the widget"),
+  lng: z.number().optional(),
   limit: z.number().int().min(1).max(5).default(3),
   experience: Experience.optional(),
 });
@@ -91,6 +91,16 @@ export const ListOffersInput = z.object({
   sessionKey: z.string().optional().describe("'{cinemaId}-{sessionId}'"),
   experience: Experience.optional(),
   type: z.enum(["bank", "promo", "loyalty", "member", "partner", "any"]).default("any"),
+  bank: z
+    .string()
+    .optional()
+    .describe(
+      "Only offers for this bank/card when the guest names one, e.g. 'ENBD', 'Emirates NBD', 'HSBC', 'ADCB'",
+    ),
+  cardBin: z
+    .string()
+    .optional()
+    .describe("First 6 digits of a card the guest mentioned — filters to offers that card qualifies for"),
   memberId: z.string().optional(),
   limit: z.number().int().min(1).max(12).default(6),
 });
@@ -296,6 +306,16 @@ export const CreateComplaintInput = z.object({
 export const GetRecommendationsInput = z.object({
   customerId: z.string().optional(),
   kind: z.enum(["movies", "fnb", "both"]).default("movies"),
+  withChildren: z
+    .boolean()
+    .optional()
+    .describe(
+      "Set only after the guest answered whether children are joining; true = include family films, false = adults only",
+    ),
+  language: z
+    .string()
+    .optional()
+    .describe("Film language the guest asked for (Tamil, Hindi, Arabic…) — overrides profile history"),
   cinemaId: z.string().optional(),
   date: dateStr.optional(),
   limit: z.number().int().min(1).max(8).default(4),

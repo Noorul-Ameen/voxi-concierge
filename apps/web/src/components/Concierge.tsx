@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Lang, type Session, type UiHint, type WidgetEvent, createSession, devTool, getSignedUrl, getState, linkConversation, sendCommand, subscribe } from "../lib/api";
 import { isRtl, t } from "../lib/i18n";
 import { type CardActions, Cards, Feedback } from "./Cards";
+import { type Loc, LocationBar } from "./LocationBar";
 
 type ItemBody =
   | { kind: "msg"; role: "user" | "agent" | "human"; text: string; who?: string }
@@ -28,6 +29,25 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
   const [level, setLevel] = useState(0);
   const [expanded, setExpanded] = useState(false);
   const [sseStatus, setSseStatus] = useState<"open" | "closed">("closed");
+  const [loc, setLoc] = useState<Loc | null>(() => {
+    try {
+      const raw = localStorage.getItem("voxi.loc");
+      return raw ? (JSON.parse(raw) as Loc) : null;
+    } catch {
+      return null;
+    }
+  });
+  const locRef = useRef<Loc | null>(loc);
+  locRef.current = loc;
+  const changeLoc = (l: Loc | null) => {
+    setLoc(l);
+    try {
+      if (l) localStorage.setItem("voxi.loc", JSON.stringify(l));
+      else localStorage.removeItem("voxi.loc");
+    } catch {}
+    const s = sessionRef.current;
+    if (s) void sendCommand(s, l ? { type: "location", lat: l.lat, lng: l.lng, accuracyM: l.accuracyM, label: l.label, source: l.source } : { type: "location.clear" });
+  };
   const dev = new URLSearchParams(window.location.search).get("dev") === "1";
   const [devName, setDevName] = useState("search_films");
   const [devInput, setDevInput] = useState('{"query":"spider"}');
@@ -63,13 +83,15 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
         return "feedback shown";
       },
       request_location: async () => {
+        const known = locRef.current;
+        if (known) return JSON.stringify({ lat: known.lat, lng: known.lng, label: known.label, source: known.source });
         try {
           const pos = await new Promise<GeolocationPosition>((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000 }));
-          const s = sessionRef.current;
-          if (s) await sendCommand(s, { type: "location", lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy });
-          return JSON.stringify({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+          const l: Loc = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy, label: lang === "ar" ? "موقعي الحالي" : "My current location", source: "gps" };
+          changeLoc(l);
+          return JSON.stringify({ lat: l.lat, lng: l.lng, label: l.label, source: "gps" });
         } catch {
-          return JSON.stringify({ error: "location_denied" });
+          return JSON.stringify({ error: "location_denied", hint: "ask the guest to tap the location button in the chat or name an area" });
         }
       },
       play_trailer: async (p: { youtubeId: string; title?: string }) => {
@@ -168,6 +190,11 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
     bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight });
   }, [items]);
   useEffect(() => onExpand?.(expanded), [expanded, onExpand]);
+  // a location chosen before the conversation started is sent as soon as a session exists
+  useEffect(() => {
+    const l = locRef.current;
+    if (session && l) void sendCommand(session, { type: "location", lat: l.lat, lng: l.lng, accuracyM: l.accuracyM, label: l.label, source: l.source });
+  }, [session]);
 
   const start = async (m: "voice" | "text") => {
     setMode(m);
@@ -309,6 +336,8 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M5 12h14" /></svg>
         </button>
       </div>
+
+      <LocationBar lang={lang} loc={loc} onChange={changeLoc} />
 
       <div className="widget-body" ref={bodyRef}>
         {mode !== "idle" && !items.length && !connected ? (

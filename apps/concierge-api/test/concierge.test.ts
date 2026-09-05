@@ -165,7 +165,7 @@ describe("Phase 1 — booking lookup, cancellation, refund", () => {
       bookingId: "WKGRP33",
       ticketIds: ["1"],
       refundMethod: "SHARE_POINTS",
-      verification: { email: "omar.khan@example.com" },
+      verification: { email: "rahul.menon@example.com" },
     });
     expect(prep.ok).toBe(true);
     expect(prep.data.summary.partial).toBe(true);
@@ -351,6 +351,38 @@ describe("Phase 2 — personalisation, feedback, complaints, transfer", () => {
     expect(r.data.personalised, JSON.stringify(r).slice(0, 500)).toBe(true);
     expect(r.data.movies.length).toBeGreaterThan(0);
     expect(r.speech).toMatch(/Rahul/);
+    expect(r.speech).toMatch(/based on your previous bookings/i);
+    // an explicit language wins over the profile
+    const hi = await h.tool("get_recommendations", c, { language: "Hindi" });
+    expect(hi.data.movies.every((m: any) => /hindi/i.test(m.language))).toBe(true);
+  });
+  it("asks about children before family suggestions when the history has kids' films", async () => {
+    const c = conv("rec-kids");
+    await h.tool("login_customer", c, { phone: "0501234567", pin: "1234" }); // Sara: KIDS shows, child tickets
+    const ask = await h.tool("get_recommendations", c, {});
+    expect(ask.data.askChildren).toBe(true);
+    expect(ask.data.movies).toHaveLength(0);
+    expect(ask.speech).toMatch(/children/i);
+    const adults = await h.tool("get_recommendations", c, { withChildren: false });
+    expect(adults.data.askChildren).toBeUndefined();
+    expect(adults.data.movies.length).toBeGreaterThan(0);
+    expect(adults.data.movies.every((m: any) => !m.family)).toBe(true);
+    const kids = await h.tool("get_recommendations", c, { withChildren: true });
+    expect(kids.data.movies.every((m: any) => !/^(15|18|21)/.test(m.rating ?? ""))).toBe(true);
+  });
+  it("filters offers by bank, hints saved cards for members and hides bank offers from guests", async () => {
+    const member = conv("offers-m");
+    await h.tool("login_customer", member, { phone: "0501234567", pin: "1234" });
+    const enbd = await h.tool("list_offers", member, { bank: "ENBD" });
+    expect(enbd.data.offers.length).toBeGreaterThan(0);
+    expect(enbd.data.offers.every((o: any) => /NBD/i.test(o.titleEn))).toBe(true);
+    expect(enbd.data.offers[0].savedCard?.last4).toBe("3845");
+    expect(enbd.speech).toMatch(/saved Mastercard ending 3845/);
+    const guest = conv("offers-g");
+    const g = await h.tool("list_offers", guest, { type: "bank" });
+    expect(g.data.guest).toBe(true);
+    expect(g.speech).toMatch(/Log in or create an account/);
+    expect(g.data.offers.every((o: any) => o.eligible === false && o.requires.includes("member"))).toBe(true);
   });
   it("logs a complaint with a reference and transfers to a (simulated) human with summary", async () => {
     const c = conv("tr");

@@ -9,45 +9,35 @@ type Film = { hoCode: string; title: string; posterUrl: string; rating: string }
 const PERSONAS = [
   {
     name: "Sara Al Mansoori",
-    tier: "SHARE Gold",
+    flag: "🇦🇪",
+    tier: "UAE · SHARE Gold",
     login: "+971 50 123 4567 · PIN 1234",
-    shows: "The happy path. Logged-in member with a refundable booking. Exercises login, booking status, cancellation with refund to VOX credit or Share Points, Share balance, personalised recommendations. Prefers Arabic — switch languages mid-conversation.",
-    say: "Hi, I'm Sara. Cancel my booking WXA7K2M and refund it to Share Points.",
+    shows: "Arabic and English films, family history (KIDS shows, children's tickets). Saved cards: Emirates NBD Mastercard ending 3845 (BOGO offer) and FAB Visa ending 8258 (weekend BOGO). 2,450 Share Points (AED 245) · AED 120 VOX credit. Home cinemas Mall of the Emirates and Mirdif. Prefers Arabic. Refundable family booking WXA7K2M.",
+    say: "Suggest a movie for this weekend. / Cancel my booking WXA7K2M and refund it to Share Points.",
   },
   {
     name: "Rahul Menon",
-    tier: "SHARE member",
+    flag: "🇮🇳",
+    tier: "India · SHARE Silver",
     login: "Member SHR200877 · PIN 2468",
-    shows: "The policy edge cases. Booking WM3PQ9X starts in 20 minutes (inside the 30-minute cut-off → cancellation refused, swap offered, human agent offered). WMB6GQ2 was bought with a bank offer → non-refundable per policy.",
-    say: "Can I cancel WM3PQ9X? … Then what about WMB6GQ2?",
+    shows: "Tamil and Hindi films, late shows at Burjuman, Deira and Shindagha. Saved cards: ADCB Visa ending 2211 (BOGO) and HSBC Visa ending 6034 (BOGO + 25% F&B). 620 Share Points (AED 62) · AED 35 VOX credit. Policy edge cases: WM3PQ9X starts within the 30-minute cut-off, WMB6GQ2 was bought with a bank offer, WK4DXC9 tickets already collected, WKGRP33 is a group of 3 (partial cancellation).",
+    say: "Any Tamil movies tonight near me? / Can I cancel WM3PQ9X?",
   },
   {
     name: "James Whitfield",
-    tier: "SHARE Platinum",
+    flag: "🇬🇧",
+    tier: "UK · SHARE Platinum",
     login: "james.whitfield@example.com · PIN 9876",
-    shows: "Premium experiences. GOLD booking WJG8LD7 includes pre-ordered F&B (partial cancellation keeps the meal); IMAX booking WJMX42R is the swap demo — move it to another IMAX showtime and pay/refund the difference.",
-    say: "Swap WJMX42R to tomorrow's 9 pm IMAX show.",
+    shows: "English films only — GOLD, IMAX and THEATRE regular at Mall of the Emirates, Yas Mall and the Galleria. Saved cards: Mashreq Mastercard ending 7712 (50% off), CBD Visa ending 0099 (50% off) and a UK-issued Visa ending 5501 (no offer). 8,800 Share Points (AED 880) · AED 450 VOX credit. GOLD booking WJG8LD7 with pre-ordered food; IMAX booking WJMX42R for the swap demo.",
+    say: "What should I watch tonight? / Swap WJMX42R to tomorrow's 9 pm IMAX show.",
   },
   {
-    name: "Layla Haddad",
-    tier: "Guest",
-    login: "No account · booking WLHGST5 · verify with last 4 digits 4455",
-    shows: "The guest flow. Not logged in, so Voxi finds the booking by reference and must verify identity (last 4 digits of phone or the email) before it touches anything. Refunds go back to the original card.",
-    say: "I don't have an account. My booking is WLHGST5, phone ending 4455.",
-  },
-  {
-    name: "Omar Khan",
-    tier: "SHARE member",
-    login: "omar.khan@example.com · PIN 1111",
-    shows: "Group and collected tickets. WKGRP33 has 6 seats — cancel just two (partial refund with proportional fee). WK4DXC9's tickets were already collected at the kiosk → cannot be refunded; Voxi explains why and offers a complaint or human agent.",
-    say: "Cancel two of the six seats on WKGRP33.",
-  },
-  {
-    name: "New guest",
-    tier: "Anyone",
-    login: "Just start talking — no login needed",
-    shows: "Guided booking end to end: find a movie → showtimes → tickets → seat map → food & drinks → promo / bank offer → payment sheet → QR code. Also movie, cinema, offers, age-rating and in-mall questions from the real VOX catalogue.",
-    say: "Book two MAX tickets for tonight at Mall of the Emirates.",
+    name: "Guest checkout",
+    flag: "👤",
+    tier: "No account",
+    login: "Just start talking — name, email and mobile are asked before payment",
+    shows: "Guided booking end to end without logging in: movie → nearest cinema and showtimes → tickets → seat map → food & drinks → payment (card, Apple Pay or Samsung Pay) → QR receipt. Guests see no bank offers and earn no Share Points — Voxi suggests logging in. A guest booking WLHGST5 (phone ending 4455) exists for the find-and-verify journey.",
+    say: "Book two tickets for Spider-Man tonight near Deira. / My booking is WLHGST5, phone ending 4455.",
   },
 ] as const;
 
@@ -118,7 +108,7 @@ export function Demo() {
           {PERSONAS.map((p) => (
             <div className="persona" key={p.name}>
               <div className="name">
-                <span className="avatar">{p.name.split(" ").map((w) => w[0]).slice(0, 2).join("")}</span>
+                <span className="avatar">{p.flag}</span>
                 {p.name}
                 <span className="badge blue tier">{p.tier}</span>
               </div>
@@ -129,9 +119,10 @@ export function Demo() {
           ))}
         </div>
         <div className="testdata">
-          <div><b>Test cards (simulated Checkout)</b><code>4111 1111 1111 1111</code> approved · <code>4000 0000 0000 0002</code> declined · any future expiry, any CVV</div>
+          <div><b>Payment</b>Saved cards (members), new card, Apple Pay, Samsung Pay. Test cards: <code>4111 1111 1111 1111</code> approved · <code>4000 0000 0000 0002</code> declined · any future expiry, any CVV</div>
           <div><b>Promo code</b><code>MONDAY30</code> — 30% off Standard tickets (Mondays)</div>
-          <div><b>Bank offer</b>ENBD card BIN <code>455533</code> — buy one get one on Standard/MAX; cannot combine with promo codes</div>
+          <div><b>Bank offers</b>Members only. Buy-one-get-one applies to exactly 2 tickets and must be paid with the same bank's card — e.g. Sara's ENBD card (BIN <code>521334</code>), Rahul's ADCB card (<code>409255</code>). New-card BINs for testing: ENBD <code>455533</code>, HSBC <code>424141</code>, Mashreq <code>472937</code></div>
+          <div><b>Location</b>Tap 📍 in the widget to share your location or pick an area — "near me" showtimes and nearest-cinema answers use it, never the booking history</div>
           <div><b>Share Points</b>Members can redeem points at checkout or receive refunds as points (Sara has the largest balance)</div>
           <div><b>Voice vs text</b>Click the 🎙 button in the composer to talk; press 💬 to switch back to typing. Same tools either way</div>
           <div><b>Reset</b>Demo bookings return to their starting state whenever the database is reseeded (<code>pnpm db:seed</code>)</div>

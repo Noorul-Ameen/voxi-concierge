@@ -199,11 +199,23 @@ function Showtimes({ items, lang, act, film, groupBy }: { items: any[]; lang: La
               {ss[0]?.posterUrl ? <span className="mini" style={{ backgroundImage: `url(${ss[0].posterUrl})` }} /> : null}
               <div>
                 <b>{k}</b>
-                <small>{[ss[0]?.rating, ss[0]?.filmLanguage, ss[0]?.cinemaName].filter(Boolean).join(" · ")}</small>
+                <small>
+                  {[ss[0]?.rating, ss[0]?.filmLanguage, ss[0]?.cinemaName].filter(Boolean).join(" · ")}
+                  {ss[0]?.distanceKm != null ? <span className="dist"> · {ss[0].distanceKm} km</span> : null}
+                  {ss[0]?.mapUrl ? <a href={ss[0].mapUrl} className="maplink" onClick={(e) => { e.preventDefault(); act.openLink(ss[0].mapUrl); }}>{ar ? "الخريطة" : "Map"}</a> : null}
+                </small>
               </div>
             </div>
           ) : (
-            <b className="sg-cinema">📍 {k}</b>
+            <div className="sg-cinema">
+              <b>📍 {k}</b>
+              {ss[0]?.distanceKm != null ? <span className="dist">{ss[0].distanceKm} km</span> : null}
+              {ss[0]?.mapUrl ? (
+                <a href={ss[0].mapUrl} target="_blank" rel="noreferrer" className="maplink" onClick={(e) => { e.preventDefault(); act.openLink(ss[0].mapUrl); }}>
+                  {ar ? "الخريطة" : "Map"}
+                </a>
+              ) : null}
+            </div>
           )}
           <div className="times">
             {ss.map((s) => (
@@ -615,7 +627,10 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
   const bankOffers: any[] = meta.bankOffers ?? [];
   const wallet = meta.wallet as { sharePoints: number; sharePointsValueCents: number; voxCreditCents: number } | undefined;
   const [tab, setTab] = useState<"bank" | "voucher">("bank");
-  const [method, setMethod] = useState<string>(meta.method === "APPLE_PAY" ? "applepay" : saved[0] ? `saved:${saved[0].token}` : "new");
+  const guest = !!meta.guest;
+  const [method, setMethod] = useState<string>(
+    meta.method === "APPLE_PAY" ? "applepay" : meta.method === "SAMSUNG_PAY" ? "samsungpay" : meta.method === "SAVED_CARD" && saved[0] ? `saved:${saved[0].token}` : meta.method === "CARD" && !saved.length ? "new" : "",
+  );
   const [pan, setPan] = useState("4111 1111 1111 1111");
   const [exp, setExp] = useState("12/29");
   const [cvv, setCvv] = useState("123");
@@ -637,13 +652,20 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
     setBusy(true);
     setErr(null);
     let token: string;
+    if (!method) {
+      setBusy(false);
+      setErr(ar ? "اختر طريقة الدفع أولاً." : "Please choose a payment method first.");
+      return;
+    }
     if (method.startsWith("saved:")) token = method.slice(6);
     else if (method === "applepay") token = `tok_applepay_0000_${Date.now()}`;
+    else if (method === "samsungpay") token = `tok_samsungpay_0000_${Date.now()}`;
     else if (method === "touchpoints") token = `tok_mc_0000_${Date.now()}`;
     else {
-      // Simulated Checkout tokenisation: the PAN never leaves the browser; only a token is sent.
+      // Simulated Checkout tokenisation: the PAN never leaves the browser; only a token (brand + BIN + last 4) is sent,
+      // so bank offers can still be checked against the card actually used.
       const d = pan.replace(/\D/g, "");
-      token = d.endsWith("0002") ? `tok_declined_${Date.now()}` : `tok_${d.startsWith("4") ? "visa" : d.startsWith("3") ? "amex" : "mc"}_${d.slice(-4)}_${Date.now()}`;
+      token = d.endsWith("0002") ? `tok_declined_${Date.now()}` : `tok_${d.startsWith("4") ? "visa" : d.startsWith("3") ? "amex" : "mc"}_${d.slice(0, 6)}_${d.slice(-4)}_${Date.now()}`;
     }
     const r = await act.command({ type: "payment.token", userSessionId: meta.userSessionId, confirmationId: meta.confirmationId, token });
     setBusy(false);
@@ -663,7 +685,16 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
         <span className="cur">{ar ? "المراجعة والدفع" : "Review & Pay"}</span>
       </div>
 
-      {bankOffers.length ? (
+      {guest ? (
+        <div className="loginnudge">
+          <b>{ar ? "سجّل الدخول أو أنشئ حساباً" : "Log in or create an account"}</b>
+          <span>{ar ? "لعرض العروض المؤهلة وكسب نقاط شير على هذا الحجز." : "to view eligible offers and earn SHARE points on this booking."}</span>
+          <button className="btn ghost" onClick={() => act.say(ar ? "أريد تسجيل الدخول إلى حسابي" : "I'd like to log in to my account")}>
+            {ar ? "تسجيل الدخول" : "Log in"}
+          </button>
+        </div>
+      ) : null}
+      {!guest && bankOffers.length ? (
         <>
           <div className="tabs2">
             <button className={tab === "bank" ? "on" : ""} onClick={() => setTab("bank")}>
@@ -797,7 +828,7 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
         ) : null}
       </div>
 
-      <h5>{ar ? "اختر طريقة الدفع" : "Choose your payment method"}</h5>
+      <h5>{ar ? "اختر طريقة الدفع" : "Choose your payment method"}{!method ? <small className="muted"> — {ar ? "لم يتم الاختيار بعد" : "nothing selected yet"}</small> : null}</h5>
       <div className="methods">
         {saved.map((c) => (
           <label key={c.token} className={`method ${method === `saved:${c.token}` ? "on" : ""}`}>
@@ -845,12 +876,17 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
           <span className="cardbrand apple"> Pay</span>
           <span>Apple Pay</span>
         </label>
+        <label className={`method ${method === "samsungpay" ? "on" : ""}`}>
+          <input type="radio" name="pm" checked={method === "samsungpay"} onChange={() => setMethod("samsungpay")} />
+          <span className="cardbrand samsung">Pay</span>
+          <span>Samsung Pay</span>
+        </label>
       </div>
-      {meta.customer?.email ? <small className="muted">{ar ? `سيتم الحجز باسم ${meta.customer.name} (${meta.customer.email})` : `Your booking will be made as ${meta.customer.name} (${meta.customer.email})`}</small> : null}
+      {meta.customer?.email ? <small className="muted">{ar ? `سيتم الحجز باسم ${meta.customer.name} (${meta.customer.email}${meta.customer.phone ? ` · ${meta.customer.phone}` : ""})` : `Your booking will be made as ${meta.customer.name} (${meta.customer.email}${meta.customer.phone ? ` · ${meta.customer.phone}` : ""})`}{guest ? (ar ? " — كضيف" : " — as a guest") : ""}</small> : null}
       {err ? <div className="err" style={{ marginTop: 6 }}>{err}</div> : null}
       <div className="actionsrow">
-        <button className={`btn ${method === "applepay" ? "apple" : "cta"}`} disabled={busy} onClick={pay}>
-          {busy ? t(lang, "processing") : method === "applepay" ? ` Pay ${money(amount, lang)}` : `${t(lang, "payButton")} ${money(amount, lang)}`}
+        <button className={`btn ${method === "applepay" ? "apple" : method === "samsungpay" ? "samsung" : "cta"}`} disabled={busy || !method} onClick={pay}>
+          {busy ? t(lang, "processing") : method === "applepay" ? ` Pay ${money(amount, lang)}` : method === "samsungpay" ? `Samsung Pay ${money(amount, lang)}` : `${t(lang, "payButton")} ${money(amount, lang)}`}
         </button>
         <button className="btn ghost" onClick={() => act.say(ar ? "ألغِ الدفع" : "Cancel the payment")}>
           {ar ? "إلغاء" : "Cancel"}

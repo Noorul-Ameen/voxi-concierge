@@ -14,6 +14,10 @@ export type Persona = {
   homeCinemaId: string;
   preferences: CustomerPreferences;
   persona: string;
+  /** Short label used on the demo page ("UAE family member"). */
+  profile?: "uae" | "india" | "uk" | "guest";
+  /** false = not a demo account: a guest (non-member) booking record used for guest lookup/cancellation. */
+  account?: boolean;
   pin: string;
   /** Cards stored on the account (masked, as on "Manage Saved Cards"). BINs match the seeded bank offers. */
   savedCards?: {
@@ -45,8 +49,12 @@ export type BookingScenario = {
 };
 
 export const PERSONAS: Persona[] = [
+  // ---------------------------------------------------------------------------------------------
+  // 1. UAE customer — Arabic and English films, family (children's films), SHARE Gold, ENBD + FAB cards
+  // ---------------------------------------------------------------------------------------------
   {
     id: "cust_sara",
+    profile: "uae",
     savedCards: [
       {
         token: "tok_saved_sara_3845",
@@ -55,8 +63,8 @@ export const PERSONAS: Persona[] = [
         last4: "3845",
         expiry: "09/2027",
         default: true,
-      },
-      { token: "tok_saved_sara_8258", brand: "VISA", first6: "455533", last4: "8258", expiry: "12/2029" },
+      }, // Emirates NBD
+      { token: "tok_saved_sara_8258", brand: "VISA", first6: "417930", last4: "8258", expiry: "12/2029" }, // FAB
     ],
     firstName: "Sara",
     lastName: "Al Mansoori",
@@ -69,16 +77,17 @@ export const PERSONAS: Persona[] = [
     preferredLanguage: "ar",
     homeCinemaId: "0002",
     preferences: {
-      genres: ["Family", "Animation", "Adventure"],
-      languages: ["English", "Arabic"],
+      genres: ["Family", "Animation", "Comedy", "Drama"],
+      languages: ["Arabic", "English"],
       experiences: ["KIDS", "Standard", "MAX"],
-      cinemas: ["0002", "0005"],
+      cinemas: ["0002", "0005", "0049"],
       timeOfDay: ["afternoon", "evening"],
       days: ["weekend"],
       dietary: ["vegetarian"],
       seatPreference: "middle",
     },
-    persona: "Family, SHARE Gold, Arabic-preferred, home cinema Mall of the Emirates",
+    persona:
+      "UAE family member — Arabic & English films, children's films in history, SHARE Gold, Mall of the Emirates / Mirdif",
     pin: "1234",
     bookings: [
       {
@@ -110,6 +119,17 @@ export const PERSONAS: Persona[] = [
         genreHint: "Animation",
       },
       {
+        key: "sara_past_arabic",
+        when: "past",
+        experience: "Standard",
+        cinemaId: "0005",
+        tickets: [{ code: "0001", qty: 2 }],
+        payment: "CREDIT",
+        status: "collected",
+        collected: true,
+        languageHint: "Arabic",
+      },
+      {
         key: "sara_past_max",
         when: "past",
         experience: "MAX",
@@ -119,11 +139,16 @@ export const PERSONAS: Persona[] = [
         payment: "CREDIT",
         status: "collected",
         collected: true,
+        languageHint: "English",
       },
     ],
   },
+  // ---------------------------------------------------------------------------------------------
+  // 2. Indian customer — Tamil and Hindi films, late shows, SHARE Silver, ADCB + HSBC cards
+  // ---------------------------------------------------------------------------------------------
   {
     id: "cust_rahul",
+    profile: "india",
     savedCards: [
       {
         token: "tok_saved_rahul_2211",
@@ -132,7 +157,8 @@ export const PERSONAS: Persona[] = [
         last4: "2211",
         expiry: "03/2028",
         default: true,
-      },
+      }, // ADCB
+      { token: "tok_saved_rahul_6034", brand: "VISA", first6: "424141", last4: "6034", expiry: "08/2028" }, // HSBC
     ],
     firstName: "Rahul",
     lastName: "Menon",
@@ -141,19 +167,19 @@ export const PERSONAS: Persona[] = [
     memberId: "SHR200877",
     tier: "Silver",
     sharePoints: 620,
-    voxRewardsCents: 0,
+    voxRewardsCents: 3500,
     preferredLanguage: "en",
     homeCinemaId: "0013",
     preferences: {
       genres: ["Action", "Drama", "Thriller"],
-      languages: ["Malayalam", "Hindi", "Tamil"],
+      languages: ["Tamil", "Hindi"],
       experiences: ["Standard", "MAX"],
       cinemas: ["0013", "0001", "0017"],
       timeOfDay: ["late", "evening"],
       days: ["weekday", "weekend"],
       seatPreference: "back",
     },
-    persona: "South-Indian cinema fan, late shows, Burjuman / Deira",
+    persona: "Indian customer — Tamil & Hindi films, late shows, SHARE Silver, Burjuman / Deira / Shindagha",
     pin: "2468",
     bookings: [
       {
@@ -164,20 +190,43 @@ export const PERSONAS: Persona[] = [
         tickets: [{ code: "0001", qty: 2 }],
         payment: "CREDIT",
         bookingId: "WM3PQ9X",
-        languageHint: "Malayalam",
+        languageHint: "Tamil",
       },
       {
         key: "rahul_bank_offer",
         when: "upcoming",
         experience: "MAX",
         tickets: [{ code: "0001", qty: 2 }],
-        offerId: "BANK-ENBD-BOGO",
+        offerId: "BANK-ADCB-BOGO",
         payment: "CREDIT",
         bookingId: "WMB6GQ2",
         languageHint: "Hindi",
       },
       {
-        key: "rahul_past",
+        key: "rahul_group",
+        when: "upcoming",
+        experience: "Standard",
+        cinemaId: "0001",
+        tickets: [{ code: "0001", qty: 3 }],
+        concessions: [{ itemId: "7747", quantity: 1 }],
+        payment: "CREDIT",
+        bookingId: "WKGRP33",
+        languageHint: "Tamil",
+      },
+      {
+        key: "rahul_collected",
+        when: "upcoming",
+        experience: "Standard",
+        cinemaId: "0017",
+        tickets: [{ code: "0001", qty: 2 }],
+        payment: "CREDIT",
+        status: "collected",
+        collected: true,
+        bookingId: "WK4DXC9",
+        languageHint: "Hindi",
+      },
+      {
+        key: "rahul_past_tamil",
         when: "past",
         experience: "Standard",
         cinemaId: "0001",
@@ -187,26 +236,37 @@ export const PERSONAS: Persona[] = [
         collected: true,
         languageHint: "Tamil",
       },
+      {
+        key: "rahul_past_hindi",
+        when: "past",
+        experience: "MAX",
+        cinemaId: "0017",
+        tickets: [{ code: "0001", qty: 2 }],
+        concessions: [{ itemId: "7747", quantity: 2 }],
+        payment: "LOYALTY",
+        status: "collected",
+        collected: true,
+        languageHint: "Hindi",
+      },
     ],
   },
+  // ---------------------------------------------------------------------------------------------
+  // 3. UK customer — English films only, premium experiences, SHARE Platinum, Mashreq + CBD + UK card
+  // ---------------------------------------------------------------------------------------------
   {
     id: "cust_james",
+    profile: "uk",
     savedCards: [
-      {
-        token: "tok_saved_james_0099",
-        brand: "VISA",
-        first6: "424141",
-        last4: "0099",
-        expiry: "11/2028",
-        default: true,
-      },
       {
         token: "tok_saved_james_7712",
         brand: "MASTERCARD",
         first6: "472937",
         last4: "7712",
         expiry: "06/2027",
-      },
+        default: true,
+      }, // Mashreq
+      { token: "tok_saved_james_0099", brand: "VISA", first6: "437745", last4: "0099", expiry: "11/2028" }, // CBD
+      { token: "tok_saved_james_5501", brand: "VISA", first6: "465859", last4: "5501", expiry: "04/2029" }, // UK-issued Visa (no VOX offer)
     ],
     firstName: "James",
     lastName: "Whitfield",
@@ -217,17 +277,18 @@ export const PERSONAS: Persona[] = [
     sharePoints: 8800,
     voxRewardsCents: 45000,
     preferredLanguage: "en",
-    homeCinemaId: "0046",
+    homeCinemaId: "0002",
     preferences: {
-      genres: ["Drama", "Sci-fi", "Thriller"],
+      genres: ["Drama", "Sci-fi", "Thriller", "Action"],
       languages: ["English"],
-      experiences: ["GOLD", "THEATRE", "IMAX"],
-      cinemas: ["0046", "0014", "0002"],
+      experiences: ["GOLD", "IMAX", "THEATRE", "Standard"],
+      cinemas: ["0002", "0012", "0046", "0049"],
       timeOfDay: ["evening"],
       days: ["weekday"],
       seatPreference: "back",
     },
-    persona: "Premium regular (GOLD/THEATRE/IMAX), Platinum member, Abu Dhabi",
+    persona:
+      "UK customer — English films only, GOLD / IMAX / THEATRE regular, SHARE Platinum, Mall of the Emirates / Yas Mall",
     pin: "9876",
     bookings: [
       {
@@ -241,6 +302,7 @@ export const PERSONAS: Persona[] = [
         ],
         payment: "CREDIT",
         bookingId: "WJG8LD7",
+        languageHint: "English",
       },
       {
         key: "james_imax",
@@ -249,6 +311,7 @@ export const PERSONAS: Persona[] = [
         tickets: [{ code: "0131", qty: 2 }],
         payment: "EWALLET",
         bookingId: "WJMX42R",
+        languageHint: "English",
       },
       {
         key: "james_past_theatre",
@@ -259,6 +322,7 @@ export const PERSONAS: Persona[] = [
         payment: "CREDIT",
         status: "collected",
         collected: true,
+        languageHint: "English",
       },
       {
         key: "james_past_gold2",
@@ -268,11 +332,28 @@ export const PERSONAS: Persona[] = [
         payment: "LOYALTY",
         status: "collected",
         collected: true,
+        languageHint: "English",
+      },
+      {
+        key: "james_past_standard",
+        when: "past",
+        experience: "Standard",
+        cinemaId: "0012",
+        tickets: [{ code: "0001", qty: 2 }],
+        payment: "APPLEPAY",
+        status: "collected",
+        collected: true,
+        languageHint: "English",
       },
     ],
   },
+  // ---------------------------------------------------------------------------------------------
+  // Not an account: a guest (non-member) web booking, used for the guest lookup / verification journey
+  // ---------------------------------------------------------------------------------------------
   {
     id: "cust_layla",
+    profile: "guest",
+    account: false,
     firstName: "Layla",
     lastName: "Haddad",
     email: "layla.haddad@example.com",
@@ -280,13 +361,8 @@ export const PERSONAS: Persona[] = [
     memberId: null,
     preferredLanguage: "ar",
     homeCinemaId: "0035",
-    preferences: {
-      genres: ["Comedy", "Romance"],
-      languages: ["Arabic", "English"],
-      experiences: ["Standard"],
-      cinemas: ["0035", "0055"],
-    },
-    persona: "Guest (no SHARE account), Sharjah, Arabic-speaking",
+    preferences: {},
+    persona: "Guest booking (no account) — used to demo find-by-reference with identity verification",
     pin: "0000",
     bookings: [
       {
@@ -310,79 +386,5 @@ export const PERSONAS: Persona[] = [
         bookingId: "WLHCNC2",
       },
     ],
-  },
-  {
-    id: "cust_omar",
-    savedCards: [
-      {
-        token: "tok_saved_omar_4410",
-        brand: "VISA",
-        first6: "437745",
-        last4: "4410",
-        expiry: "01/2029",
-        default: true,
-      },
-    ],
-    firstName: "Omar",
-    lastName: "Khan",
-    email: "omar.khan@example.com",
-    phone: "+971544445566",
-    memberId: "SHR400551",
-    tier: "Blue",
-    sharePoints: 106,
-    voxRewardsCents: 2500,
-    preferredLanguage: "en",
-    homeCinemaId: "0105",
-    preferences: {
-      genres: ["Action", "Horror", "Sci-fi"],
-      languages: ["English"],
-      experiences: ["Standard", "4DX"],
-      cinemas: ["0105", "0001"],
-      timeOfDay: ["late"],
-      days: ["weekend"],
-      seatPreference: "front",
-    },
-    persona: "Student, budget-conscious, group bookings, Festival City",
-    pin: "1111",
-    bookings: [
-      {
-        key: "omar_group",
-        when: "upcoming",
-        experience: "Standard",
-        cinemaId: "0105",
-        tickets: [{ code: "0003", qty: 3 }],
-        concessions: [{ itemId: "7747", quantity: 1 }],
-        payment: "CREDIT",
-        bookingId: "WKGRP33",
-        genreHint: "Action",
-      },
-      {
-        key: "omar_4dx_collected",
-        when: "upcoming",
-        experience: "4DX",
-        tickets: [{ code: "0001", qty: 2 }],
-        payment: "CREDIT",
-        status: "collected",
-        collected: true,
-        bookingId: "WK4DXC9",
-      },
-    ],
-  },
-  {
-    id: "cust_fatima",
-    firstName: "Fatima",
-    lastName: "Al Zaabi",
-    email: "fatima.alzaabi@example.com",
-    phone: "+971505556677",
-    memberId: "SHR500002",
-    tier: "Blue",
-    sharePoints: 0,
-    voxRewardsCents: 0,
-    preferredLanguage: "ar",
-    homeCinemaId: "0012",
-    preferences: {},
-    persona: "New SHARE member, no history (cold start), Abu Dhabi",
-    pin: "5555",
-    bookings: [],
   },
 ];

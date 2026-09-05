@@ -114,16 +114,28 @@ export const cinemaTools: Pick<ToolHandlers, "list_cinemas" | "get_cinema" | "ne
   },
 
   async nearest_cinemas(ctx, input) {
-    const near = await ctx.catalog.nearestCinemas(input.lat, input.lng, input.limit, input.experience);
+    const lat = input.lat ?? ctx.conversation.geo?.lat;
+    const lng = input.lng ?? ctx.conversation.geo?.lng;
+    if (lat == null || lng == null)
+      return err(
+        "LOCATION_REQUIRED",
+        t(
+          ctx.lang,
+          "I don't have your location yet — tap the location button in the chat to share it or pick an area, or tell me which area you're in.",
+          "ليس لدي موقعك بعد — اضغط زر الموقع في المحادثة لمشاركته أو اختيار منطقة، أو أخبرني بالمنطقة التي أنت فيها.",
+        ),
+      );
+    const near = await ctx.catalog.nearestCinemas(lat, lng, input.limit, input.experience);
     if (!near.length)
       return err(
         "NOT_FOUND",
         t(ctx.lang, "I couldn't find cinemas near that location.", "لم أجد سينمات قريبة من هذا الموقع."),
       );
     const items = near.map((c) => cinemaCard(c, ctx.lang));
+    const where = ctx.conversation.geo?.label && input.lat == null ? ` to ${ctx.conversation.geo.label}` : "";
     const speech = t(
       ctx.lang,
-      `The nearest VOX cinemas are ${joinList(near.map((c) => `${c.name} (${c.distanceKm} km)`))}.`,
+      `The nearest VOX cinemas${where} are ${joinList(near.map((c) => `${c.name} (${c.distanceKm} km)`))}. Which one would you like showtimes for?`,
       `أقرب سينمات فوكس هي ${joinList(
         near.map((c) => `${c.nameAlt || c.name} (${c.distanceKm} كم)`),
         "ar",

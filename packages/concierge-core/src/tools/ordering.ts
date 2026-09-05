@@ -72,6 +72,17 @@ export function orderSummary(o: VistaOrder, lang: "en" | "ar", nowLocal: string,
   };
 }
 
+/**
+ * Order edits are idempotent per order *version*: the same request repeated while nothing changed is deduplicated
+ * (double-tap safe), but after the basket changes — 2 tickets → 4 → 2 again — it runs again instead of replaying
+ * the earlier result.
+ */
+async function orderVersion(ctx: ToolCtx, userSessionId: string): Promise<string> {
+  const cur = await ctx.vista.getOrder(userSessionId).catch(() => null);
+  const o = cur?.Order;
+  return o ? `v${o.Version ?? ""}` : "v0";
+}
+
 const activeOrder = (ctx: ToolCtx): string | undefined =>
   (ctx.conversation.metadata as { activeOrder?: string })?.activeOrder;
 
@@ -207,10 +218,7 @@ export const orderingTools: Pick<
         type: "menu",
         title: t(ctx.lang, "Food & Drinks", "المأكولات والمشروبات"),
         items: cards,
-        actions: cards.slice(0, 4).map((c) => ({
-          label: t(ctx.lang, `Add ${c.nameEn}`, `أضف ${c.name}`),
-          value: `add_item:${c.itemId}`,
-        })),
+        meta: { tabs },
       },
       { name: "fnb_info", status: "completed" },
     );
@@ -457,7 +465,9 @@ export const orderingTools: Pick<
   },
 
   async add_tickets(ctx, input) {
-    const key = input.idempotencyKey ?? `add_tickets:${input.userSessionId}:${JSON.stringify(input.tickets)}`;
+    const key =
+      input.idempotencyKey ??
+      `add_tickets:${input.userSessionId}:${JSON.stringify(input.tickets)}:${await orderVersion(ctx, input.userSessionId)}`;
     return enqueueOrderAction(
       ctx,
       "add_tickets",
@@ -478,7 +488,7 @@ export const orderingTools: Pick<
   async select_seats(ctx, input) {
     const key =
       input.idempotencyKey ??
-      `select_seats:${input.userSessionId}:${input.autoAllocate ? `auto:${input.preference ?? ""}` : input.seats.map((s) => `${s.row}${s.number}`).join(",")}`;
+      `select_seats:${input.userSessionId}:${input.autoAllocate ? `auto:${input.preference ?? ""}` : input.seats.map((s) => `${s.row}${s.number}`).join(",")}:${await orderVersion(ctx, input.userSessionId)}`;
     return enqueueOrderAction(
       ctx,
       "select_seats",
@@ -491,7 +501,8 @@ export const orderingTools: Pick<
 
   async add_concessions(ctx, input) {
     const key =
-      input.idempotencyKey ?? `add_concessions:${input.userSessionId}:${JSON.stringify(input.items)}`;
+      input.idempotencyKey ??
+      `add_concessions:${input.userSessionId}:${JSON.stringify(input.items)}:${await orderVersion(ctx, input.userSessionId)}`;
     return enqueueOrderAction(
       ctx,
       "add_concessions",
@@ -506,7 +517,7 @@ export const orderingTools: Pick<
   async apply_offer(ctx, input) {
     const key =
       input.idempotencyKey ??
-      `apply_offer:${input.userSessionId}:${input.offerId ?? input.promoCode ?? input.cardBin}`;
+      `apply_offer:${input.userSessionId}:${input.offerId ?? input.promoCode ?? ""}:${input.cardBin ?? ""}:${await orderVersion(ctx, input.userSessionId)}`;
     return enqueueOrderAction(
       ctx,
       "apply_offer",
@@ -659,39 +670,53 @@ export const orderingTools: Pick<
           ),
         );
     }
+    const sheetMethods = ["CARD", "SAVED_CARD", "APPLE_PAY", "SAMSUNG_PAY", "GOOGLE_PAY"];
+    const usesSheet = sheetMethods.includes(input.method);
     const methodText = {
       CARD: t(ctx.lang, "card", "البطاقة"),
+      SAVED_CARD: savedCards.length
+        ? t(
+            ctx.lang,
+            `your saved card ending ${savedCards[0]!.masked.slice(-4)}`,
+            `بطاقتك المحفوظة المنتهية بـ ${savedCards[0]!.masked.slice(-4)}`,
+          )
+        : t(ctx.lang, "card", "البطاقة"),
       VOX_CREDIT: t(ctx.lang, "VOX credit", "رصيد فوكس"),
       SHARE_POINTS: t(ctx.lang, "Share Points", "نقاط شير"),
       APPLE_PAY: "Apple Pay",
+      SAMSUNG_PAY: "Samsung Pay",
       GOOGLE_PAY: "Google Pay",
     }[input.method];
-    // bank offers for this session — the real "Review & pay" step lists them with a card-verification box
+    // bank offers for this session — the real "Review & pay" step lists them with a card-verification box.
+    // Guests never see them: bank offers require a VOX account.
     const sessionKey = (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey;
-    const bankOffers = await ctx.vista
-      .offers({
-        sessionKey,
-        cinemaId: s.cinemaId,
-        type: "bank",
-        memberId: ctx.conversation.memberId ?? undefined,
-      })
-      .then((r) =>
-        (r.offers ?? [])
-          .filter((o: any) => o.rules?.bankName)
-          .slice(0, 8)
-          .map((o: any) => ({
-            offerId: o.id,
-            title: o.title,
-            benefit: describeBenefit(o.benefit, ctx.lang),
-            imageUrl: o.imageUrl,
-            bankName: o.rules?.bankName,
-            cardDigits: o.rules?.cardDigits ?? { first: 6, last: 4 },
-            monthlyLimit: o.rules?.monthlyLimit,
-            requiresMember: !!o.rules?.membersOnly,
-            eligible: o.eligibility?.eligible,
-          })),
-      )
-      .catch(() => []);
+    const isGuest = !ctx.conversation.customerId;
+    const bankOffers = isGuest
+      ? []
+      : await ctx.vista
+          .offers({
+            sessionKey,
+            cinemaId: s.cinemaId,
+            type: "bank",
+            memberId: ctx.conversation.memberId ?? undefined,
+          })
+          .then((r) =>
+            (r.offers ?? [])
+              .filter((o: any) => o.rules?.bankName)
+              .slice(0, 8)
+              .map((o: any) => ({
+                offerId: o.id,
+                title: o.title,
+                benefit: describeBenefit(o.benefit, ctx.lang),
+                imageUrl: o.imageUrl,
+                bankName: o.rules?.bankName,
+                cardDigits: o.rules?.cardDigits ?? { first: 6, last: 4 },
+                monthlyLimit: o.rules?.monthlyLimit,
+                requiresMember: !!o.rules?.membersOnly,
+                eligible: o.eligibility?.eligible,
+              })),
+          )
+          .catch(() => []);
     const summary = {
       userSessionId: input.userSessionId,
       method: input.method,
@@ -706,8 +731,8 @@ export const orderingTools: Pick<
     };
     const spoken = t(
       ctx.lang,
-      `To confirm: ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} for ${s.filmTitle}, ${s.showtimeLabel} at ${s.cinemaName}, seats ${s.seats}${s.concessions.length ? `, with ${joinList(s.concessions.map((c) => `${c.quantity}× ${c.description}`))}` : ""}. Total ${s.total}, paying by ${methodText} for ${customer.name}, tickets to ${customer.email}. ${input.method === "CARD" || input.method === "APPLE_PAY" || input.method === "GOOGLE_PAY" ? `I've opened the secure payment sheet${savedCards.length ? ` — your saved ${savedCards[0]!.brand === "MASTERCARD" ? "Mastercard" : savedCards[0]!.brand === "VISA" ? "Visa" : "card"} ending ${savedCards[0]!.masked.slice(-4)} is ready to use` : ""} — complete it there and I'll confirm.` : "Shall I complete the payment?"}`,
-      `للتأكيد: ${s.tickets.length} تذكرة لفيلم ${s.filmTitle}، ${s.showtimeLabel} في ${s.cinemaName}، المقاعد ${s.seats}. الإجمالي ${s.total}، الدفع عبر ${methodText} باسم ${customer.name}، وتُرسل التذاكر إلى ${customer.email}. ${input.method === "CARD" ? "فتحت نافذة الدفع الآمن — أكمل الدفع هناك وسأؤكد." : "هل أكمل الدفع؟"}`,
+      `To confirm: ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} for ${s.filmTitle}, ${s.showtimeLabel} at ${s.cinemaName}, seats ${s.seats}${s.concessions.length ? `, with ${joinList(s.concessions.map((c) => `${c.quantity}× ${c.description}`))}` : ""}. Total ${s.total}, paying by ${methodText} for ${customer.name}, tickets to ${customer.email}. ${usesSheet ? `I've opened the secure payment sheet${savedCards.length && input.method === "SAVED_CARD" ? ` with your ${savedCards[0]!.brand === "MASTERCARD" ? "Mastercard" : savedCards[0]!.brand === "VISA" ? "Visa" : "card"} ending ${savedCards[0]!.masked.slice(-4)} selected` : ""} — complete it there and I'll confirm.${isGuest ? " Log in or create an account to view eligible offers and earn Share Points." : ""}` : "Shall I complete the payment?"}`,
+      `للتأكيد: ${s.tickets.length} تذكرة لفيلم ${s.filmTitle}، ${s.showtimeLabel} في ${s.cinemaName}، المقاعد ${s.seats}. الإجمالي ${s.total}، الدفع عبر ${methodText} باسم ${customer.name}، وتُرسل التذاكر إلى ${customer.email}. ${usesSheet ? `فتحت نافذة الدفع الآمن — أكمل الدفع هناك وسأؤكد.${isGuest ? " سجّل الدخول أو أنشئ حساباً لعرض العروض المؤهلة وكسب نقاط شير." : ""}` : "هل أكمل الدفع؟"}`,
     );
     const conf = await createConfirmation(ctx.db, {
       conversationId: ctx.conversation.id,
@@ -731,8 +756,8 @@ export const orderingTools: Pick<
         wallet,
         bankOffers,
         customer,
-        requiresSheet:
-          input.method === "CARD" || input.method === "APPLE_PAY" || input.method === "GOOGLE_PAY",
+        guest: isGuest,
+        requiresSheet: usesSheet,
       },
       actions:
         input.method === "VOX_CREDIT" || input.method === "SHARE_POINTS"
@@ -776,7 +801,10 @@ export const orderingTools: Pick<
       return err((e as { code?: string }).code ?? ErrorCodes.CONFIRMATION_REQUIRED, (e as Error).message);
     }
     const method = (conf.summary as { method: string }).method;
-    if ((method === "CARD" || method === "APPLE_PAY" || method === "GOOGLE_PAY") && !input.paymentToken)
+    if (
+      ["CARD", "SAVED_CARD", "APPLE_PAY", "SAMSUNG_PAY", "GOOGLE_PAY"].includes(method) &&
+      !input.paymentToken
+    )
       return err(
         ErrorCodes.VALIDATION,
         t(
@@ -827,48 +855,126 @@ async function orderExperience(ctx: ToolCtx): Promise<string | undefined> {
 export const offerTools: Pick<ToolHandlers, "list_offers" | "check_offer_eligibility"> = {
   async list_offers(ctx, input) {
     const memberId = input.memberId ?? ctx.conversation.memberId ?? undefined;
+    const sessionKey =
+      input.sessionKey ?? (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey;
+    // ticket count from the active order so "buy 1 get 1" is judged against what is actually in the basket
+    let ticketCount: number | undefined;
+    const usid = activeOrder(ctx);
+    if (usid) {
+      const o = await ctx.vista.getOrder(usid).catch(() => null);
+      const tk = o?.Order?.Sessions?.[0]?.Tickets as unknown[] | undefined;
+      if (tk?.length) ticketCount = tk.length;
+    }
+    const cardBin = input.cardBin?.replace(/\D/g, "").slice(0, 6) || undefined;
     const { offers } = await ctx.vista.offers({
       cinemaId: input.cinemaId,
-      sessionKey: input.sessionKey,
+      sessionKey,
       experience: input.experience,
       type: input.type === "any" ? undefined : input.type,
       memberId,
+      bank: input.bank,
+      cardBin,
+      ticketCount,
     });
-    const cards = offers.slice(0, input.limit).map((o) => ({
-      offerId: o.id,
-      title: ctx.lang === "ar" && o.titleAlt ? o.titleAlt : o.title,
-      titleEn: o.title,
-      description: ctx.lang === "ar" && o.shortDescriptionAlt ? o.shortDescriptionAlt : o.shortDescription,
-      benefit: describeBenefit(o.benefit, ctx.lang),
-      type: o.type,
-      imageUrl: o.imageUrl,
-      terms: o.terms,
-      howToRedeem: o.howToRedeem,
-      eligible: o.eligibility?.eligible,
-      requires: o.eligibility?.requires ?? [],
-      reasons: o.eligibility?.reasons ?? [],
-      remainingBudget: o.remainingBudget,
-      validDays: o.rules?.days,
-      experiences: o.rules?.experiences,
-      bankName: o.rules?.bankName,
-    }));
-    const eligible = cards.filter((c) => c.eligible || c.requires.length);
+    // saved cards → "you have a card that qualifies"
+    const savedCards = ctx.conversation.customerId
+      ? (((await ctx.vista.customer(ctx.conversation.customerId).catch(() => null))?.savedCards ?? []) as {
+          brand: string;
+          first6: string;
+          last4: string;
+        }[])
+      : [];
+    const brandName = (b: string) =>
+      b === "MASTERCARD" ? "Mastercard" : b === "VISA" ? "Visa" : b === "AMEX" ? "Amex" : "card";
+    const cards = offers.slice(0, input.limit).map((o) => {
+      const match = savedCards.find((c) =>
+        (o.rules?.bankBins ?? []).some((b: string) => c.first6.startsWith(b)),
+      );
+      return {
+        offerId: o.id,
+        title: ctx.lang === "ar" && o.titleAlt ? o.titleAlt : o.title,
+        titleEn: o.title,
+        description: ctx.lang === "ar" && o.shortDescriptionAlt ? o.shortDescriptionAlt : o.shortDescription,
+        benefit: describeBenefit(o.benefit, ctx.lang),
+        benefitType: o.benefit?.type,
+        type: o.type,
+        imageUrl: o.imageUrl,
+        terms: o.terms,
+        howToRedeem: o.howToRedeem,
+        eligible: o.eligibility?.eligible,
+        requires: o.eligibility?.requires ?? [],
+        reasons: o.eligibility?.reasons ?? [],
+        remainingBudget: o.remainingBudget,
+        validDays: o.rules?.days,
+        experiences: o.rules?.experiences,
+        bankName: o.rules?.bankName,
+        monthlyLimit: o.rules?.monthlyLimit,
+        membersOnly: !!o.rules?.membersOnly,
+        savedCard: match
+          ? {
+              brand: match.brand,
+              last4: match.last4,
+              label: `${brandName(match.brand)} ending ${match.last4}`,
+            }
+          : undefined,
+      };
+    });
+    const isGuest = !ctx.conversation.customerId;
+    if (!cards.length)
+      return ok(
+        { offers: [] },
+        input.bank || cardBin
+          ? t(
+              ctx.lang,
+              `I don't have a VOX offer for ${input.bank ?? "that card"} right now${sessionKey ? " on this showtime" : ""}. Want me to list the bank offers that are available?`,
+              `لا يوجد عرض من فوكس لـ ${input.bank ?? "هذه البطاقة"} حالياً. هل أعرض عروض البنوك المتاحة؟`,
+            )
+          : t(ctx.lang, "There are no offers available right now.", "لا توجد عروض متاحة حالياً."),
+        undefined,
+        { name: "offers_info", status: "completed" },
+      );
+    const usable = cards.filter((c) => c.eligible || c.requires.length);
+    const withCard = cards.filter((c) => c.savedCard);
+    const bankNote = cards.some((c) => c.type === "bank")
+      ? isGuest
+        ? t(
+            ctx.lang,
+            " Bank offers need a VOX account — Log in or create an account to view eligible offers and earn Share Points.",
+            " تتطلب عروض البنوك حساب فوكس — سجّل الدخول أو أنشئ حساباً لعرض العروض المؤهلة وكسب نقاط شير.",
+          )
+        : t(
+            ctx.lang,
+            " Buy-one-get-one offers need exactly 2 tickets and must be paid with that bank's card; bank-offer tickets are non-refundable.",
+            " عروض اشترِ واحدة واحصل على الثانية تتطلب تذكرتين بالضبط والدفع ببطاقة البنك نفسه؛ تذاكر عروض البنوك غير قابلة للاسترداد.",
+          )
+      : "";
     const speech = t(
       ctx.lang,
-      `There are ${cards.length} offers${input.sessionKey ? " for this session" : ""}: ${joinList(eligible.slice(0, 4).map((c) => `${c.titleEn} (${c.benefit})`))}${cards.length > 4 ? " and more" : ""}. Bank offers apply automatically when you pay with an eligible card; Share Points and VOX credit need you logged in. Want me to apply one to your booking?`,
+      `${input.bank || cardBin ? `For ${input.bank ?? "that card"} there ${cards.length === 1 ? "is 1 offer" : `are ${cards.length} offers`}` : `There are ${cards.length} offers${sessionKey ? " for this showtime" : ""}`}: ${joinList(
+        usable.slice(0, 3).map((c) => `${c.titleEn} (${c.benefit})`),
+      )}${cards.length > 3 ? " and more on screen" : ""}.${
+        withCard.length
+          ? ` You have a saved ${withCard[0]!.savedCard!.label} that qualifies for ${withCard[0]!.titleEn} — would you like to use it?`
+          : ""
+      }${bankNote} Want me to apply one?`,
       `يوجد ${cards.length} عروض: ${joinList(
-        eligible.slice(0, 4).map((c) => `${c.title} (${c.benefit})`),
+        usable.slice(0, 3).map((c) => `${c.title} (${c.benefit})`),
         "ar",
-      )}. تُطبق عروض البنوك تلقائياً عند الدفع ببطاقة مؤهلة. هل أطبق أحدها على حجزك؟`,
+      )}.${withCard.length ? ` لديك بطاقة ${withCard[0]!.savedCard!.label} محفوظة مؤهلة لعرض ${withCard[0]!.title} — هل تريد استخدامها؟` : ""}${bankNote} هل أطبق أحدها؟`,
     );
     return ok(
-      { offers: cards },
+      { offers: cards, ticketCount, guest: isGuest },
       speech,
       {
         type: "offer",
-        title: t(ctx.lang, "Offers", "العروض"),
+        title: input.bank
+          ? t(ctx.lang, `${input.bank} offers`, `عروض ${input.bank}`)
+          : t(ctx.lang, "Offers", "العروض"),
         items: cards,
-        actions: eligible.slice(0, 3).map((c) => ({ label: c.titleEn, value: `offer:${c.offerId}` })),
+        meta: { guest: isGuest, ticketCount },
+        actions: isGuest
+          ? []
+          : usable.slice(0, 3).map((c) => ({ label: c.titleEn, value: `offer:${c.offerId}` })),
       },
       { name: "offers_info", status: "completed" },
     );

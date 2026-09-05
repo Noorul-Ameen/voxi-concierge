@@ -28,7 +28,13 @@ export const conversations = pgTable(
     market: varchar("market", { length: 4 }).notNull().default("AE"),
     status: varchar("status", { length: 16 }).notNull().default("active"), // active | transferred | ended
     mode: varchar("mode", { length: 8 }).notNull().default("bot"), // bot | human
-    geo: jsonb("geo").$type<{ lat: number; lng: number; accuracyM?: number }>(),
+    geo: jsonb("geo").$type<{
+      lat: number;
+      lng: number;
+      accuracyM?: number;
+      label?: string;
+      source?: "gps" | "manual";
+    }>(),
     outcome: varchar("outcome", { length: 24 }), // resolved | transferred | dropped | unknown
     topics: jsonb("topics").$type<string[]>().default([]),
     journeys: jsonb("journeys")

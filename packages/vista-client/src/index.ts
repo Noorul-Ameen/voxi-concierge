@@ -466,6 +466,9 @@ export class VistaClient {
     type?: string;
     memberId?: string;
     eligibleOnly?: boolean;
+    bank?: string;
+    cardBin?: string;
+    ticketCount?: number;
   }) {
     return this.request<{ offers: Record<string, any>[] }>(
       "GET",

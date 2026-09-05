@@ -244,6 +244,7 @@ export const movieTools: Pick<
     // ---- resolve cinema(s) ----
     let cinemaIds: string[] = [];
     let cinemaLabel = "";
+    let nearby: { id: string; distanceKm: number }[] = [];
     const emirate = asEmirate(input.cinemaName);
     if (input.cinemaId) cinemaIds = [input.cinemaId];
     else if (emirate) {
@@ -263,13 +264,18 @@ export const movieTools: Pick<
         );
       cinemaIds = [r.cinema.id];
       cinemaLabel = ctx.lang === "ar" ? r.cinema.nameAlt || r.cinema.name : r.cinema.name;
-    } else if (input.nearLat != null && input.nearLng != null)
-      cinemaIds = (await ctx.catalog.nearestCinemas(input.nearLat, input.nearLng, 3)).map((c) => c.id);
-    else if (ctx.conversation.geo)
-      cinemaIds = (
-        await ctx.catalog.nearestCinemas(ctx.conversation.geo.lat, ctx.conversation.geo.lng, 3)
-      ).map((c) => c.id);
-    else if (film) cinemaIds = (await ctx.catalog.cinemas()).map((c) => c.id);
+    } else if (input.nearLat != null && input.nearLng != null) {
+      nearby = await ctx.catalog.nearestCinemas(input.nearLat, input.nearLng, 3);
+      cinemaIds = nearby.map((c) => c.id);
+      cinemaLabel = t(ctx.lang, "near you", "بالقرب منك");
+    } else if (ctx.conversation.geo) {
+      // the guest shared or picked a location in the widget — nearest cinemas win over booking history
+      nearby = await ctx.catalog.nearestCinemas(ctx.conversation.geo.lat, ctx.conversation.geo.lng, 3);
+      cinemaIds = nearby.map((c) => c.id);
+      cinemaLabel = ctx.conversation.geo.label
+        ? t(ctx.lang, `near ${ctx.conversation.geo.label}`, `قرب ${ctx.conversation.geo.label}`)
+        : t(ctx.lang, "near you", "بالقرب منك");
+    } else if (film) cinemaIds = (await ctx.catalog.cinemas()).map((c) => c.id);
     else
       return err(
         "VALIDATION",
@@ -336,7 +342,14 @@ export const movieTools: Pick<
         if (rows.length) relaxed = t(ctx.lang, "at other cinemas", "في سينمات أخرى");
       }
     }
-    rows = rows.sort((a, b) => a.showtime.localeCompare(b.showtime)).slice(0, input.limit);
+    const rank = new Map(nearby.map((c) => [c.id, c.distanceKm]));
+    rows = rows
+      .sort(
+        (a, b) =>
+          (nearby.length ? (rank.get(a.cinemaId) ?? 99) - (rank.get(b.cinemaId) ?? 99) : 0) ||
+          a.showtime.localeCompare(b.showtime),
+      )
+      .slice(0, input.limit);
     if (!rows.length) {
       return ok(
         { sessions: [] },
@@ -352,11 +365,15 @@ export const movieTools: Pick<
     const filmsById = new Map((await ctx.catalog.films()).map((f) => [f.hoCode, f] as const));
     const items = rows.map((s) => {
       const f = filmsById.get(s.hoCode);
+      const c = cinemas.find((x) => x.id === s.cinemaId);
       return {
         ...sessionCard(s, ctx.lang, ctx.nowLocal, cname(s.cinemaId)),
         posterUrl: f?.posterUrl,
         rating: f?.rating,
         filmLanguage: f?.language,
+        distanceKm: nearby.find((n) => n.id === s.cinemaId)?.distanceKm,
+        mapUrl:
+          c?.lat && c?.lng ? `https://www.google.com/maps/search/?api=1&query=${c.lat},${c.lng}` : undefined,
       };
     });
     // ---- spoken summary: at most 3 slots, grouped the way a human would say it; the cards carry the rest
@@ -366,7 +383,28 @@ export const movieTools: Pick<
       `${i.time}${withExp ? ` ${i.experience}` : ""}`;
     let spoken: string;
     let remaining = 0;
-    if (film) {
+    if (film && nearby.length) {
+      // location-based: "Spider-Man near Deira — Burjuman (2 km) tomorrow 12:30 pm and 3:30 pm KIDS; Wafi Mall (4.7 km) 12:15 pm"
+      const byCinema = new Map<string, typeof items>();
+      for (const it of items)
+        byCinema.set(it.cinemaName ?? "", [...(byCinema.get(it.cinemaName ?? "") ?? []), it]);
+      const multiExp = new Set(items.map((i) => i.experience)).size > 1;
+      const parts: string[] = [];
+      let used = 0;
+      for (const [cn, its] of byCinema) {
+        if (used >= 3) break;
+        const take = its.slice(0, Math.min(2, 3 - used));
+        used += take.length;
+        parts.push(
+          `${cn}${its[0]?.distanceKm != null ? ` (${its[0].distanceKm} ${ar ? "كم" : "km"})` : ""} ${take[0]!.dateLabel} ${joinList(
+            take.map((i) => slot(i, multiExp)),
+            ctx.lang,
+          )}`,
+        );
+      }
+      remaining = items.length - used;
+      spoken = `${film.title} ${cinemaLabel} — ${parts.join(ar ? "؛ " : "; ")}`;
+    } else if (film) {
       // one film: "DC at City Centre Deira — tomorrow 5:15 pm and 8:40 pm, Sunday 3:00 pm"
       const byDay = new Map<string, typeof items>();
       for (const it of items) byDay.set(dayOf(it), [...(byDay.get(dayOf(it)) ?? []), it]);
@@ -386,14 +424,15 @@ export const movieTools: Pick<
         parts.push(
           `${day} ${joinList(
             take.map(
-              (i) => `${slot(i, multiExp)}${multiCinema ? ` ${ar ? "في" : "at"} ${i.cinemaName}` : ""}`,
+              (i) =>
+                `${slot(i, multiExp)}${multiCinema ? ` ${ar ? "في" : "at"} ${i.cinemaName}${i.distanceKm != null ? ` (${i.distanceKm} ${ar ? "كم" : "km"})` : ""}` : ""}`,
             ),
             ctx.lang,
           )}`,
         );
       }
       remaining = items.length - used;
-      spoken = `${film.title}${!multiCinema ? ` ${ar ? "في" : "at"} ${cinemasUsed[0]}` : ""} — ${parts.join(ar ? "؛ " : "; ")}`;
+      spoken = `${film.title}${!multiCinema ? ` ${ar ? "في" : "at"} ${cinemasUsed[0]}${items[0]?.distanceKm != null ? ` (${items[0].distanceKm} ${ar ? "كم" : "km"})` : ""}` : nearby.length ? ` ${cinemaLabel}` : ""} — ${parts.join(ar ? "؛ " : "; ")}`;
     } else {
       // many films (cinema/time query): "Tomorrow at City Centre Deira after 8 pm: Immortal 10:50 pm, Insidious 8:00 pm GOLD, …"
       const byFilm = new Map<string, typeof items>();

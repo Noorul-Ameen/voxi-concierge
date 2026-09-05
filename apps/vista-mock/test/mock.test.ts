@@ -256,9 +256,88 @@ describe("offers engine", () => {
     expect(applied.json.Result).toBe(0);
     expect(applied.json.Order.TotalValueCents).toBeLessThan(before);
     expect(applied.json.AppliedOffer.Id).toBe("PROMO-MOVIEMONDAY");
-    const bank = await t.post("/Ticketing/Order/offers", { UserSessionId: usid, CardBin: "455533" });
+    const bank = await t.post("/Ticketing/Order/offers", {
+      UserSessionId: usid,
+      CardBin: "455533",
+      MemberId: "SHR100234",
+    });
     expect(bank.json.Result).toBe(1);
     expect(bank.json.ErrorDescription).toMatch(/cannot be combined/);
+    // guests cannot use bank offers at all
+    const guest = await t.post("/Ticketing/Order/offers", { UserSessionId: `${usid}-g`, CardBin: "455533" });
+    expect(guest.json.ErrorDescription ?? "").toMatch(/membership|not found/i);
+  });
+  it("buy-one-get-one needs exactly 2 tickets, filters by bank and checks the card at payment", async () => {
+    const r = await t.get(
+      "/OData/Sessions?$format=json&$filter=CinemaId eq '0005' and Experience eq 'Standard'&$orderby=Showtime asc&$top=2000",
+    );
+    const { nowLocalIso } = await import("@voxi/db");
+    const sess = r.json.value.find(
+      (x: any) =>
+        [0, 1, 2, 3].includes(new Date(`${x.Showtime}Z`).getUTCDay()) &&
+        x.SeatsAvailable > 12 &&
+        x.Showtime > nowLocalIso(),
+    );
+    expect(sess).toBeTruthy();
+    const tt = await t.get(`/Data/Cinemas/0005/sessions/${sess.SessionId}/tickets`);
+    const code = tt.json.Tickets.find(
+      (x: any) => /REGULAR$/.test(x.Description) && x.AreaCategoryCode === "0000000002",
+    ).TicketTypeCode;
+    // only ADCB offers when the guest names ADCB
+    const list = await t.get(
+      `/offers/v1/offers?bank=${encodeURIComponent("adcb card")}&sessionKey=0005-${sess.SessionId}&memberId=SHR200877`,
+    );
+    expect(list.json.offers.length).toBeGreaterThan(0);
+    expect(list.json.offers.every((o: any) => /ADCB/i.test(o.title))).toBe(true);
+    // 3 tickets → refused with the reason
+    const usid = `bogo-${Date.now()}`;
+    await t.post("/Ticketing/Order/tickets", {
+      UserSessionId: usid,
+      CinemaId: "0005",
+      SessionId: sess.SessionId,
+      TicketTypes: [{ TicketTypeCode: code, Qty: 3 }],
+    });
+    const three = await t.post("/Ticketing/Order/offers", {
+      UserSessionId: usid,
+      OfferId: "BANK-ADCB-BOGO",
+      CardBin: "409255",
+      MemberId: "SHR200877",
+    });
+    expect(three.json.Result).toBe(1);
+    expect(three.json.ErrorDescription).toMatch(/exactly 2 tickets/);
+    // 2 tickets → applied; paying with a non-ADCB card is refused, ADCB card succeeds
+    await t.post("/Ticketing/Order/tickets", {
+      UserSessionId: usid,
+      CinemaId: "0005",
+      SessionId: sess.SessionId,
+      TicketTypes: [{ TicketTypeCode: code, Qty: 2 }],
+    });
+    const two = await t.post("/Ticketing/Order/offers", {
+      UserSessionId: usid,
+      OfferId: "BANK-ADCB-BOGO",
+      CardBin: "409255",
+      MemberId: "SHR200877",
+    });
+    expect(two.json.Result).toBe(0);
+    const total = two.json.Order.TotalValueCents;
+    const pay = (token: string) =>
+      t.post("/Ticketing/order/payment", {
+        UserSessionId: usid,
+        CustomerEmail: "rahul.menon@example.com",
+        CustomerName: "Rahul Menon",
+        CustomerPhone: "0529876543",
+        CustomerId: "cust_rahul",
+        MemberId: "SHR200877",
+        PaymentInfoCollection: [
+          { PaymentValueCents: total, PaymentTenderCategory: "CREDIT", PaymentToken: token },
+        ],
+      });
+    const wrong = await pay("tok_saved_rahul_6034"); // HSBC card
+    expect(wrong.json.Result).toBe(1);
+    expect(wrong.json.ErrorDescription).toMatch(/ADCB card/);
+    const right = await pay("tok_saved_rahul_2211"); // ADCB card
+    expect(right.json.Result).toBe(0);
+    expect(right.json.VistaBookingId).toMatch(/^W/);
   });
   it("lists offers with eligibility and requirements", async () => {
     const r = await t.get("/offers/v1/offers?cinemaId=0002&experience=GOLD");
@@ -286,7 +365,7 @@ describe("bookings & refunds", () => {
   it("refunds to VOX credit idempotently and rejects a second refund", async () => {
     const b = (await t.get("/RESTBooking.svc/booking/WKGRP33")).json.Booking;
     expect(b.Status).toBe("confirmed");
-    const bal0 = (await t.get("/RESTLoyalty.svc/member/SHR400551/balances")).json.Balances.find(
+    const bal0 = (await t.get("/RESTLoyalty.svc/member/SHR200877/balances")).json.Balances.find(
       (x: any) => x.BalanceTypeId === "VOX_REWARDS",
     ).ValueCents;
     const ref = `TEST-${Date.now()}`;
@@ -306,7 +385,7 @@ describe("bookings & refunds", () => {
     });
     expect(r2.json.Idempotent).toBe(true);
     expect(r2.json.Refund.Reference).toBe(ref);
-    const bal1 = (await t.get("/RESTLoyalty.svc/member/SHR400551/balances")).json.Balances.find(
+    const bal1 = (await t.get("/RESTLoyalty.svc/member/SHR200877/balances")).json.Balances.find(
       (x: any) => x.BalanceTypeId === "VOX_REWARDS",
     ).ValueCents;
     expect(bal1 - bal0).toBe(r1.json.Refund.AmountCents);

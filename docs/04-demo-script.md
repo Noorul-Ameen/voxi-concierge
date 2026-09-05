@@ -6,17 +6,15 @@ Run `pnpm db:seed` before the demo so every fixture is in its starting state. Op
 
 ## Demo accounts (all dummy)
 
-| Persona | Identity | What they are for |
+| Profile | Identity | What they are for |
 |---|---|---|
-| Sara Al Mansoori | +971 50 123 4567 · PIN 1234 · SHARE Gold `SHR100234` | Logged-in journey, Arabic, personalised recommendations (family / animation history), booking `WXA7K2M` refundable, Share Points redemption |
-| Rahul Menon | `SHR200877` · PIN 2468 | Cancellation edge cases: `WM3PQ9X` starts in ~20 min (inside cut-off), `WMB6GQ2` bought with a bank offer (non-refundable), Malayalam/Hindi/Tamil history |
-| James Whitfield | james.whitfield@example.com · PIN 9876 · Platinum | GOLD booking `WJG8LD7` with F&B (partial cancel keeps F&B), IMAX `WJMX42R` paid with VOX credit, swap to another showtime |
-| Layla Haddad | guest, no account | Guest verification (last 4 digits `4455`), guest refund to original card only, `WLHCNC2` already cancelled |
-| Omar Khan | omar.khan@example.com · PIN 1111 · Blue | Group booking `WKGRP33` (partial cancellation of 1 of 3), `WK4DXC9` tickets already collected (not refundable) |
-| Fatima Al Zaabi | +971 50 555 6677 · PIN 5555 | New member with no history → cold-start recommendations |
+| 🇦🇪 Sara Al Mansoori — UAE | +971 50 123 4567 · PIN 1234 · SHARE Gold `SHR100234` · 2,450 pts · AED 120 credit | Arabic & English films, family history (KIDS shows, child tickets) → recommendations ask whether children are joining; saved ENBD Mastercard ·3845 (BOGO) and FAB Visa ·8258; booking `WXA7K2M` refundable; Share Points redemption |
+| 🇮🇳 Rahul Menon — India | `SHR200877` · PIN 2468 · SHARE Silver · 620 pts · AED 35 credit | Tamil & Hindi films, late shows at Burjuman / Deira / Shindagha; saved ADCB Visa ·2211 (BOGO) and HSBC Visa ·6034; edge cases `WM3PQ9X` (cut-off), `WMB6GQ2` (bank offer, non-refundable), `WK4DXC9` (collected), `WKGRP33` (group of 3, partial cancel) |
+| 🇬🇧 James Whitfield — UK | james.whitfield@example.com · PIN 9876 · SHARE Platinum · 8,800 pts · AED 450 credit | English films only, GOLD / IMAX / THEATRE at MOE, Yas Mall, Galleria; saved Mashreq Mastercard ·7712 (50%), CBD Visa ·0099 (50%), UK Visa ·5501 (no offer); `WJG8LD7` GOLD with F&B, `WJMX42R` IMAX swap demo |
+| 👤 Guest (no account) | name, email, mobile + card at checkout | Guest checkout with the "Log in or create an account to view eligible offers and earn SHARE points" nudge, no bank offers; guest booking `WLHGST5` (phone ending 4455) for find-and-verify, `WLHCNC2` already cancelled |
 
 Cards (simulated Checkout): `4111 1111 1111 1111` approved · `4000 0000 0000 0002` declined.
-Promo `MONDAY30` (Standard, Mondays) · Bank offer via ENBD BIN `455533` · Junior Club AED 25 tickets.
+Promo `MONDAY30` (Standard, Mondays) · Bank offers are members-only, BOGO needs exactly 2 tickets and the same bank's card at payment (ENBD BIN `455533`/`521334`, ADCB `409255`, HSBC `424141`) · Junior Club AED 25 tickets · Payment methods: saved card, new card, Apple Pay, Samsung Pay (+ VOX credit / Share Points for members). Location: 📍 in the widget (GPS or pick an area) drives "near me".
 
 ## Act 1 — Phase 1: "answers my questions and resolves my issues" (10 min)
 
@@ -35,7 +33,7 @@ Promo `MONDAY30` (Standard, Mondays) · Bank offer via ENBD BIN `455533` · Juni
 
 ## Act 2 — Phase 2: "the booking concierge that knows what I want" (12 min)
 
-13. **Personalisation** — as Sara: "what should I watch?" → recommendations from history (family/animation, weekend, MOE), "the usual snacks?" → F&B suggestion from past orders. As Fatima → cold-start by popularity.
+13. **Personalisation** — as Sara: "what should I watch?" → recommendations from history (family/animation, weekend, MOE), "the usual snacks?" → F&B suggestion from past orders. As a guest → popular titles, then two preference questions. "Suggest a movie" as Sara → Voxi asks whether children are joining before family picks; "any Hindi movies?" as Rahul → the explicit language wins over the profile.
 14. **Guided booking** — "book two tickets for that on Saturday evening in MAX at Mall of the Emirates" → sessions card → pick one → ticket types card (adult/child/student) → **seat map** (interactive; the agent can also pick "two together in the middle") → seats held in the order (10-min expiry shown).
 15. **F&B information & pre-order** — "what combos do you have? anything vegan?" → menu cards filtered by dietary tags → "add the large combo" → order total updates live (SSE `order.updated`).
 16. **Apply promos & offers** — "I have an ENBD card" → BOGO applied, order lines show the discount; try `MONDAY30` on a non-Monday → rejected with the reason; "use 500 Share Points" → points redeemed against the total.

@@ -41,7 +41,15 @@ export function normaliseExperience(label: string): Experience {
 export const RefundMethod = z.enum(["VOX_CREDIT", "SHARE_POINTS", "ORIGINAL_PAYMENT"]);
 export type RefundMethod = z.infer<typeof RefundMethod>;
 
-export const PaymentMethod = z.enum(["CARD", "VOX_CREDIT", "SHARE_POINTS", "APPLE_PAY", "GOOGLE_PAY"]);
+export const PaymentMethod = z.enum([
+  "CARD",
+  "SAVED_CARD",
+  "VOX_CREDIT",
+  "SHARE_POINTS",
+  "APPLE_PAY",
+  "SAMSUNG_PAY",
+  "GOOGLE_PAY",
+]);
 export type PaymentMethod = z.infer<typeof PaymentMethod>;
 
 export const Money = z.object({

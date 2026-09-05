@@ -54,7 +54,10 @@ export const WidgetCommand = z.discriminatedUnion("type", [
     lat: z.number(),
     lng: z.number(),
     accuracyM: z.number().optional(),
+    label: z.string().optional(),
+    source: z.enum(["gps", "manual"]).optional(),
   }),
+  z.object({ type: z.literal("location.clear") }),
   z.object({ type: z.literal("human.message"), transferId: z.string(), text: z.string() }),
   z.object({
     type: z.literal("feedback"),

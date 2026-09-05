@@ -102,6 +102,15 @@ export function evaluateOffer(offer: Offer, ctx: OfferContext): Eligibility {
   if (r.timeTo && ctx.showtime && hm(ctx.showtime) > r.timeTo) reasons.push(`Valid until ${r.timeTo}`);
   if (r.minTickets && ctx.ticketCount != null && ctx.ticketCount < r.minTickets)
     reasons.push(`Requires at least ${r.minTickets} tickets`);
+  // Buy-one-get-one bank offers apply to exactly one pair: the free ticket needs a paid partner and the
+  // monthly cap stops a second pair — so the order must hold exactly buy+get eligible tickets.
+  if (offer.benefit.type === "bogo" && ctx.ticketCount != null) {
+    const need = offer.benefit.buy + offer.benefit.get;
+    if (ctx.ticketCount !== need)
+      reasons.push(
+        `Buy ${offer.benefit.buy} get ${offer.benefit.get} free needs exactly ${need} tickets in the order (you have ${ctx.ticketCount})`,
+      );
+  }
   if (
     r.ticketTypeCodes?.length &&
     ctx.ticketTypeCodes?.length &&
@@ -134,6 +143,40 @@ export function evaluateOffer(offer: Offer, ctx: OfferContext): Eligibility {
   if (r.channels?.length && ctx.channel && !r.channels.includes(ctx.channel))
     reasons.push("Not available on this channel");
   return { eligible: reasons.length === 0 && requires.length === 0, reasons, requires };
+}
+
+/** Does an offer belong to the bank the guest named ("ENBD", "Emirates NBD", "hsbc card")? */
+export function offerMatchesBank(offer: Pick<Offer, "title" | "rules">, query: string): boolean {
+  const q = query
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\b(bank|card|credit|debit|my|the)\b/g, " ")
+    .trim();
+  if (!q) return false;
+  const name = (offer.rules.bankName ?? "").toLowerCase();
+  const title = offer.title.toLowerCase();
+  const aliases: Record<string, string[]> = {
+    "emirates nbd": ["enbd", "emirates nbd", "nbd"],
+    hsbc: ["hsbc"],
+    adcb: ["adcb", "abu dhabi commercial"],
+    cbd: ["cbd", "commercial bank of dubai"],
+    mashreq: ["mashreq"],
+    citi: ["citi", "citibank"],
+    rakbank: ["rak", "rakbank"],
+    fab: ["fab", "first abu dhabi"],
+    "standard chartered": ["scb", "standard chartered", "stanchart"],
+  };
+  const words = q.split(/\s+/).filter(Boolean);
+  const hits = (s: string) => words.some((w) => w.length >= 3 && s.includes(w)) || s.includes(q);
+  if (name && (hits(name) || (aliases[name] ?? []).some((a) => q.includes(a)))) return true;
+  return hits(title);
+}
+
+/** Card BIN → offer match, shared by list_offers (saved-card hints) and payment validation. */
+export function offerAcceptsBin(offer: Pick<Offer, "rules">, bin: string | undefined): boolean {
+  if (!offer.rules.bankBins?.length) return true;
+  if (!bin) return false;
+  return offer.rules.bankBins.some((b) => bin.startsWith(b));
 }
 
 export type PricedTicket = {

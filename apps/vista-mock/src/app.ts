@@ -1,7 +1,7 @@
 import type { Db } from "@voxi/db";
 import { schema as S, shortId } from "@voxi/db";
 import { centsToPoints, pointsToCents } from "@voxi/domain";
-import { type Offer, applyBenefit, evaluateOffer } from "@voxi/domain";
+import { type Offer, applyBenefit, evaluateOffer, offerAcceptsBin, offerMatchesBank } from "@voxi/domain";
 /**
  * Vista-shaped mock API (VOX Apigee partner API + Vista RESTBooking/RESTLoyalty + Offers Engine + Customer).
  * All routes live under BASE = /vistatickets/vista/v2 (as production) plus /v1/oauth/generate at the root.
@@ -507,6 +507,9 @@ export function createApp(db: Db, cfg: MockConfig) {
             ? (concessions.find((x) => x.ItemId === applied.freeItemId)?.PriceCents ?? 0)
             : 0),
         reference: applied.pointsMultiplier ? "points_multiplier" : undefined,
+        cardBin: body.CardBin,
+        bankBins: offer.rules.bankBins,
+        bankName: offer.rules.bankName,
       },
     ];
     const totals = recalc({ ...order, tickets, concessions, appliedOffers }, cfg.order);
@@ -808,6 +811,11 @@ export function createApp(db: Db, cfg: MockConfig) {
       : undefined;
     const out = rows
       .filter((o) => !q.type || q.type === "any" || o.type === q.type)
+      // "which ENBD offers…" → only that bank; a card BIN → only offers that card qualifies for
+      .filter((o) => !q.bank || offerMatchesBank(o as unknown as Offer, q.bank))
+      .filter(
+        (o) => !q.cardBin || (o.rules.bankBins?.length && offerAcceptsBin(o as unknown as Offer, q.cardBin)),
+      )
       .map((o) => {
         const e = evaluateOffer(o as unknown as Offer, {
           cinemaId: q.cinemaId ?? session?.cinemaId,
@@ -816,6 +824,8 @@ export function createApp(db: Db, cfg: MockConfig) {
           showtime: session ? session.showtime.toISOString().slice(0, 19) : undefined,
           memberId: q.memberId,
           tier: acct?.tier,
+          cardBin: q.cardBin,
+          ticketCount: q.ticketCount ? Number(q.ticketCount) : undefined,
           channel: "WWW",
         });
         return { ...o, eligibility: e };
@@ -922,6 +932,22 @@ export function createApp(db: Db, cfg: MockConfig) {
       .where(eq(S.purchaseHistory.customerId, c.req.param("id")))
       .orderBy(desc(S.purchaseHistory.showtime))
       .limit(50);
+    // enrich with the film rating and child-ticket count so recommendations can tell family visits apart
+    const films = await db.select({ hoCode: S.films.hoCode, rating: S.films.rating }).from(S.films);
+    const ratingOf = new Map(films.map((f) => [f.hoCode, f.rating]));
+    const bookingIds = rows.map((r) => r.bookingId).filter((x): x is string => !!x);
+    const bks = bookingIds.length
+      ? await db
+          .select({ id: S.bookings.vistaBookingId, tickets: S.bookings.tickets })
+          .from(S.bookings)
+          .where(inArray(S.bookings.vistaBookingId, bookingIds))
+      : [];
+    const childOf = new Map(
+      bks.map((b) => [
+        b.id,
+        (b.tickets as { Description?: string }[]).filter((t) => /CHILD/i.test(t.Description ?? "")).length,
+      ]),
+    );
     return c.json({
       history: rows.map((r) => ({
         bookingId: r.bookingId,
@@ -931,8 +957,10 @@ export function createApp(db: Db, cfg: MockConfig) {
         genres: r.genres,
         language: r.language,
         experience: r.experience,
+        rating: (r.hoCode ? ratingOf.get(r.hoCode) : null) ?? null,
         showtime: r.showtime.toISOString().slice(0, 19),
         ticketCount: r.ticketCount,
+        childTickets: r.bookingId ? (childOf.get(r.bookingId) ?? 0) : 0,
         concessionItemIds: r.concessionItemIds,
         spendCents: r.spendCents,
       })),

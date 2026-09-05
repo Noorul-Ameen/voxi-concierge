@@ -179,6 +179,10 @@ export type AppliedOffer = {
   discountCents: number;
   pointsRedeemed?: number;
   reference?: string;
+  /** Bank offers: the card BIN verified when the offer was applied, and the BINs the offer accepts. */
+  cardBin?: string;
+  bankBins?: string[];
+  bankName?: string;
 };
 
 export type OrderState =

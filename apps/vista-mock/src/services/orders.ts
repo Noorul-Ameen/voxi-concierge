@@ -677,6 +677,17 @@ function describeCard(
   return { brand: "CARD", masked: "XXXX XXXX XXXX XXXX" };
 }
 
+/** BIN of the card a tender pays with: saved-card token → stored first6; raw PAN → first 6; wallet tokens → none. */
+function paidCardBin(p: PaymentInfo, savedCards: { token: string; first6: string }[]): string | undefined {
+  const saved = p.PaymentToken ? savedCards.find((c) => c.token === p.PaymentToken) : undefined;
+  if (saved) return saved.first6;
+  const pan = (p.CardNumber ?? "").replace(/\D/g, "");
+  if (pan.length >= 6) return pan.slice(0, 6);
+  // widget tokens for new cards carry the BIN: tok_visa_<bin>_<last4>_<ts>
+  const m = /^tok_(?:visa|mc|mastercard|amex)_(\d{6})_/.exec(p.PaymentToken ?? "");
+  return m?.[1];
+}
+
 /** Simulated Checkout: card rules for the demo. Returns null when approved, else the decline reason. */
 export function simulateCardDecision(p: PaymentInfo): string | null {
   const pan = (p.CardNumber ?? "").replace(/\D/g, "");
@@ -716,6 +727,39 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
     if (p.PaymentTenderCategory === "CREDIT" || p.PaymentTenderCategory === "CREDITCARD") {
       const declined = simulateCardDecision(p);
       if (declined) throw new VistaError(RC.GENERAL, RC.PAYMENT_DECLINED, declined);
+    }
+  }
+  // Bank offers must be paid with a card from that bank — re-check the card actually used at payment.
+  const bankOffers = order.appliedOffers.filter((o) => o.bankBins?.length);
+  if (bankOffers.length) {
+    const custId0 = req.CustomerId ?? order.customerId ?? null;
+    const saved = custId0
+      ? ((await db.select().from(S.customers).where(eq(S.customers.id, custId0)))[0]?.savedCards ?? [])
+      : [];
+    const bins = req.PaymentInfoCollection.map((p) => paidCardBin(p, saved)).filter((b): b is string => !!b);
+    const cardTender = req.PaymentInfoCollection.some(
+      (p) => p.PaymentTenderCategory === "CREDIT" || p.PaymentTenderCategory === "CREDITCARD",
+    );
+    for (const o of bankOffers) {
+      const okCard = bins.some((b) => o.bankBins!.some((x) => b.startsWith(x)));
+      if (cardTender && !okCard)
+        throw new VistaError(
+          RC.GENERAL,
+          RC.OFFER_NOT_ELIGIBLE,
+          `${o.title} must be paid with an eligible ${o.bankName ?? "bank"} card — pay with that card or remove the offer`,
+        );
+      if (
+        !cardTender &&
+        bins.length === 0 &&
+        !req.PaymentInfoCollection.every(
+          (p) => p.PaymentTenderCategory === "LOYALTY" || p.PaymentTenderCategory === "EWALLET",
+        )
+      )
+        throw new VistaError(
+          RC.GENERAL,
+          RC.OFFER_NOT_ELIGIBLE,
+          `${o.title} requires card payment with an eligible ${o.bankName ?? "bank"} card`,
+        );
     }
   }
   return withSessionLock(db, order.cinemaId, order.sessionId!, async (tx) => {

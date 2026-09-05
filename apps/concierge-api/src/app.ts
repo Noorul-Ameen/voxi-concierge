@@ -433,8 +433,12 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
     switch (cmd.type) {
       case "location": {
         await updateConversation(app.db, conv.id, {
-          geo: { lat: cmd.lat, lng: cmd.lng, accuracyM: cmd.accuracyM },
+          geo: { lat: cmd.lat, lng: cmd.lng, accuracyM: cmd.accuracyM, label: cmd.label, source: cmd.source },
         });
+        return c.json({ ok: true });
+      }
+      case "location.clear": {
+        await updateConversation(app.db, conv.id, { geo: null });
         return c.json({ ok: true });
       }
       case "seat.select": {
@@ -478,8 +482,24 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
             action: row ? ledger.toRef(row) : ledger.toRef(action),
           });
         } catch (e) {
-          // already consumed by the agent path → return that action
+          // already consumed → either the agent path ran it, or an earlier attempt failed (declined card,
+          // wrong bank card for an offer). A failed attempt may be retried with a different card.
           const existing = await ledger.findByKey(app.db, ledger.idem(conv.id, `pay:${cmd.confirmationId}`));
+          if (existing && existing.status === "failed" && cmd.token) {
+            const { action } = await ledger.enqueue(app.db, app.events, {
+              conversationId: conv.id,
+              type: "pay_order",
+              resourceKey: `order:${cmd.userSessionId}`,
+              idempotencyKey: ledger.idem(conv.id, `pay:${cmd.confirmationId}:${cmd.token}`),
+              payload: { ...existing.input, paymentToken: cmd.token },
+              requestedBy: "widget",
+            });
+            const row = await ledger.waitFor(app.db, action.id, writeWaitMs + 2000);
+            return c.json({
+              ok: row?.status === "succeeded",
+              action: row ? ledger.toRef(row) : ledger.toRef(action),
+            });
+          }
           if (existing)
             return c.json({ ok: existing.status === "succeeded", action: ledger.toRef(existing) });
           return c.json({ ok: false, error: (e as Error).message }, 409);

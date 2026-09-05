@@ -2,10 +2,12 @@ import { ErrorCodes } from "@voxi/contracts";
 import { schema as S } from "@voxi/db";
 import {
   buildTasteProfile,
+  normaliseFilmLanguage,
   recommendConcessions,
   recommendFilms,
   resolveSpokenDate,
   scoreSession,
+  similarity,
 } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 import { eq } from "drizzle-orm";
@@ -63,6 +65,7 @@ export const customerTools: Pick<
           }
         : null,
       hasLocation: !!ctx.conversation.geo,
+      location: ctx.conversation.geo?.label ?? (ctx.conversation.geo ? "shared GPS position" : null),
       activeOrder: active
         ? {
             userSessionId: active,
@@ -223,8 +226,49 @@ export const customerTools: Pick<
         concessionItemIds: h.concessionItemIds ?? [],
       })),
     );
-    const films = (await ctx.catalog.films()).filter((f) => f.status === "now_showing");
-    const recs = recommendFilms(
+    const FAMILY = new Set(["Family", "Animation", "Kids"]);
+    const isFamilyFilm = (genres: string[], rating?: string | null) =>
+      genres.some((g) => FAMILY.has(g)) || rating === "G";
+    // Children's films in the history → ask before suggesting family options (never assume kids are joining)
+    const familyHistory = history.some(
+      (h) => isFamilyFilm(h.genres ?? [], h.rating) || h.experience === "KIDS" || (h.childTickets ?? 0) > 0,
+    );
+    const name = c?.firstName;
+    const historyLine = c
+      ? t(
+          ctx.lang,
+          `${[
+            profile.summary.languages.length ? `${joinList(profile.summary.languages)} films` : "",
+            profile.summary.genres.length
+              ? joinList(profile.summary.genres.slice(0, 2).map((g) => g.toLowerCase()))
+              : "",
+          ]
+            .filter(Boolean)
+            .join(", ")}`,
+          `${profile.summary.languages.length ? `أفلام ${joinList(profile.summary.languages, "ar")}` : ""}`,
+        )
+      : "";
+    if (c && familyHistory && input.withChildren === undefined && input.kind !== "fnb") {
+      return ok(
+        { movies: [], fnb: [], profile: profile.summary, personalised: true, askChildren: true },
+        t(
+          ctx.lang,
+          `${name ? `${name}, based` : "Based"} on your previous bookings${historyLine ? ` — ${historyLine}` : ""} — I can suggest a few. I also see family films in your history: will children be joining this time, or is it just adults?`,
+          `${name ? `${name}، بناءً` : "بناءً"} على حجوزاتك السابقة يمكنني اقتراح بعض الأفلام. لاحظت أفلاماً عائلية في سجلك: هل سيرافقك أطفال هذه المرة، أم الكبار فقط؟`,
+        ),
+        undefined,
+        { name: "personalisation", status: "started" },
+      );
+    }
+    const wantLang = normaliseFilmLanguage(input.language);
+    let films = (await ctx.catalog.films()).filter((f) => f.status === "now_showing");
+    if (wantLang) {
+      const inLang = films.filter((f) => similarity(f.language, wantLang) >= 0.7);
+      if (inLang.length) films = inLang;
+    }
+    if (input.withChildren === true) films = films.filter((f) => !/^(15|18|21)\+?$/.test(f.rating ?? ""));
+    else if (input.withChildren === false) films = films.filter((f) => !isFamilyFilm(f.genres, f.rating));
+    const recsRaw = recommendFilms(
       films.map((f) => ({
         hoCode: f.hoCode,
         title: f.title,
@@ -234,17 +278,34 @@ export const customerTools: Pick<
         status: f.status,
       })),
       profile,
-      input.limit,
+      input.limit + 4,
     );
-    const cinemaIds = profile.summary.cinemas.length
-      ? profile.summary.cinemas
-      : c?.homeCinemaId
-        ? [c.homeCinemaId]
-        : ["0002"];
+    // family first when children are coming
+    const recs = (
+      input.withChildren === true
+        ? [...recsRaw].sort(
+            (a, b) =>
+              Number(isFamilyFilm(b.film.genreNames, b.film.rating)) -
+              Number(isFamilyFilm(a.film.genreNames, a.film.rating)),
+          )
+        : recsRaw
+    ).slice(0, input.limit);
+    // where: the guest's shared/selected location wins over history; then the requested cinema; then their usual cinemas
+    let cinemaIds: string[];
+    let nearLabel = "";
+    if (input.cinemaId) cinemaIds = [input.cinemaId];
+    else if (ctx.conversation.geo) {
+      const near = await ctx.catalog.nearestCinemas(ctx.conversation.geo.lat, ctx.conversation.geo.lng, 3);
+      cinemaIds = near.map((x) => x.id);
+      nearLabel = ctx.conversation.geo.label ?? "";
+    } else
+      cinemaIds = profile.summary.cinemas.length
+        ? profile.summary.cinemas
+        : c?.homeCinemaId
+          ? [c.homeCinemaId]
+          : ["0002"];
     const date = resolveSpokenDate(input.date, ctx.nowLocal);
-    const sessions = (
-      await Promise.all((input.cinemaId ? [input.cinemaId] : cinemaIds).map((id) => ctx.catalog.sessions(id)))
-    )
+    const sessions = (await Promise.all(cinemaIds.map((id) => ctx.catalog.sessions(id))))
       .flat()
       .filter((s) => s.showtime >= ctx.nowLocal && s.showtime.slice(0, 10) >= date);
     const movieItems = await Promise.all(
@@ -270,6 +331,7 @@ export const customerTools: Pick<
         return {
           ...filmCard(f, ctx.lang),
           why: r.why,
+          family: isFamilyFilm(f.genres, f.rating),
           suggestedSession: best
             ? sessionCard(
                 best,
@@ -318,19 +380,18 @@ export const customerTools: Pick<
             : "",
       }));
     }
-    const name = c?.firstName;
     const speech = c
       ? t(
           ctx.lang,
-          `${name ? `${name}, based` : "Based"} on your ${profile.summary.genres.length ? joinList(profile.summary.genres.slice(0, 2)).toLowerCase() : "recent"} picks${profile.summary.experiences.length ? ` in ${profile.summary.experiences[0]}` : ""}, I'd suggest ${joinList(movieItems.slice(0, 3).map((m) => m.titleEn))}${movieItems[0]?.suggestedSession ? ` — ${movieItems[0].titleEn} has a ${movieItems[0].suggestedSession.experience} show ${movieItems[0].suggestedSession.dateLabel} at ${movieItems[0].suggestedSession.time} at ${movieItems[0].suggestedSession.cinemaName}` : ""}.${fnbItems.length ? ` And your usual ${fnbItems[0]!.name as string} is on the menu.` : ""}`,
-          `${name ? `${name}، بناءً` : "بناءً"} على اختياراتك السابقة، أقترح ${joinList(
+          `${name ? `${name}, based` : "Based"} on your previous bookings${wantLang ? ` — you asked for ${wantLang} films, so I've kept to those` : historyLine ? ` — ${historyLine}` : ""}${input.withChildren === true ? ", and with the children coming" : ""} — here are some you may enjoy: ${joinList(movieItems.slice(0, 3).map((m) => m.titleEn))}${movieItems[0]?.suggestedSession ? `. ${movieItems[0].titleEn} has a ${movieItems[0].suggestedSession.experience} show ${movieItems[0].suggestedSession.dateLabel} at ${movieItems[0].suggestedSession.time} at ${movieItems[0].suggestedSession.cinemaName}${nearLabel ? ` near ${nearLabel}` : ""}` : ""}.${fnbItems.length ? ` Your usual ${fnbItems[0]!.name as string} is on the menu too.` : ""} Which one appeals, or would you like a different kind of film?`,
+          `${name ? `${name}، بناءً` : "بناءً"} على حجوزاتك السابقة، إليك بعض الأفلام التي قد تعجبك: ${joinList(
             movieItems.slice(0, 3).map((m) => m.title),
             "ar",
-          )}.${fnbItems.length ? ` وطلبك المعتاد ${fnbItems[0]!.name as string} متوفر.` : ""}`,
+          )}.${fnbItems.length ? ` وطلبك المعتاد ${fnbItems[0]!.name as string} متوفر.` : ""} أيها يناسبك، أم تفضل نوعاً آخر؟`,
         )
       : t(
           ctx.lang,
-          `Popular right now: ${joinList(movieItems.slice(0, 3).map((m) => m.titleEn))}. Tell me what you like — action, family, Bollywood — and I'll narrow it down.`,
+          `Popular right now${wantLang ? ` in ${wantLang}` : ""}: ${joinList(movieItems.slice(0, 3).map((m) => m.titleEn))}. Tell me what you like — action, family, Bollywood — and I'll narrow it down.`,
           `الأكثر رواجاً الآن: ${joinList(
             movieItems.slice(0, 3).map((m) => m.title),
             "ar",
