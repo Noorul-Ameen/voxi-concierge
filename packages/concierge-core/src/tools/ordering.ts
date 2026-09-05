@@ -6,6 +6,7 @@ import { enqueue, idem, toRef } from "../actions/ledger.js";
 import { createConfirmation } from "../services/confirmations.js";
 import { updateConversation } from "../services/conversation.js";
 import { fmtDateTime, joinList, money, seatLabels, t } from "../services/format.js";
+import { loadCustomer } from "./customer.js";
 import { experienceLabel } from "./movies.js";
 import { type ToolCtx, type ToolHandlers, err, ok } from "./types.js";
 
@@ -149,10 +150,26 @@ export const orderingTools: Pick<
     if (input.dietary?.length)
       items = items.filter((i) => input.dietary!.every((d) => (i.DietaryTags ?? []).includes(d)));
     if (input.query) {
-      const q = input.query.toLowerCase();
-      items = items.filter((i) =>
-        `${i.Description} ${i.DescriptionAlt} ${i.ExtendedDescription} ${i.Tab}`.toLowerCase().includes(q),
-      );
+      // Tolerant matching: "7up" → "7 Up", "cocacola" → "Coca-Cola", "nachos cheese" → "Cheese Nachos".
+      const norm = (s: string) =>
+        String(s ?? "")
+          .toLowerCase()
+          .replace(/[^a-z0-9\u0600-\u06ff]+/g, "");
+      const hay = (i: Record<string, any>) =>
+        norm(`${i.Description} ${i.DescriptionAlt} ${i.ExtendedDescription} ${i.Tab}`);
+      const tokens = String(input.query)
+        .toLowerCase()
+        .split(/[^a-z0-9\u0600-\u06ff]+/)
+        .filter(Boolean);
+      const q = norm(input.query);
+      let hits = items.filter((i) => hay(i).includes(q));
+      if (!hits.length && tokens.length > 1)
+        hits = items.filter((i) => tokens.every((t) => hay(i).includes(t)));
+      if (!hits.length) {
+        const stem = (t: string) => t.replace(/(es|s)$/, "");
+        hits = items.filter((i) => tokens.some((t) => t.length >= 3 && hay(i).includes(stem(t))));
+      }
+      items = hits;
     }
     items = items.sort((a, b) => Number(b.IsBestSeller) - Number(a.IsBestSeller)).slice(0, input.limit);
     const cards = items.map((i) => ({
@@ -673,12 +690,15 @@ export const orderingTools: Pick<
     // logged-in members: pre-fill details and surface stored cards + balances, like the real "Review & pay" step
     let savedCards: { token: string; brand: string; masked: string; expiry: string; default: boolean }[] = [];
     let wallet: { sharePoints: number; sharePointsValueCents: number; voxCreditCents: number } | undefined;
-    if (ctx.conversation.customerId) {
-      const c = await ctx.vista.customer(ctx.conversation.customerId);
+    // unknown / stale customer ids (e.g. a widget reloaded after a reseed) fall back to the guest path
+    const c = ctx.conversation.customerId ? await loadCustomer(ctx) : null;
+    if (c) {
       customer ??= { name: `${c.firstName} ${c.lastName}`, email: c.email, phone: c.phone };
       savedCards = (c.savedCards ?? []) as typeof savedCards;
       if (ctx.conversation.memberId) {
-        const bal = await ctx.vista.balances(ctx.conversation.memberId);
+        const bal = await ctx.vista
+          .balances(ctx.conversation.memberId)
+          .catch(() => ({ Balances: [] as any[] }));
         const pts = bal.Balances.find((x) => x.BalanceTypeId === "SHARE_POINTS");
         const cr = bal.Balances.find((x) => x.BalanceTypeId === "VOX_REWARDS");
         wallet = {
@@ -741,7 +761,7 @@ export const orderingTools: Pick<
     // bank offers for this session — the real "Review & pay" step lists them with a card-verification box.
     // Guests never see them: bank offers require a VOX account.
     const sessionKey = (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey;
-    const isGuest = !ctx.conversation.customerId;
+    const isGuest = !c;
     const bankOffers = isGuest
       ? []
       : await ctx.vista

@@ -207,13 +207,29 @@ export const bookingTools: Pick<
       verified: verifyOwnership(ctx, b).ok,
     }));
     const first = withElig[0]!;
+    const firstRaw = bookings[0] as VistaBooking & { SwappedToBookingId?: string | null };
+    const inactive =
+      first.status === "swapped"
+        ? t(
+            ctx.lang,
+            `Booking ${first.bookingId} (${first.filmTitle}, ${first.showtimeLabel}) was swapped${firstRaw.SwappedToBookingId ? ` to booking ${firstRaw.SwappedToBookingId}` : ""}, so it is no longer valid on its own. Would you like me to look up the new booking?`,
+            `الحجز ${first.bookingId} (${first.filmTitle}، ${first.showtimeLabel}) تم استبداله${firstRaw.SwappedToBookingId ? ` بالحجز ${firstRaw.SwappedToBookingId}` : ""}، فهو لم يعد صالحاً بمفرده. هل تريد أن أبحث عن الحجز الجديد؟`,
+          )
+        : first.status === "cancelled" || first.status === "refunded"
+          ? t(
+              ctx.lang,
+              `Booking ${first.bookingId} for ${first.filmTitle} (${first.showtimeLabel}) has already been ${first.status}${first.totalCents ? `; the refund of AED ${(first.totalCents / 100).toFixed(0)} goes back to the original payment method within 5–10 working days` : ""}. Anything else I can help with?`,
+              `الحجز ${first.bookingId} لفيلم ${first.filmTitle} (${first.showtimeLabel}) تم إلغاؤه بالفعل${first.totalCents ? `؛ وسيُعاد المبلغ ${(first.totalCents / 100).toFixed(0)} درهم إلى طريقة الدفع الأصلية خلال 5–10 أيام عمل` : ""}. هل هناك شيء آخر أساعدك به؟`,
+            )
+          : null;
     const speech =
       bookings.length === 1
-        ? t(
+        ? (inactive ??
+          t(
             ctx.lang,
             `I found it: ${first.ticketCount} ticket${first.ticketCount === 1 ? "" : "s"} for ${first.filmTitle} at ${first.cinemaName}, ${first.showtimeLabel}, ${first.experience}${first.seats ? `, seats ${first.seats}` : ""}. Status: ${first.status}. What would you like to do with it?`,
             `وجدته: ${first.ticketCount} تذكرة لفيلم ${first.filmTitle} في ${first.cinemaName}، ${first.showtimeLabel}، ${first.experience}${first.seats ? `، المقاعد ${first.seats}` : ""}. الحالة: ${first.status}. ماذا تريد أن تفعل؟`,
-          )
+          ))
         : t(
             ctx.lang,
             `I found ${bookings.length} bookings: ${withElig

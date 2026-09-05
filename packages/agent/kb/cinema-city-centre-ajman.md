@@ -1,29 +1,31 @@
 ---
-title: "VOX Cinemas City Centre Shindagha — location, hours, parking, accessibility"
+title: "VOX Cinemas City Centre Ajman — location, hours, parking, accessibility"
 language: "en"
 category: "in_mall"
 source: "https://uae.voxcinemas.com/cinemas/city-centre-ajman"
 ---
 
-# VOX Cinemas City Centre Shindagha (Dubai)
+# VOX Cinemas City Centre Ajman (Ajman)
 
-Arabic name: سيتي سنتر الشندغة
-Cinema ID: 0017
+Arabic name: سيتي سنتر عجمان
+Cinema ID: 0004
 Address: Al Ettehad St, Al Jurf, Ajman, UAE
 Website: https://uae.voxcinemas.com/cinemas/city-centre-ajman
 Map coordinates: 25.3995, 55.4796
 
 ## Experiences available
+- KIDS
+- MAX
 - Standard
 
 ## Opening hours
-- Sunday: 10:00 – 01:00 (last show starts before closing)
-- Monday: 10:00 – 01:00 (last show starts before closing)
-- Tuesday: 10:00 – 01:00 (last show starts before closing)
-- Wednesday: 10:00 – 01:00 (last show starts before closing)
+- Sunday: 10:00 – 02:00 (last show starts before closing)
+- Monday: 10:00 – 02:00 (last show starts before closing)
+- Tuesday: 10:00 – 02:00 (last show starts before closing)
+- Wednesday: 10:00 – 02:00 (last show starts before closing)
 - Thursday: 10:00 – 02:00 (last show starts before closing)
 - Friday: 10:00 – 02:00 (last show starts before closing)
-- Saturday: 10:00 – 01:00 (last show starts before closing)
+- Saturday: 10:00 – 02:00 (last show starts before closing)
 
 ## Where the cinema is inside the mall
 The cinema is located on Ground Floor. Follow the 'VOX Cinemas' signs from the main atrium or ask at the mall information desk.
