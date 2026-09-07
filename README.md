@@ -36,7 +36,7 @@ ElevenLabs Agent ──webhook tools──▶ concierge-api ──▶ vista-clie
 
 ## Live demo
 
-Demo site: https://web-production-f54a1.up.railway.app · API: https://concierge-api-production-3d90.up.railway.app · details in `docs/06-live-environment.md`.
+Demo site: https://voxi-demo.up.railway.app · API: https://concierge-api-production-3d90.up.railway.app · details in `docs/06-live-environment.md`.
 
 ## Quick start
 
