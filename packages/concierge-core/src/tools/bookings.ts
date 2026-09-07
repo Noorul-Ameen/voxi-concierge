@@ -3,7 +3,7 @@ import { type BookingSnapshot, evaluateCancellation, evaluateSwap } from "@voxi/
 import { VistaClientError } from "@voxi/vista-client";
 import { enqueue, findByKey, idem, toRef } from "../actions/ledger.js";
 import { consumeConfirmation, createConfirmation } from "../services/confirmations.js";
-import { fmtDateTime, money, onDateTime, seatLabels, t } from "../services/format.js";
+import { fmtDateTime, joinList, money, onDateTime, seatLabels, t } from "../services/format.js";
 import { type ToolCtx, type ToolHandlers, type ToolResult, err, ok } from "./types.js";
 
 export type VistaBooking = Record<string, any>;
@@ -546,11 +546,33 @@ export const bookingTools: Pick<
       keepSeatsIfPossible: input.keepSeatsIfPossible,
       customer: b.Customer,
       expectedVersion: b.Version,
+      // food & drinks move with the booking (re-added to the new order at the same price)
+      concessions: (
+        (b.Concessions ?? []) as {
+          ItemId: string;
+          Quantity: number;
+          Description: string;
+          Modifiers?: { Id: string }[];
+        }[]
+      ).map((c) => ({
+        ItemId: c.ItemId,
+        Quantity: c.Quantity,
+        Description: c.Description,
+        Modifiers: (c.Modifiers ?? []).map((m) => m.Id),
+      })),
     };
+    const fnbList = summary.concessions.map((c) => `${c.Quantity}× ${c.Description}`);
+    const fnbText = fnbList.length
+      ? t(
+          ctx.lang,
+          ` Your ${joinList(fnbList, "en")} move${fnbList.length === 1 ? "s" : ""} with it.`,
+          ` وستنتقل معه ${joinList(fnbList, "ar")}.`,
+        )
+      : "";
     const spoken = t(
       ctx.lang,
-      `To confirm: I'll move your ${valid.length} ticket${valid.length === 1 ? "" : "s"} for ${b.FilmTitle} from ${fmtDateTime(b.Showtime, "en", ctx.nowLocal)} to ${fmtDateTime(target.showtime, "en", ctx.nowLocal)} (${target.experience}) at ${cname}. ${diffText} Your original booking will be cancelled once the new one is confirmed. Shall I go ahead?`,
-      `للتأكيد: سأنقل ${valid.length} تذكرة لفيلم ${b.FilmTitle} من ${fmtDateTime(b.Showtime, "ar", ctx.nowLocal)} إلى ${fmtDateTime(target.showtime, "ar", ctx.nowLocal)} (${target.experience}) في ${cname}. ${diffText} سيُلغى الحجز الأصلي بعد تأكيد الجديد. هل أتابع؟`,
+      `To confirm: I'll move your ${valid.length} ticket${valid.length === 1 ? "" : "s"} for ${b.FilmTitle} from ${fmtDateTime(b.Showtime, "en", ctx.nowLocal)} to ${fmtDateTime(target.showtime, "en", ctx.nowLocal)} (${target.experience}) at ${cname}.${fnbText} ${diffText} Your original booking will be cancelled once the new one is confirmed. Shall I go ahead?`,
+      `للتأكيد: سأنقل ${valid.length} تذكرة لفيلم ${b.FilmTitle} من ${fmtDateTime(b.Showtime, "ar", ctx.nowLocal)} إلى ${fmtDateTime(target.showtime, "ar", ctx.nowLocal)} (${target.experience}) في ${cname}.${fnbText} ${diffText} سيُلغى الحجز الأصلي بعد تأكيد الجديد. هل أتابع؟`,
     );
     const conf = await createConfirmation(ctx.db, {
       conversationId: ctx.conversation.id,

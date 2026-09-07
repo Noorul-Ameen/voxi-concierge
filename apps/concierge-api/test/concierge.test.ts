@@ -249,6 +249,7 @@ describe("Phase 1 — swaps", () => {
       paymentMethodForDifference: "VOX_CREDIT",
     });
     expect(prep.ok).toBe(true);
+    expect(prep.speech).toMatch(/move(s)? with it/); // F&B on the booking is carried over
     const r = await h.tool("swap_booking", c, {
       bookingId: "WJG8LD7",
       confirmationId: prep.data.confirmationId,
@@ -256,10 +257,13 @@ describe("Phase 1 — swaps", () => {
     });
     expect(r.ok).toBe(true);
     expect(r.data.result.newBookingId).toHaveLength(7);
+    expect(r.speech).toMatch(/moved with it/);
+    expect(r.speech).not.toMatch(/1 tickets/);
     const old = await h.tool("find_booking", c, { bookingId: "WJG8LD7", upcomingOnly: false });
     expect(old.data.bookings[0].status).toBe("swapped");
     const fresh = await h.tool("find_booking", c, { bookingId: r.data.result.newBookingId });
     expect(fresh.data.bookings[0].status).toBe("confirmed");
+    expect(fresh.data.bookings[0].concessions.length).toBe(b.concessions.length);
     expect(fresh.data.bookings[0].sessions ?? true).toBeTruthy();
   });
 });

@@ -11,7 +11,7 @@ import type { AppContext } from "../context.js";
 import { appendEvent } from "../events.js";
 import type { Catalog } from "../services/catalog.js";
 import { markJourney, updateConversation } from "../services/conversation.js";
-import { fmtDateTime, money, onDateTime, seatLabels, t } from "../services/format.js";
+import { fmtDateTime, joinList, money, onDateTime, seatLabels, t } from "../services/format.js";
 import { bookingCard, orderSummary } from "../tools/index.js";
 import { type ActionRow, complete, fail } from "./ledger.js";
 
@@ -188,6 +188,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         ticketCount: number;
         differenceCents: number;
         paymentMethodForDifference: string;
+        concessions?: { ItemId: string; Quantity: number; Description: string; Modifiers: string[] }[];
         customer: {
           FirstName: string;
           LastName: string;
@@ -216,6 +217,28 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       } catch (e) {
         step("hold_new_seats", "failed");
         throw fromVista(e);
+      }
+      // 1b. carry the food & drinks over to the new order (best effort — the swap still goes ahead without them)
+      let fnbCarried: string[] = [];
+      let fnbDropped: string[] = [];
+      if (inp.concessions?.length) {
+        try {
+          const r = await ctx.vista.addConcessions({
+            UserSessionId: usid,
+            CinemaId: inp.targetCinemaId,
+            Concessions: inp.concessions.map((c) => ({
+              ItemId: c.ItemId,
+              Quantity: c.Quantity,
+              Modifiers: c.Modifiers,
+            })),
+          });
+          order = r.Order ?? order;
+          fnbCarried = inp.concessions.map((c) => `${c.Quantity}× ${c.Description}`);
+          step("carry_fnb", "done", { items: fnbCarried });
+        } catch {
+          fnbDropped = inp.concessions.map((c) => `${c.Quantity}× ${c.Description}`);
+          step("carry_fnb", "failed", { items: fnbDropped });
+        }
       }
       // 2. pay the new order (card on file simulated via token / wallet / points)
       const memberId = inp.customer.MemberId;
@@ -296,15 +319,34 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
               `The new tickets (${money(order.TotalValueCents, "en")}) were charged and ${money(refund.AmountCents, "en")} from the original booking went ${memberId ? "to your VOX credit" : "back to your card"}.`,
               `تم خصم ${money(order.TotalValueCents, "ar")} للتذاكر الجديدة وأُعيد ${money(refund.AmountCents, "ar")} من الحجز الأصلي ${memberId ? "إلى رصيد فوكس" : "إلى بطاقتك"}.`,
             )
-          : t(
+          : refund.AmountCents === order.TotalValueCents
+            ? t(
+                ctx.lang,
+                `Same total (${money(order.TotalValueCents, "en")}): the original payment was refunded ${memberId ? "to your VOX credit" : "to your card"} and the new booking charged the same amount, so nothing changes for you.`,
+                `نفس الإجمالي (${money(order.TotalValueCents, "ar")}): أُعيد المبلغ الأصلي ${memberId ? "إلى رصيد فوكس" : "إلى بطاقتك"} وخُصم المبلغ نفسه للحجز الجديد، فلا يتغير شيء بالنسبة لك.`,
+              )
+            : t(
+                ctx.lang,
+                `${money(refund.AmountCents, "en")} from the original booking went ${memberId ? "to your VOX credit" : "back to your card"} and the new tickets were ${money(order.TotalValueCents, "en")}.`,
+                `أُعيد ${money(refund.AmountCents, "ar")} من الحجز الأصلي ${memberId ? "إلى رصيد فوكس" : "إلى بطاقتك"} وكلفت التذاكر الجديدة ${money(order.TotalValueCents, "ar")}.`,
+              );
+      const fnbText = fnbCarried.length
+        ? t(
+            ctx.lang,
+            ` Your ${joinList(fnbCarried, "en")} moved with it.`,
+            ` وانتقلت معه ${joinList(fnbCarried, "ar")}.`,
+          )
+        : fnbDropped.length
+          ? t(
               ctx.lang,
-              `${money(refund.AmountCents, "en")} from the original booking went ${memberId ? "to your VOX credit" : "back to your card"} and the new tickets were ${money(order.TotalValueCents, "en")}.`,
-              `أُعيد ${money(refund.AmountCents, "ar")} من الحجز الأصلي ${memberId ? "إلى رصيد فوكس" : "إلى بطاقتك"} وكلفت التذاكر الجديدة ${money(order.TotalValueCents, "ar")}.`,
-            );
+              ` I couldn't move your ${joinList(fnbDropped, "en")} to the new booking — you can add them again or buy them at the counter.`,
+              ` لم أتمكن من نقل ${joinList(fnbDropped, "ar")} إلى الحجز الجديد — يمكنك إضافتها مجدداً أو شراؤها من المنفذ.`,
+            )
+          : "";
       const speech = t(
         ctx.lang,
-        `Swapped! Your new booking is ${newBooking.VistaBookingId}: ${inp.ticketCount} tickets for ${inp.filmTitle}, ${inp.targetExperience} at ${await cname(ctx, inp.targetCinemaId)} ${onDateTime(inp.targetShowtime, "en", ctx.nowLocal)}, seats ${seats}. ${diffText} The original booking ${inp.bookingId} is cancelled and new tickets are on their way by email.`,
-        `تم التبديل! حجزك الجديد ${newBooking.VistaBookingId}: ${inp.ticketCount} تذاكر لفيلم ${inp.filmTitle}، ${inp.targetExperience} في ${await cname(ctx, inp.targetCinemaId)} بتاريخ ${fmtDateTime(inp.targetShowtime, "ar", ctx.nowLocal)}، المقاعد ${seats}. ${diffText} تم إلغاء الحجز الأصلي ${inp.bookingId} وستصلك التذاكر الجديدة بالبريد.`,
+        `Swapped! Your new booking is ${newBooking.VistaBookingId}: ${inp.ticketCount} ticket${inp.ticketCount === 1 ? "" : "s"} for ${inp.filmTitle}, ${inp.targetExperience} at ${await cname(ctx, inp.targetCinemaId)} ${onDateTime(inp.targetShowtime, "en", ctx.nowLocal)}, seats ${seats}.${fnbText} ${diffText} The original booking ${inp.bookingId} is cancelled and new tickets are on their way by email.`,
+        `تم التبديل! حجزك الجديد ${newBooking.VistaBookingId}: ${inp.ticketCount} تذكرة لفيلم ${inp.filmTitle}، ${inp.targetExperience} في ${await cname(ctx, inp.targetCinemaId)} بتاريخ ${fmtDateTime(inp.targetShowtime, "ar", ctx.nowLocal)}، المقاعد ${seats}.${fnbText} ${diffText} تم إلغاء الحجز الأصلي ${inp.bookingId} وستصلك التذاكر الجديدة بالبريد.`,
       );
       return {
         result: {
@@ -394,7 +436,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cname(ctx, sess.cinemaId));
       const speech = t(
         ctx.lang,
-        `Done — ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} added and I've held seats ${s.seats} (${s.tickets[0]?.description.includes("PREMIUM") ? "premium view" : "regular"}). Subtotal ${money(s.totalCents, "en")}.${offerNotes.length ? ` ${offerNotes.join(" ")}` : ""} Happy with those seats, or would you like to pick from the map? You can also add popcorn and drinks.`,
+        `Done — ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} added and I've held seats ${s.seats} (${/PREFERRED/i.test(s.tickets[0]?.description ?? "") ? "Preferred View" : /PREMIUM/i.test(s.tickets[0]?.description ?? "") ? "Premium" : "Regular"}). Subtotal ${money(s.totalCents, "en")}.${offerNotes.length ? ` ${offerNotes.join(" ")}` : ""} Happy with those seats, or would you like to pick from the map? You can also add popcorn and drinks.`,
         `تم — أضفت ${s.tickets.length} تذكرة وحجزت المقاعد ${s.seats}. الإجمالي ${money(s.totalCents, "ar")}.${offerNotes.length ? ` ${offerNotes.join(" ")}` : ""} هل تناسبك هذه المقاعد أم تفضل الاختيار من الخريطة؟ يمكنك أيضاً إضافة الفشار والمشروبات.`,
       );
       await appendEvent(ctx.db, ctx.events, a.conversationId, "order.updated", {

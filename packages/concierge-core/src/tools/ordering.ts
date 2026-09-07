@@ -202,13 +202,25 @@ export const orderingTools: Pick<
         ),
       );
     const tabs = [...new Set(cards.map((c) => c.tab))];
+    // spoken price = what the tile shows: "from AED 21" when a size modifier makes it cheaper than the base price
+    const spokenPrice = (c: (typeof cards)[number]) => {
+      const sizes = c.modifiers.find((g: { name: string }) => /size/i.test(g.name));
+      const from = sizes?.options?.length
+        ? Math.min(
+            ...sizes.options.map((o: { priceCents: number }) => (c.priceCents ?? 0) + (o.priceCents ?? 0)),
+          )
+        : null;
+      return from !== null && from < (c.priceCents ?? 0)
+        ? t(ctx.lang, `from ${money(from, ctx.lang)}`, `من ${money(from, "ar")}`)
+        : c.price;
+    };
     const speech =
       input.tab || input.query || input.dietary?.length
         ? t(
             ctx.lang,
-            `Here's what I found: ${joinList(cards.slice(0, 4).map((c) => `${c.name} at ${c.price}`))}${cards.length > 4 ? ` and ${cards.length - 4} more` : ""}. Want to add any to your order?`,
+            `Here's what I found: ${joinList(cards.slice(0, 4).map((c) => `${c.name} ${spokenPrice(c)}`))}${cards.length > 4 ? ` and ${cards.length - 4} more` : ""}. Want to add any to your order?`,
             `إليك ما وجدت: ${joinList(
-              cards.slice(0, 4).map((c) => `${c.name} بـ ${c.price}`),
+              cards.slice(0, 4).map((c) => `${c.name} ${spokenPrice(c)}`),
               "ar",
             )}. هل تريد إضافة شيء إلى طلبك؟`,
           )
@@ -218,7 +230,7 @@ export const orderingTools: Pick<
               cards
                 .filter((c) => c.isBestSeller)
                 .slice(0, 3)
-                .map((c) => `${c.name} (${c.price})`),
+                .map((c) => `${c.name} (${spokenPrice(c)})`),
             )}. I can filter by vegetarian, vegan or gluten-free too.`,
             `تشمل القائمة ${joinList(tabs.slice(0, 5), "ar")}${tabs.length > 5 ? " وغيرها" : ""}. الأكثر مبيعاً: ${joinList(
               cards

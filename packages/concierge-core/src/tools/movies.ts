@@ -486,8 +486,21 @@ export const movieTools: Pick<
       spoken = `${film.title}${!multiCinema ? ` ${ar ? "في" : "at"} ${cinemasUsed[0]}${items[0]?.distanceKm != null ? ` (${items[0].distanceKm} ${ar ? "كم" : "km"})` : ""}` : nearby.length ? ` ${cinemaLabel}` : ""} — ${parts.join(ar ? "؛ " : "; ")}`;
     } else {
       // many films (cinema/time query): "Tomorrow at City Centre Deira after 8 pm: Immortal 10:50 pm, Insidious 8:00 pm GOLD, …"
+      // per film, lead with a daytime/evening slot; late-night prints (before 6 am) come last — and films whose
+      // only slots are late-night go to the end of the spoken list
       const byFilm = new Map<string, typeof items>();
       for (const it of items) byFilm.set(it.filmTitle, [...(byFilm.get(it.filmTitle) ?? []), it]);
+      const lateNight = (i: (typeof items)[number]) => i.showtime.slice(11, 13) < "06";
+      for (const [k, its] of byFilm)
+        byFilm.set(
+          k,
+          [...its].sort((a, b) => Number(lateNight(a)) - Number(lateNight(b))),
+        );
+      const orderedFilms = [...byFilm.entries()].sort(
+        (a, b) => Number(lateNight(a[1][0]!)) - Number(lateNight(b[1][0]!)),
+      );
+      byFilm.clear();
+      for (const [k, v] of orderedFilms) byFilm.set(k, v);
       const cinemasUsed = [...new Set(items.map((i) => i.cinemaName))];
       const top = [...byFilm.entries()].slice(0, 3);
       const parts = top.map(

@@ -333,7 +333,19 @@ export const GetRecommendationsInput = z.object({
 });
 
 export const TransferToAgentInput = z.object({
-  reason: z.enum(["customer_request", "sentiment", "fallback", "complaint", "policy"]),
+  reason: z
+    .string()
+    .transform((r) => {
+      const x = r.toLowerCase();
+      if (/(request|asked|human|person|agent)/.test(x)) return "customer_request";
+      if (/(sentiment|frustrat|angry|upset|unhappy)/.test(x)) return "sentiment";
+      if (/(policy|exception|refund)/.test(x)) return "policy";
+      if (/(fallback|fail|unable|cannot|can't)/.test(x)) return "fallback";
+      return ["customer_request", "sentiment", "fallback", "complaint", "policy"].includes(x)
+        ? x
+        : "complaint";
+    })
+    .describe("customer_request | sentiment | fallback | complaint | policy"),
   summary: z.string().optional().describe("Agent-written summary; the middleware appends structured context"),
   idempotencyKey: z.string().optional(),
 });
