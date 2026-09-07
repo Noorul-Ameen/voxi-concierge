@@ -178,7 +178,10 @@ export function Concierge({ initialLang = "en", onExpand, onAuth }: { initialLan
       push({ kind: "note", text: lang === "ar" ? "انتهت المحادثة" : "Conversation ended" });
       push({ kind: "feedback" });
     },
-    onError: (m: string) => push({ kind: "note", text: `⚠️ ${m}` }),
+    onError: (m: unknown, ctx?: unknown) => {
+      const detail = typeof m === "string" ? m : (m as { message?: string })?.message ?? (ctx as { reason?: string })?.reason ?? "";
+      push({ kind: "note", text: `⚠️ ${detail || (lang === "ar" ? "تعذّر الاتصال بفوكسي — حاول مجدداً" : "Could not connect to Voxi — please try again")}` });
+    },
     onMessage: (m: { source: string; message: string }) => {
       if (!m.message) return;
       push({ kind: "msg", role: m.source === "user" ? "user" : "agent", text: m.message });
