@@ -1,8 +1,15 @@
 # 04 — Demo script (Phase 1 + Phase 2 in ~25 minutes)
 
-Run `pnpm db:seed` before the demo so every fixture is in its starting state. Open the demo page
-(`http://localhost:5173` or the Lovable preview). Voice mode needs the ElevenLabs agent deployed
-(`docs/02-runbook.md §6`); text mode works standalone.
+Run `pnpm db:seed` (or reseed production, `docs/06-live-environment.md`) before the demo so every fixture is in
+its starting state. Open https://voxi-demo.up.railway.app (or `http://localhost:5173`). Voice mode needs the
+ElevenLabs agent deployed (`docs/02-runbook.md §6`); text mode works standalone.
+
+**Where to log in.** The public page deliberately shows no demo accounts. Sign in either with the **Log in**
+button at the top-right of the page or the **Log in** button in the Voxi widget header — both open the same
+sheet inside the widget: email, mobile number or member id + PIN. The page header then shows
+"Hi <name> · Log out". Alternatively stay a guest and let Voxi ask for your details, or tell Voxi "log me in"
+during the conversation (`login_member` tool). The credentials below are only documented here and in
+`docs/06-live-environment.md`.
 
 ## Demo accounts (all dummy)
 
