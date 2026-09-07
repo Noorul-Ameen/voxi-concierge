@@ -8,7 +8,7 @@ ElevenLabs agent deployed (`docs/02-runbook.md §6`); text mode works standalone
 button at the top-right of the page or the **Log in** button in the Voxi widget header — both open the same
 sheet inside the widget: email, mobile number or member id + PIN. The page header then shows
 "Hi <name> · Log out". Alternatively stay a guest and let Voxi ask for your details, or tell Voxi "log me in"
-during the conversation (`login_member` tool). The credentials below are only documented here and in
+during the conversation (`login_customer` tool). The credentials below are only documented here and in
 `docs/06-live-environment.md`.
 
 ## Demo accounts (all dummy)
