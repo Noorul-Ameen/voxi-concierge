@@ -6,6 +6,12 @@
  *   pnpm scrape --site https://ksa.voxcinemas.com --market SA   # other markets share the same markup
  *
  * Output: packages/db/src/seed/data/vox-<market>.json (consumed by `pnpm db:seed`).
+ *
+ * When the scraper host is blocked by the site's bot protection (503/403), capture from a real browser instead:
+ *   1. open https://uae.voxcinemas.com/movies/whatson and run `browser-capture.js` in the console (same-origin fetches);
+ *   2. export `JSON.stringify({sess: __packed.sess, names: __cap.cinemaNames, films: __cap.films, capturedAt, today})`;
+ *   3. `node merge-capture.cjs <export.json> capturedAt.txt` rebuilds out/vox-uae-raw.json (cinema pages are kept);
+ *   4. `pnpm scrape --from-snapshot --captured-at "$(cat capturedAt.txt)"`, then re-apply any manual cinema fixes.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
