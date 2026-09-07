@@ -4,7 +4,7 @@
  */
 import { useConversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type Lang, type Session, type UiHint, type WidgetEvent, createSession, devTool, getSignedUrl, getState, linkConversation, sendCommand, subscribe } from "../lib/api";
+import { type Customer, type Lang, type Session, type UiHint, type WidgetEvent, createSession, devTool, getSignedUrl, getState, linkConversation, sendCommand, subscribe, widgetLogin, widgetLogout } from "../lib/api";
 import { isRtl, t } from "../lib/i18n";
 import { type CardActions, Cards, Feedback } from "./Cards";
 import { type Loc, LocationBar } from "./LocationBar";
@@ -19,9 +19,60 @@ type Item = ItemBody & { id: string };
 let idc = 0;
 const nid = () => `i${++idc}`;
 
-export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang; onExpand?: (b: boolean) => void }) {
+export function Concierge({ initialLang = "en", onExpand, onAuth }: { initialLang?: Lang; onExpand?: (b: boolean) => void; onAuth?: (c: Customer | null) => void }) {
   const [lang, setLang] = useState<Lang>(initialLang);
   const [session, setSession] = useState<Session | null>(null);
+  // ---------- sign-in (page header "Log in" and the widget's own link open the same sheet) ----------
+  const [customer, setCustomer] = useState<Customer | null>(null);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authErr, setAuthErr] = useState<string | null>(null);
+  useEffect(() => {
+    const openIt = () => {
+      setOpen(true);
+      setAuthOpen(true);
+    };
+    const logoutIt = () => void doLogout();
+    window.addEventListener("voxi:login", openIt);
+    window.addEventListener("voxi:logout", logoutIt);
+    return () => {
+      window.removeEventListener("voxi:login", openIt);
+      window.removeEventListener("voxi:logout", logoutIt);
+    };
+  }); // eslint-disable-line react-hooks/exhaustive-deps
+  const doLogin = async (identifier: string, pin: string) => {
+    setAuthBusy(true);
+    setAuthErr(null);
+    try {
+      const s = session ?? (await createSession({ language: lang, modality: "text" }));
+      const r = await widgetLogin(s, identifier, pin);
+      if (!r.ok || !r.customer) {
+        setAuthErr(r.error ?? (lang === "ar" ? "تعذّر تسجيل الدخول" : "Could not sign in"));
+        return;
+      }
+      const next = { ...s, token: r.token ?? s.token, isLoggedIn: true, dynamicVariables: r.dynamicVariables ?? s.dynamicVariables };
+      setSession(next);
+      setCustomer(r.customer);
+      onAuth?.(r.customer);
+      setAuthOpen(false);
+      push({ kind: "note", text: lang === "ar" ? `تم تسجيل الدخول باسم ${r.customer.firstName}` : `Signed in as ${r.customer.firstName}` });
+      if (statusRef.current === "connected")
+        conversation.sendContextualUpdate(
+          `The guest has just signed in as ${r.customer.firstName} ${r.customer.lastName} (SHARE ${r.customer.tier}, member ${r.customer.memberId ?? ""}). Treat them as logged in from now on: call get_session_context for their details.`,
+        );
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+  const doLogout = async () => {
+    if (session) {
+      const r = await widgetLogout(session).catch(() => ({ ok: false }) as { ok: boolean; token?: string; dynamicVariables?: Record<string, string> });
+      if (r.ok) setSession({ ...session, token: r.token ?? session.token, isLoggedIn: false, dynamicVariables: r.dynamicVariables ?? session.dynamicVariables });
+      if (statusRef.current === "connected") conversation.sendContextualUpdate("The guest has signed out. Treat them as a guest from now on.");
+    }
+    setCustomer(null);
+    onAuth?.(null);
+  };
   const [items, setItems] = useState<Item[]>([]);
   const [mode, setMode] = useState<"idle" | "voice" | "text">("idle");
   const [humanMode, setHumanMode] = useState<{ transferId: string; agentName?: string; status: string } | null>(null);
@@ -344,6 +395,9 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
             {humanMode ? `${t(lang, "human")}${humanMode.agentName ? ` · ${humanMode.agentName}` : ""}` : statusText || t(lang, "subtitle")}
           </small>
         </div>
+        <button className="iconbtn auth" onClick={() => (customer ? void doLogout() : setAuthOpen(true))} title={customer ? (lang === "ar" ? "تسجيل الخروج" : "Log out") : lang === "ar" ? "تسجيل الدخول" : "Log in"}>
+          {customer ? `${customer.firstName} · ${lang === "ar" ? "خروج" : "Log out"}` : lang === "ar" ? "تسجيل الدخول" : "Log in"}
+        </button>
         <div className="langtoggle" role="group" aria-label="language" title={`events: ${sseStatus}`}>
           <button className={lang === "en" ? "on" : ""} onClick={() => { setLang("en"); if (connected) conversation.sendUserMessage("Please continue in English."); }}>
             EN
@@ -366,6 +420,30 @@ export function Concierge({ initialLang = "en", onExpand }: { initialLang?: Lang
       </div>
 
       <LocationBar lang={lang} loc={loc} onChange={changeLoc} />
+      {authOpen ? (
+        <form
+          className="authsheet"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const f = new FormData(e.currentTarget);
+            void doLogin(String(f.get("identifier") ?? ""), String(f.get("pin") ?? ""));
+          }}
+        >
+          <b>{lang === "ar" ? "تسجيل الدخول إلى حساب شير" : "Sign in to your SHARE account"}</b>
+          <input name="identifier" autoFocus placeholder={lang === "ar" ? "البريد الإلكتروني أو رقم الجوال أو رقم العضوية" : "Email, mobile number or member id"} autoComplete="username" />
+          <input name="pin" type="password" inputMode="numeric" placeholder="PIN" autoComplete="current-password" />
+          {authErr ? <div className="err">{authErr}</div> : null}
+          <div className="row">
+            <button className="btn cta" type="submit" disabled={authBusy}>
+              {authBusy ? t(lang, "processing") : lang === "ar" ? "دخول" : "Sign in"}
+            </button>
+            <button className="btn ghost" type="button" onClick={() => setAuthOpen(false)}>
+              {lang === "ar" ? "إلغاء" : "Cancel"}
+            </button>
+          </div>
+          <small>{lang === "ar" ? "أو ابدأ كضيف — يمكن لفوكسي تسجيل دخولك أثناء المحادثة أيضاً." : "Or continue as a guest — Voxi can also sign you in during the conversation."}</small>
+        </form>
+      ) : null}
 
       <div className="widget-body" ref={bodyRef}>
         {mode !== "idle" && !items.length && !connected ? (

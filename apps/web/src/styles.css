@@ -552,3 +552,15 @@ table.grid tr.sel { background: var(--vox-blue-tint); }
 .sheet label.method, .sheet label.check { text-transform: none; letter-spacing: 0; color: var(--charcoal); font-size: 13px; }
 .sheet .row2 > .field, .sheet input { min-width: 0; }
 .newcard { min-width: 0; }
+
+/* ---- sign-in ---- */
+.iconbtn.auth { width: auto; padding: 0 10px; font-weight: 600; white-space: nowrap; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+.authsheet { display: grid; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--line); background: #f5fbfe; }
+.authsheet b { font-size: 13px; color: var(--charcoal); }
+.authsheet input { border: 1px solid var(--line-2); border-radius: 9px; padding: 9px 11px; font-size: 14px; font: inherit; background: #fff; }
+.authsheet input:focus { outline: none; border-color: var(--vox-blue); box-shadow: 0 0 0 3px rgba(0, 158, 220, 0.15); }
+.authsheet .err { color: var(--danger); font-size: 12px; }
+.authsheet .row { display: flex; gap: 8px; }
+.authsheet small { color: var(--muted); font-size: 12px; }
+.topbar nav .login { border: 1px solid rgba(255, 255, 255, 0.7); border-radius: 999px; padding: 7px 14px; margin-inline-start: 6px; opacity: 1; }
+.topbar nav .login:hover { background: #fff; color: var(--vox-blue); }

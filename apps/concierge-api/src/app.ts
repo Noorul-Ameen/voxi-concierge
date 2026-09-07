@@ -28,6 +28,7 @@ import {
   WidgetCommand,
 } from "@voxi/contracts";
 import { schema as S, nowLocalIso, prefixedId } from "@voxi/db";
+import { VistaClientError } from "@voxi/vista-client";
 import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
@@ -323,6 +324,101 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         customerId: conversation.customerId ?? "",
         memberId: conversation.memberId ?? "",
         channel: conversation.channel,
+      },
+    });
+  });
+
+  /** Page / widget sign-in (member id, email or phone + PIN) — same check as the agent's login_customer tool. */
+  api.post("/widget/login", async (c) => {
+    const w = await verifyWidget(c);
+    if (!w) return c.json({ error: "unauthorized" }, 401);
+    const body = (await c.req.json().catch(() => ({}))) as { identifier?: string; pin?: string };
+    const id = String(body.identifier ?? "").trim();
+    if (!id || !body.pin)
+      return c.json(
+        { ok: false, error: "Enter your email, mobile number or SHARE member id and your PIN." },
+        400,
+      );
+    const req = id.includes("@")
+      ? { Email: id }
+      : /^SHR/i.test(id)
+        ? { MemberId: id.toUpperCase() }
+        : { Phone: id };
+    try {
+      const r = await app.vista.validateMember({ ...req, Pin: String(body.pin) });
+      const m = r.Member;
+      await updateConversation(app.db, w.conversationId, {
+        customerId: m.CustomerId,
+        memberId: m.MemberId,
+        isLoggedIn: true,
+      });
+      const cust = await app.vista.customer(m.CustomerId);
+      const conv = (
+        await app.db.select().from(S.conversations).where(eq(S.conversations.id, w.conversationId))
+      )[0];
+      const token = await widgetToken({
+        conversationId: w.conversationId,
+        customerId: m.CustomerId,
+        memberId: m.MemberId,
+        language: conv?.language,
+      });
+      return c.json({
+        ok: true,
+        token,
+        customer: {
+          id: cust.id,
+          firstName: cust.firstName,
+          lastName: cust.lastName,
+          memberId: cust.memberId,
+          tier: cust.tier,
+          sharePoints: cust.sharePoints,
+          voxCreditCents: cust.voxRewardsCents,
+        },
+        dynamicVariables: {
+          conversationId: w.conversationId,
+          language: conv?.language ?? "en",
+          customerId: m.CustomerId,
+          memberId: m.MemberId ?? "",
+          channel: conv?.channel ?? "web",
+        },
+      });
+    } catch (e) {
+      const code = e instanceof VistaClientError && e.kind === "result" ? e.extendedResultCode : 0;
+      return c.json(
+        {
+          ok: false,
+          error:
+            code === 401
+              ? "That PIN doesn't match. Please try again."
+              : code === 404
+                ? "We couldn't find an account with those details."
+                : "Sign-in is unavailable right now. Please try again.",
+        },
+        code === 404 ? 404 : 401,
+      );
+    }
+  });
+  api.post("/widget/logout", async (c) => {
+    const w = await verifyWidget(c);
+    if (!w) return c.json({ error: "unauthorized" }, 401);
+    await updateConversation(app.db, w.conversationId, {
+      customerId: null,
+      memberId: null,
+      isLoggedIn: false,
+    });
+    const conv = (
+      await app.db.select().from(S.conversations).where(eq(S.conversations.id, w.conversationId))
+    )[0];
+    const token = await widgetToken({ conversationId: w.conversationId, language: conv?.language });
+    return c.json({
+      ok: true,
+      token,
+      dynamicVariables: {
+        conversationId: w.conversationId,
+        language: conv?.language ?? "en",
+        customerId: "",
+        memberId: "",
+        channel: conv?.channel ?? "web",
       },
     });
   });

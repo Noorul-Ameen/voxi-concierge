@@ -109,3 +109,13 @@ export async function devTool(session: Session, name: string, input: Record<stri
   const res = await fetch(`${API_BASE}/widget/dev-tool`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${session.token}` }, body: JSON.stringify({ name, input }) });
   return (await res.json()) as { ok: boolean; speech?: string; error?: { message: string }; data?: any };
 }
+
+export type Customer = { id: string; firstName: string; lastName: string; memberId: string | null; tier: string; sharePoints: number; voxCreditCents: number };
+export async function widgetLogin(session: Session, identifier: string, pin: string): Promise<{ ok: boolean; error?: string; token?: string; customer?: Customer; dynamicVariables?: Record<string, string> }> {
+  const r = await fetch(`${API_BASE}/widget/login`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${session.token}` }, body: JSON.stringify({ identifier, pin }) });
+  return (await r.json()) as { ok: boolean; error?: string; token?: string; customer?: Customer; dynamicVariables?: Record<string, string> };
+}
+export async function widgetLogout(session: Session): Promise<{ ok: boolean; token?: string; dynamicVariables?: Record<string, string> }> {
+  const r = await fetch(`${API_BASE}/widget/logout`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${session.token}` }, body: "{}" });
+  return (await r.json()) as { ok: boolean; token?: string; dynamicVariables?: Record<string, string> };
+}
