@@ -562,5 +562,5 @@ table.grid tr.sel { background: var(--vox-blue-tint); }
 .authsheet .err { color: var(--danger); font-size: 12px; }
 .authsheet .row { display: flex; gap: 8px; }
 .authsheet small { color: var(--muted); font-size: 12px; }
-.topbar nav .login { border: 1px solid rgba(255, 255, 255, 0.7); border-radius: 999px; padding: 7px 14px; margin-inline-start: 6px; opacity: 1; }
+.topbar nav .login { border: 1px solid rgba(255, 255, 255, 0.7); border-radius: 999px; padding: 7px 14px; margin-inline-start: 6px; opacity: 1; white-space: nowrap; }
 .topbar nav .login:hover { background: #fff; color: var(--vox-blue); }
