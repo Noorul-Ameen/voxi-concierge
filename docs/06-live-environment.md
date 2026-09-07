@@ -2,7 +2,7 @@
 
 | Component | Where | URL / id |
 |---|---|---|
-| Demo site (widget + dashboard) | Railway `web` | https://voxi-demo.up.railway.app (dashboard at `/dashboard`) |
+| Demo site (widget + dashboard) | Railway `web` | **https://voxi-demo.up.railway.app** (dashboard at `/dashboard`) — renamed from `web-production-f54a1.up.railway.app` on 7 Sep 2026; the old link no longer resolves |
 | Concierge API | Railway `concierge-api` | https://concierge-api-production-3d90.up.railway.app (`/healthz`, `/openapi.json`) |
 | Vista mock, worker, Postgres | Railway (private network only) | `vista-mock.railway.internal:4010`, `postgres.railway.internal:5432` |
 | Railway project | workspace "noorul-ameen's Projects" | project `voxi-concierge` (id `52e8f8a4-19fd-41a1-8978-6c60ee8f930a`) |
@@ -19,7 +19,7 @@
 
 ## Not yet configured (optional)
 - ElevenLabs **post-call webhook** → `https://concierge-api-production-3d90.up.railway.app/webhooks/elevenlabs` with secret `ELEVENLABS_WEBHOOK_SECRET` (Railway variable). Set in the ElevenLabs console under Agents → Settings → Post-call webhook (needs workspace admin). Until then the dashboard is fed by the concierge's own event log, which already covers tool calls, actions, journeys, transfers, complaints and feedback; the webhook adds ElevenLabs' transcript, sentiment and evaluation results.
-- `ELEVENLABS_API_KEY` on Railway enables signed URLs (private agent) — currently the agent is public with an origin allowlist (`voxi-demo.up.railway.app`, `localhost`, `elevenlabs.io`).
+- `ELEVENLABS_API_KEY` on Railway enables signed URLs (private agent) — currently the agent is public with an origin allowlist is empty (any origin; the agent is public).
 - Genesys Open Messaging (`HANDOVER_ADAPTER=genesys`, `GENESYS_*`) — simulated adapter is active.
 
 ## Real-site alignment (4 Sep 2026)
