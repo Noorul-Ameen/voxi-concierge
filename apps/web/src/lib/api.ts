@@ -3,7 +3,7 @@ export type Lang = "en" | "ar";
 declare global {
   interface Window {
     /** Set by the embed loader (or a host page) before the widget mounts: `{ apiBase: "https://…/api" }`. */
-    VoxiConfig?: { apiBase?: string; lang?: Lang; open?: boolean };
+    VoxiConfig?: { apiBase?: string; lang?: Lang; open?: boolean; theme?: string; vars?: Record<string, string> };
   }
 }
 export const API_BASE = (typeof window !== "undefined" && window.VoxiConfig?.apiBase) || (import.meta.env.VITE_API_BASE as string | undefined) || "/api";

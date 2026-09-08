@@ -4,7 +4,8 @@
  *   <script src="https://voxi-demo.up.railway.app/embed/voxi.js" charset="utf-8" defer></script>
  *
  * Optional attributes on the script tag: data-lang="en|ar", data-open="true" (start expanded instead of as the
- * launcher pill), data-api="https://…/api" (defaults to the origin the script was loaded from + /api). Optional: window.VoxiConfig = { apiBase, lang } before the script.
+ * launcher pill), data-theme="navy" (colour preset; see the theme blocks in styles.css), data-api="https://…/api"
+ * (defaults to the origin the script was loaded from + /api). window.VoxiConfig.vars can override any CSS variable. Optional: window.VoxiConfig = { apiBase, lang } before the script.
  * The widget renders inside a Shadow DOM so the host page's CSS and the widget's CSS never interfere.
  * Exposes window.Voxi = { open(), login(), logout(), unmount() }.
  */
@@ -26,6 +27,8 @@ window.VoxiConfig = {
   apiBase: window.VoxiConfig?.apiBase ?? script?.dataset.api ?? `${scriptOrigin}/api`,
   lang: (window.VoxiConfig?.lang ?? (script?.dataset.lang as Lang | undefined) ?? "en") as Lang,
   open: window.VoxiConfig?.open ?? script?.dataset.open === "true",
+  theme: window.VoxiConfig?.theme ?? script?.dataset.theme,
+  vars: window.VoxiConfig?.vars,
 };
 
 const FONTS = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;600;700&display=swap";
@@ -48,6 +51,9 @@ function mount() {
   shadow.appendChild(style);
   const root = document.createElement("div");
   root.dir = window.VoxiConfig?.lang === "ar" ? "rtl" : "ltr";
+  // Theme: a named preset from styles.css ("navy", …) and/or individual CSS variables (e.g. { "--accent": "#19c4d3" }).
+  if (window.VoxiConfig?.theme) root.dataset.voxiTheme = window.VoxiConfig.theme;
+  for (const [k, v] of Object.entries(window.VoxiConfig?.vars ?? {})) if (k.startsWith("--")) root.style.setProperty(k, v);
   shadow.appendChild(root);
   const app = ReactDOM.createRoot(root);
   app.render(React.createElement(Concierge, { initialLang: window.VoxiConfig?.lang ?? "en", initialOpen: window.VoxiConfig?.open ?? false }));
