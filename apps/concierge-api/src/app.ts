@@ -824,7 +824,11 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
   });
   void gte;
   void and;
-  return api;
+  // Also answer under /api/* so an embed configured with "<api host>/api" (the demo site's proxy shape) works too.
+  const root = new Hono();
+  root.route("/api", api);
+  root.route("/", api);
+  return root;
 }
 
 function redact(input: Record<string, unknown>) {
