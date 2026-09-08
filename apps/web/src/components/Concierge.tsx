@@ -2,7 +2,7 @@
  * Voxi widget: ElevenLabs conversation (voice or text) + concierge SSE stream + rich cards.
  * All state changes go through the agent/concierge; the widget never talks to Vista directly.
  */
-import { useConversation } from "@elevenlabs/react";
+import { type DisconnectionDetails, useConversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Customer, type Lang, type Session, type UiHint, type WidgetEvent, createSession, devTool, getSignedUrl, getState, linkConversation, sendCommand, subscribe, widgetLogin, widgetLogout } from "../lib/api";
 import { isRtl, t } from "../lib/i18n";
@@ -176,9 +176,11 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const conversation = useConversation({
     clientTools,
     onConnect: () => push({ kind: "note", text: lang === "ar" ? "متصل" : "Connected" }),
-    onDisconnect: () => {
+    onDisconnect: (d?: DisconnectionDetails) => {
       setMode("idle");
-      push({ kind: "note", text: lang === "ar" ? "انتهت المحادثة" : "Conversation ended" });
+      const why = d?.reason === "error" ? d.message : d?.reason === "agent" && d.context?.code && d.context.code !== 1000 ? `${d.context.code} ${d.context.reason ?? ""}`.trim() : "";
+      if (why) push({ kind: "note", text: `⚠️ ${lang === "ar" ? "انقطع الاتصال" : "Connection closed"}: ${why}` });
+      else push({ kind: "note", text: lang === "ar" ? "انتهت المحادثة" : "Conversation ended" });
       push({ kind: "feedback" });
     },
     onError: (m: unknown, ctx?: unknown) => {
@@ -301,9 +303,14 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       // `textOnly` at the top level selects the SDK's text transport (no microphone / AudioContext at all);
       // the conversation override only tells the agent side. Without it, text mode still waits on a mic permission.
       const origin = { serverLocation, textOnly: m === "text" };
-      if (signedUrl)
-        await conversation.startSession({ signedUrl, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never);
-      else await conversation.startSession({ agentId, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never);
+      const started = signedUrl
+        ? conversation.startSession({ signedUrl, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never)
+        : conversation.startSession({ agentId, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never);
+      // Watchdog: the SDK can sit in "connecting" forever when the socket is blocked (CSP, proxy, offline).
+      await Promise.race([
+        started,
+        new Promise((_, rej) => setTimeout(() => rej(new Error(lang === "ar" ? "انتهت مهلة الاتصال — تحقق من الشبكة أو إعدادات الصفحة المضيفة" : "Connection timed out — check the network or the host page's security policy (websocket to elevenlabs.io must be allowed)")), 20000)),
+      ]);
     } catch (e) {
       if (m === "voice" && String(e).match(/NotAllowed|Permission|denied/i)) {
         push({ kind: "note", text: t(lang, "micDenied") });
