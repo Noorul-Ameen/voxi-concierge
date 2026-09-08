@@ -1,6 +1,12 @@
 /** Concierge API client for the widget: session token, commands, SSE events, reporting. */
 export type Lang = "en" | "ar";
-export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api";
+declare global {
+  interface Window {
+    /** Set by the embed loader (or a host page) before the widget mounts: `{ apiBase: "https://…/api" }`. */
+    VoxiConfig?: { apiBase?: string; lang?: Lang; open?: boolean };
+  }
+}
+export const API_BASE = (typeof window !== "undefined" && window.VoxiConfig?.apiBase) || (import.meta.env.VITE_API_BASE as string | undefined) || "/api";
 
 export type UiHint = { type: string; title?: string; items: Record<string, any>[]; actions?: { label: string; value: string; style?: string }[]; meta?: Record<string, any> };
 export type WidgetEvent =

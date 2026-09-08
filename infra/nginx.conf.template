@@ -4,8 +4,11 @@ server {
   listen ${PORT};
   listen [::]:${PORT};
   root /usr/share/nginx/html;
+  charset utf-8;
   resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=on;
   location / { try_files $uri /index.html; }
+  # Embeddable widget: cacheable but revalidated, so host pages pick up new builds quickly.
+  location /embed/ { add_header Cache-Control "public, max-age=300"; try_files $uri =404; }
   location /api/ {
     set $api_upstream "${API_UPSTREAM}";
     rewrite ^/api/(.*)$ /$1 break;

@@ -9,6 +9,9 @@
 | Source | GitHub | https://github.com/Noorul-Ameen/voxi-concierge (`main` auto-deploys) |
 | ElevenLabs agent | EU-residency workspace | `agent_1001m1m6rghcfsr8nrpj5x08g16e` — 39 webhook tools + 12 client tools (`infra/elevenlabs-tool-ids.json`), 11 KB docs, RAG (multilingual e5), EN default (flash v2) + AR preset (flash v2.5) |
 
+## Embedding the widget elsewhere
+`https://voxi-demo.up.railway.app/embed/voxi.js` is a drop-in script (see README "Embed the widget on any page"; live example at `/embed/demo.html`). Add the embedding page's hostname to the ElevenLabs agent allowlist first. The API already allows any origin (CORS `*`) and the embed calls it through the web service's `/api` proxy, so nothing else needs configuring.
+
 ## Things that are specific to this deployment
 - **EU data residency**: the agent lives in the EU workspace, so the widget must open its socket to `api.eu.residency.elevenlabs.io`. The API exposes this as `wsOrigin` on `/widget/signed-url` (from `ELEVENLABS_BASE_URL`), and the widget maps it to the React SDK's `serverLocation`. The global host answers "agent not found" for this agent.
 - **English TTS model**: ElevenLabs requires `eleven_flash_v2` (or turbo v2) for an English-default agent; the Arabic language preset overrides to `eleven_flash_v2_5`.

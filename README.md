@@ -38,6 +38,14 @@ ElevenLabs Agent ──webhook tools──▶ concierge-api ──▶ vista-clie
 
 Demo site: https://voxi-demo.up.railway.app · API: https://concierge-api-production-3d90.up.railway.app · details in `docs/06-live-environment.md`.
 
+### Embed the widget on any page
+
+```html
+<script src="https://voxi-demo.up.railway.app/embed/voxi.js" charset="utf-8" defer></script>
+```
+
+One script tag adds the "Ask Voxi" launcher to the bottom-right of the page (`apps/web/src/embed.tsx`, built by `vite.embed.config.ts` into `dist/embed/voxi.js`, ~245 KB gzipped, React included). It renders in a Shadow DOM, so the host page's CSS and the widget's never interfere. Options: `data-lang="ar"` (start in Arabic), `data-open="true"` (start expanded), `data-api="https://…/api"` (another concierge API; default is the script's origin + `/api`), or `window.VoxiConfig = { apiBase, lang, open }` before the tag. The page can call `Voxi.open()`, `Voxi.login()`, `Voxi.logout()`, `Voxi.unmount()`. Example host page: https://voxi-demo.up.railway.app/embed/demo.html. Every hostname that embeds the widget must be on the ElevenLabs agent's origin allowlist (or the allowlist must be empty), otherwise the socket is refused with "Host … is not allowed to connect to this agent".
+
 ## Quick start
 
 ```bash

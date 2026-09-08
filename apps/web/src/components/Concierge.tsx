@@ -19,7 +19,7 @@ type Item = ItemBody & { id: string };
 let idc = 0;
 const nid = () => `i${++idc}`;
 
-export function Concierge({ initialLang = "en", onExpand, onAuth }: { initialLang?: Lang; onExpand?: (b: boolean) => void; onAuth?: (c: Customer | null) => void }) {
+export function Concierge({ initialLang = "en", initialOpen = true, onExpand, onAuth }: { initialLang?: Lang; initialOpen?: boolean; onExpand?: (b: boolean) => void; onAuth?: (c: Customer | null) => void }) {
   const [lang, setLang] = useState<Lang>(initialLang);
   const [session, setSession] = useState<Session | null>(null);
   // ---------- sign-in (page header "Log in" and the widget's own link open the same sheet) ----------
@@ -33,11 +33,14 @@ export function Concierge({ initialLang = "en", onExpand, onAuth }: { initialLan
       setAuthOpen(true);
     };
     const logoutIt = () => void doLogout();
+    const openOnly = () => setOpen(true);
     window.addEventListener("voxi:login", openIt);
     window.addEventListener("voxi:logout", logoutIt);
+    window.addEventListener("voxi:open", openOnly);
     return () => {
       window.removeEventListener("voxi:login", openIt);
       window.removeEventListener("voxi:logout", logoutIt);
+      window.removeEventListener("voxi:open", openOnly);
     };
   }); // eslint-disable-line react-hooks/exhaustive-deps
   const doLogin = async (identifier: string, pin: string) => {
@@ -346,7 +349,7 @@ export function Concierge({ initialLang = "en", onExpand, onAuth }: { initialLan
   const connected = conversation.status === "connected";
   const dir = isRtl(lang) ? "rtl" : "ltr";
   // ---------- presentation-only state (launcher, unread badge, typing indicator, suggestions) ----------
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(initialOpen);
   const [unread, setUnread] = useState(0);
   const lastItem = items[items.length - 1];
   useEffect(() => {

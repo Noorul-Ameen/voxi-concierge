@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --port 5173",
-    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "build": "tsc -p tsconfig.json --noEmit && vite build && vite build -c vite.embed.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "preview": "vite preview --port 8080",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "build:embed": "vite build -c vite.embed.config.ts"
   },
   "dependencies": {
     "@elevenlabs/react": "0.9.1",

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Voxi embed example</title>
+  <style>
+    body { margin: 0; font-family: Georgia, serif; background: #f4efe6; color: #222; }
+    main { max-width: 720px; margin: 60px auto; padding: 0 24px; line-height: 1.6; }
+    h1 { font-weight: 400; }
+    code { background: #fff; padding: 2px 6px; border-radius: 4px; }
+    pre { background: #1f2428; color: #eee; padding: 16px; border-radius: 10px; overflow: auto; font-size: 13px; }
+    button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid #999; background: #fff; cursor: pointer; margin-right: 8px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Any page, with Voxi on it</h1>
+    <p>This page has its own fonts and styles. The Voxi launcher at the bottom-right comes from one script tag and renders in its own Shadow DOM, so neither side's CSS leaks into the other.</p>
+    <pre>&lt;script src="https://voxi-demo.up.railway.app/embed/voxi.js" charset="utf-8" defer&gt;&lt;/script&gt;</pre>
+    <p>Optional: <code>data-lang="ar"</code> to start in Arabic, <code>data-api="https://…/api"</code> to point at another concierge API, <code>data-open="true"</code> to start expanded.</p>
+    <p>
+      <button onclick="Voxi.open()">Open Voxi</button>
+      <button onclick="Voxi.login()">Log in</button>
+      <button onclick="Voxi.logout()">Log out</button>
+    </p>
+    <p>From your own page you can call <code>Voxi.open()</code>, <code>Voxi.login()</code>, <code>Voxi.logout()</code> and <code>Voxi.unmount()</code>.</p>
+  </main>
+  <script src="/embed/voxi.js" charset="utf-8" defer></script>
+</body>
+</html>
