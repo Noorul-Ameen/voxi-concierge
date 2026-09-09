@@ -4,6 +4,7 @@ import { cinemaTools } from "./cinemas.js";
 import { customerTools } from "./customer.js";
 import { movieTools } from "./movies.js";
 import { offerTools, orderingTools } from "./ordering.js";
+import { quickTools } from "./quick.js";
 import type { ToolCtx, ToolHandlers, ToolResult } from "./types.js";
 
 export const toolHandlers: ToolHandlers = {
@@ -13,6 +14,7 @@ export const toolHandlers: ToolHandlers = {
   ...orderingTools,
   ...offerTools,
   ...customerTools,
+  ...quickTools,
 };
 
 /** Validate input against the contract, run the handler, normalise errors. */
@@ -34,6 +36,7 @@ export async function runTool(name: ToolName, ctx: ToolCtx, rawInput: unknown): 
 
 export * from "./types.js";
 export { bookingCard, toSnapshot, verifyOwnership } from "./bookings.js";
-export { orderSummary } from "./ordering.js";
+export { orderSummary, reviewAndPay, savedCardOfferHint } from "./ordering.js";
+export { seatRange } from "./quick.js";
 export { filmCard, sessionCard } from "./movies.js";
 export { cinemaCard } from "./cinemas.js";

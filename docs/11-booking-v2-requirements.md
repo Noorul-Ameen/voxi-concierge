@@ -1,0 +1,36 @@
+# 11 — Booking experience v2: requirements, code review, open questions
+
+Source: feedback from Noorul, 9 Sep 2026 ("ask less, understand more, reuse context, jump ahead"). Sixteen points; status below is the *current* state found in the codebase before any change, followed by the questions that must be answered before implementation.
+
+## What the code does today (review findings)
+
+| # | Requirement | Current state |
+|---|---|---|
+| 1 | One-shot intent | No compound tool. Journey is strictly sequential: `search_sessions → start_order → get_ticket_types → add_tickets → get_seat_plan/select_seats → browse_menu/add_concessions → list_offers/apply_offer → prepare_payment → pay_order`. `search_sessions` already accepts title, cinema, date, `timeFrom/timeTo`, experience, language, `nearMe`; `select_seats` accepts `autoAllocate` + `preference` (front/middle/back/aisle). |
+| 2 | Repetition | `prepare_payment` speech restates film, time, cinema, seats, F&B, total, method, customer; the prompt says "read the speech back verbatim in meaning". Order summary card already exists on screen (`OrderSummary`). |
+| 3 | Fewer steps | Prompt journey 15 mirrors the website steps one-to-one. |
+| 4 | Showtime fallback | `search_sessions` relaxes one constraint at a time (other cinemas nearby → other days) and names the cinema per film, but returns an *information* answer rather than an *offer to book the alternative*. |
+| 5 | Logged-in welcome | First message is static (EN/AR). Dynamic variables: customerId, memberId, channel, language — no `firstName`. Personalised "Welcome back, {firstName}…" only after the agent calls `get_session_context`. Profile has `homeCinemaId` (single), preferences (genres, languages, experiences, cinemas, timeOfDay, days, dietary, seatPreference), saved cards, Share Points, VOX credit, booking history with per-booking F&B item ids. |
+| 6 | F&B history | Bookings store `concessions[{itemId, quantity}]`; `browse_menu` renders full category tabs; no "repeat last order" / top-items view. |
+| 7 | Saved-card offer intelligence | `list_offers` matches saved cards to offer BINs and returns a "Mastercard ending 3845 qualifies" hint; `add_tickets` re-evaluates offers when the count changes; BOGO requires exactly 2 tickets; BIN match enforced at payment. **Not enforced:** `monthlyLimit` (surfaced only), min spend (no field), per-card monthly counters. |
+| 8 | Wallet / points / vouchers | Share Points (10 pts = AED 1) and VOX credit exist and can pay / be redeemed. **Vouchers do not exist** in the data model — the "Voucher & promo" tab only posts a promo code. ADCB TouchPoints is a visual only. |
+| 9 | Display | Cards exist for showtimes, seat map, menu, order summary, Review & Pay, receipt/QR. No countdown timer anywhere. |
+| 10 | Resume | Conversation row keeps `metadata.activeOrder {userSessionId, sessionKey}`; `get_session_context` returns it. Widget persists only language + location; a page reload creates a new conversation, so nothing resumes. |
+| 11 | Inactivity | Widget has no idle handling. ElevenLabs: `turn_timeout 8 s`, `silence_end_call_timeout 90 s`, `max_duration 1800 s`. |
+| 12 | Mute | No mute. The mic button switches transport (voice ↔ text) by ending and restarting the ElevenLabs session. SDK offers `setMicMuted` / `setVolume`. |
+| 13–14 | Seat hold timer | Mock order expiry **10 min**, extended on every order mutation (matches the partner doc §6: Vista extends expiry on any modifying call). Real site shows **~7 min** ("06:47" after opening the seat plan). Expired order → Vista result 53 `ORDER_EXPIRED`; the concierge surfaces `ORDER_EXPIRED` and the prompt restarts the order. No "same seats still free?" recovery. |
+| 15 | Tickets before F&B | Partner API (§5.10 Add Concession) and the mock only add concessions to an **in-progress order** (`UserSessionId`); a paid order is immutable (`INVALID_STATE "Order is paid"`). VOX FAQ: items cannot be added to a paid order — a separate order is needed. So "secure tickets, then add F&B" = **two bookings** (two payments, two references) unless VOX IT provides something else. |
+| 16 | VOX look & feel | Widget already aligned with uae.voxcinemas.com (docs/07): magenta CTA, seat tiers, Review & Pay, receipt. A `navy` theme preset exists for the prototype site. Brand house (docs/10): "Unforgettably Cinematic", guests not customers, friendly/playful tone. |
+
+## Confirmed decisions (Noorul, 9 Sep 2026)
+- **A. Journey:** complete one-shot request → straight to Review & Pay with seats auto-selected, then ask "change seats, add food, or pay?". "Around 8 PM" = 7:30–8:30 PM, nearest first. Ticket count default 1 (easy to add more). Experience default Standard unless the profile/history says otherwise. Seats auto-allocated; mention them, offer the map only on request.
+- **B. Personalisation:** first message for members "Hi {firstName}, welcome back. How can I help you today?" — no balances. Tone per the brand house (docs/10). Home cinema suggested and confirmed naturally ("MOE as usual?") with an easy change. Recommendations straight from history/language/genre/family profile, then "how many tickets?".
+- **C. Fallback:** order = same film same cinema other time → same film nearby (≈10 km from the *booking's* cinema, not the guest's location) within the window → next day → similar film. Show up to three alternatives to pick from, then continue booking.
+- **D. Hold timer:** 6 minutes (mock simulates Vista's timer; documented). Warnings at 2:00 and 0:45, payment prioritised. On expiry: automatically re-check the same seats; re-hold if free, otherwise closest equivalent (same row preferred) and tell the guest briefly.
+- **E. F&B:** "Your usual" + 3 popular + "See full menu". Tickets are paid first; F&B is a **separate order/payment** afterwards (Vista cannot amend a paid order).
+- **F. Resume:** same device/widget only. On a new conversation ask "Would you like to continue your previous booking?"; if the hold expired, rebuild and re-hold same/equivalent seats.
+- **G. Inactivity:** widget nudge at 60 s; ElevenLabs silence timeout 3 min during an active booking.
+- **H. Offers:** enforce monthly limit; skip min spend; support BOGO, percentage and other card offers; proactively suggest an applicable saved-card offer once the basket qualifies.
+- **I. Wallet/points/vouchers:** wallet + Share Points stay; no vouchers for now. Members: saved cards by default — recommend the card with an applicable offer and ask to apply; else the default card; wallet/points as alternatives.
+- **J. UI/tone:** `8:30 PM`, `AED 120`, `F10–F11`; short conversational lines, detail in cards; brand-house voice. Widget matches the hosted prototype site (navy theme) — it is embedded there, the VOX site is not modified. Mute = mic + Voxi audio, conversation and booking stay alive.
+- **K. Limits acknowledged:** F&B cannot be added to a paid Vista order; the hold timer is Vista's — the mock simulates 6 minutes.

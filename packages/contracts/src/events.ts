@@ -48,7 +48,13 @@ export const WidgetCommand = z.discriminatedUnion("type", [
     userSessionId: z.string(),
     confirmationId: z.string(),
     token: z.string(),
+    /** guest details entered in the Review & Pay sheet */
+    customer: z.object({ name: z.string(), email: z.string(), phone: z.string() }).optional(),
   }),
+  // the seat hold ran out while the guest was still in the widget: rebuild the order with the same/closest seats
+  z.object({ type: z.literal("order.recover"), userSessionId: z.string().optional() }),
+  // the widget's inactivity/timer watchdog asks the concierge to (re)render the current order
+  z.object({ type: z.literal("order.state"), userSessionId: z.string().optional() }),
   z.object({
     type: z.literal("location"),
     lat: z.number(),

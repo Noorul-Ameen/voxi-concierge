@@ -6,7 +6,7 @@ import { type DisconnectionDetails, useConversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { type Customer, type Lang, type Session, type UiHint, type WidgetEvent, createSession, devTool, getSignedUrl, getState, linkConversation, sendCommand, subscribe, widgetLogin, widgetLogout } from "../lib/api";
 import { isRtl, t } from "../lib/i18n";
-import { type CardActions, Cards, Feedback } from "./Cards";
+import { type CardActions, Cards, Feedback, seatRange } from "./Cards";
 import { type Loc, LocationBar } from "./LocationBar";
 
 type ItemBody =
@@ -78,6 +78,16 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   };
   const [items, setItems] = useState<Item[]>([]);
   const [mode, setMode] = useState<"idle" | "voice" | "text">("idle");
+  // ---- booking v2: the live order (seat hold timer), mute, inactivity ----
+  type LiveOrder = { userSessionId: string; expiresAtUtc?: string; totalCents?: number; filmTitle?: string; seats?: string; paid?: boolean };
+  const [order, setOrder] = useState<LiveOrder | null>(null);
+  const orderRef = useRef<LiveOrder | null>(null);
+  orderRef.current = order;
+  const [muted, setMuted] = useState(false);
+  const [holdLeft, setHoldLeft] = useState<number | null>(null); // seconds
+  const warnedRef = useRef<{ two?: string; short?: string; expired?: string }>({});
+  const lastUserAtRef = useRef<number>(Date.now());
+  const nudgedRef = useRef<number>(0);
   const [humanMode, setHumanMode] = useState<{ transferId: string; agentName?: string; status: string } | null>(null);
   const [input, setInput] = useState("");
   const [level, setLevel] = useState(0);
@@ -175,6 +185,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
 
   const conversation = useConversation({
     clientTools,
+    micMuted: muted,
     onConnect: () => push({ kind: "note", text: lang === "ar" ? "متصل" : "Connected" }),
     onDisconnect: (d?: DisconnectionDetails) => {
       setMode("idle");
@@ -189,6 +200,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     },
     onMessage: (m: { source: string; message: string }) => {
       if (!m.message) return;
+      if (m.source === "user") lastUserAtRef.current = Date.now();
       push({ kind: "msg", role: m.source === "user" ? "user" : "agent", text: m.message });
     },
   });
@@ -202,6 +214,26 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     linkConversation(session, id).then(setSession).catch(() => undefined);
   }, [conversation.status]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** Cards that carry the order's hold expiry (Review & Pay, order summary) keep the timer in sync; a receipt ends it. */
+  const trackOrderFromUi = (ui?: UiHint) => {
+    if (!ui) return;
+    if (ui.type === "qr") {
+      setOrder(null);
+      return;
+    }
+    const m = ui.meta ?? {};
+    if ((ui.type === "payment" || ui.type === "order") && m.userSessionId && m.expiresAtUtc)
+      setOrder((o) => ({ ...(o ?? {}), userSessionId: String(m.userSessionId), expiresAtUtc: String(m.expiresAtUtc), totalCents: Number(m.amountCents ?? o?.totalCents ?? 0) }));
+  };
+
+  // Same-device resume: remember the conversation so a reload/return within 30 minutes picks the booking back up.
+  useEffect(() => {
+    if (!session) return;
+    try {
+      localStorage.setItem("voxi.session", JSON.stringify({ conversationId: session.conversationId, token: session.token, language: session.language, at: Date.now() }));
+    } catch {}
+  }, [session]);
+
   // SSE subscription to concierge events
   useEffect(() => {
     if (!session) return;
@@ -209,11 +241,20 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       switch (e.type) {
         case "ui.render":
           if (e.ui?.type) push({ kind: "cards", ui: e.ui });
+          trackOrderFromUi(e.ui);
           break;
         case "action.completed":
           if (e.ui?.type) push({ kind: "cards", ui: e.ui });
           else if (e.action.status !== "succeeded" && e.action.error?.message) push({ kind: "note", text: `⚠️ ${e.action.error.message}` });
+          trackOrderFromUi(e.ui);
           break;
+        case "order.updated": {
+          const sm = e.summary as Record<string, any>;
+          if (sm && (sm.state === "paid" || sm.state === "cancelled" || sm.state === "expired")) setOrder(null);
+          else setOrder({ userSessionId: e.userSessionId, expiresAtUtc: sm?.expiresAtUtc, totalCents: sm?.totalCents, filmTitle: sm?.filmTitle, seats: sm?.seats });
+          warnedRef.current = {};
+          break;
+        }
         case "transfer.status":
           setHumanMode({ transferId: e.transferId, agentName: e.agentName, status: e.status });
           if (e.status === "ended") push({ kind: "note", text: t(lang, "transferEnded") });
@@ -283,12 +324,78 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     if (session && l) void sendCommand(session, { type: "location", lat: l.lat, lng: l.lng, accuracyM: l.accuracyM, label: l.label, source: l.source });
   }, [session]);
 
+  // Seat-hold countdown: warn at 2:00 and 0:45, then recover the order automatically when it runs out.
+  useEffect(() => {
+    if (!order?.expiresAtUtc) {
+      setHoldLeft(null);
+      return;
+    }
+    const tick = async () => {
+      const o = orderRef.current;
+      if (!o?.expiresAtUtc) return;
+      const left = Math.max(0, Math.round((new Date(o.expiresAtUtc).getTime() - Date.now()) / 1000));
+      setHoldLeft(left);
+      const w = warnedRef.current;
+      const ctxNote = (text: string) => {
+        if (statusRef.current === "connected") conversation.sendContextualUpdate(text);
+      };
+      if (left <= 120 && left > 45 && w.two !== o.expiresAtUtc) {
+        w.two = o.expiresAtUtc;
+        push({ kind: "note", text: lang === "ar" ? "⏳ مقاعدك محجوزة لدقيقتين إضافيتين — أكمل التذاكر أولاً، ويمكن إضافة الطعام بعدها." : "⏳ Your seats are held for 2 more minutes — complete the tickets first, food can come after." });
+        ctxNote("Seat hold expires in 2 minutes. Tell the guest once, briefly, and prioritise completing the ticket payment; food can be added after.");
+      } else if (left <= 45 && left > 0 && w.short !== o.expiresAtUtc) {
+        w.short = o.expiresAtUtc;
+        push({ kind: "note", text: lang === "ar" ? "⏳ 45 ثانية متبقية على حجز المقاعد." : "⏳ 45 seconds left on your seat hold." });
+        ctxNote("Seat hold expires in 45 seconds — urge the guest to tap Pay now, in one short line.");
+      } else if (left === 0 && w.expired !== o.expiresAtUtc) {
+        w.expired = o.expiresAtUtc;
+        const s = sessionRef.current;
+        if (!s || o.paid) return;
+        push({ kind: "note", text: lang === "ar" ? "انتهى حجز المقاعد — أستعيد المقاعد نفسها أو الأقرب إليها…" : "Seat hold expired — getting the same or the closest seats back…" });
+        const r = (await sendCommand(s, { type: "order.recover", userSessionId: o.userSessionId })) as { ok: boolean; speech?: string; error?: string };
+        if (r.ok) ctxNote(`The seat hold expired and the widget already rebuilt the order: ${r.speech ?? ""} Relay this in one line and continue with payment — do not restart the booking.`);
+        else {
+          push({ kind: "note", text: `⚠️ ${r.error ?? (lang === "ar" ? "تعذّر استعادة المقاعد" : "Could not recover the seats")}` });
+          ctxNote(`The seat hold expired and recovery failed (${r.error ?? "unknown"}). Call recover_order, or offer to rebook.`);
+        }
+      }
+    };
+    void tick();
+    const iv = setInterval(() => void tick(), 1000);
+    return () => clearInterval(iv);
+  }, [order?.expiresAtUtc, order?.userSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Inactivity: 60 s of silence during a live booking → one gentle nudge (widget note + context for the agent).
+  useEffect(() => {
+    if (!order || statusRef.current !== "connected") return;
+    const iv = setInterval(() => {
+      const idle = Date.now() - lastUserAtRef.current;
+      if (idle > 60000 && Date.now() - nudgedRef.current > 90000 && statusRef.current === "connected") {
+        nudgedRef.current = Date.now();
+        const left = holdLeft != null ? Math.ceil(holdLeft / 60) : null;
+        push({ kind: "note", text: lang === "ar" ? `ما زلت هنا؟${left ? ` مقاعدك محجوزة لـ ${left} دقائق أخرى.` : ""}` : `Still there?${left ? ` Your seats are held for ${left} more minute${left === 1 ? "" : "s"}.` : ""}` });
+        conversation.sendContextualUpdate(`The guest has been silent for a minute with a booking in progress${left ? ` (seats held for ${left} more minutes)` : ""}. Nudge once, briefly and warmly; do not repeat the summary.`);
+      }
+    }, 5000);
+    return () => clearInterval(iv);
+  }, [order, holdLeft, lang]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const start = async (m: "voice" | "text") => {
     setMode(m);
-    const s = session ?? (await createSession({ language: lang, modality: m }));
+    lastUserAtRef.current = Date.now();
+    // resume the previous conversation on this device (same booking, same seats) when it is recent
+    let resumeId: string | undefined;
+    if (!session) {
+      try {
+        const saved = JSON.parse(localStorage.getItem("voxi.session") ?? "null") as { conversationId: string; at: number } | null;
+        if (saved && Date.now() - saved.at < 30 * 60000) resumeId = saved.conversationId;
+      } catch {}
+    }
+    const s = session ?? (await createSession({ language: lang, modality: m, conversationId: resumeId }));
     setSession(s);
     const { signedUrl, agentId, wsOrigin } = await getSignedUrl(s);
     const dyn = { ...s.dynamicVariables, language: lang, channel: "web" };
+    if (resumeId) void sendCommand(s, { type: "order.state" }).catch(() => undefined);
     try {
       if (m === "voice") {
         await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -336,6 +443,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         return;
       }
       if (statusRef.current === "connected") {
+        lastUserAtRef.current = Date.now();
         conversation.sendUserMessage(text);
         if (mode === "text") push({ kind: "msg", role: "user", text });
       } else push({ kind: "note", text: lang === "ar" ? "ابدأ المحادثة أولاً" : "Start the conversation first" });
@@ -346,7 +454,10 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const act: CardActions = useMemo(
     () => ({
       say,
-      command: async (cmd) => (session ? sendCommand(session, cmd) : { ok: false, error: "no session" }),
+      command: async (cmd) => {
+        lastUserAtRef.current = Date.now();
+        return session ? sendCommand(session, cmd) : { ok: false, error: "no session" };
+      },
       openLink: (url) => window.open(url, "_blank", "noopener"),
       playTrailer: (id) => window.open(`https://www.youtube.com/watch?v=${id}`, "_blank", "noopener"),
     }),
@@ -548,8 +659,25 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
               <i key={i} style={{ height: `${Math.max(14, Math.round((conversation.isSpeaking ? 40 + 30 * Math.abs(Math.sin((Date.now() / 160 + i) % Math.PI)) : 14 + level * 70 * (1 - Math.abs(i - 4) / 5)) ))}%` }} />
             ))}
           </div>
-          <span className="vs-text">{conversation.isSpeaking ? t(lang, "speaking") : t(lang, "listening")}</span>
-          <button className="btn ghost small" onClick={() => conversation.setVolume({ volume: 1 })} title="volume">🔊</button>
+          <span className="vs-text">{muted ? (lang === "ar" ? "مكتوم" : "Muted") : conversation.isSpeaking ? t(lang, "speaking") : t(lang, "listening")}</span>
+          <button
+            className={`btn ghost small mute ${muted ? "on" : ""}`}
+            onClick={() => {
+              const next = !muted;
+              setMuted(next);
+              conversation.setVolume({ volume: next ? 0 : 1 });
+            }}
+            title={muted ? (lang === "ar" ? "إلغاء الكتم" : "Unmute") : lang === "ar" ? "كتم الصوت" : "Mute"}
+            aria-pressed={muted}
+          >
+            {muted ? "🔇" : "🔊"} {muted ? (lang === "ar" ? "إلغاء الكتم" : "Unmute") : lang === "ar" ? "كتم" : "Mute"}
+          </button>
+        </div>
+      ) : null}
+      {holdLeft != null && order && !order.paid ? (
+        <div className={`holdbar ${holdLeft <= 45 ? "urgent" : holdLeft <= 120 ? "warn" : ""}`} role="status">
+          <span>{lang === "ar" ? "المقاعد محجوزة" : "Seats held"}{order.seats ? ` · ${seatRange(order.seats)}` : ""}</span>
+          <b>{`${Math.floor(holdLeft / 60)}:${String(holdLeft % 60).padStart(2, "0")}`}</b>
         </div>
       ) : null}
 

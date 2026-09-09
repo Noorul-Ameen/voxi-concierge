@@ -282,17 +282,27 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
     tags: ["voxi", "vox-cinemas", "demo"],
     conversation_config: {
       agent: {
-        first_message: FIRST_MESSAGE.en,
+        // The widget computes the greeting per guest ("Hi Sara, welcome back…" for members) and passes it as a
+        // dynamic variable; the placeholder is the generic line for sessions started without one.
+        first_message: "{{greetingEn}}",
         language: "en",
         dynamic_variables: {
-          dynamic_variable_placeholders: { customerId: "", memberId: "", channel: "web", language: "en" },
+          dynamic_variable_placeholders: {
+            customerId: "",
+            memberId: "",
+            channel: "web",
+            language: "en",
+            firstName: "",
+            greetingEn: FIRST_MESSAGE.en,
+            greetingAr: FIRST_MESSAGE.ar,
+          },
         },
         prompt: promptCfg,
       },
       language_presets: {
         ar: {
-          overrides: { agent: { first_message: FIRST_MESSAGE.ar, language: "ar" } },
-          first_message_translation: { source_hash: "voxi-ar", text: FIRST_MESSAGE.ar },
+          overrides: { agent: { first_message: "{{greetingAr}}", language: "ar" } },
+          first_message_translation: { source_hash: "voxi-ar", text: "{{greetingAr}}" },
         },
       },
       tts: {
@@ -310,7 +320,8 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
         user_input_audio_format: "pcm_16000",
         keywords: KEYWORDS,
       },
-      turn: { turn_timeout: 8, silence_end_call_timeout: 90, mode: "turn" },
+      // 3 minutes of silence before the call ends: a guest reading the seat map or the menu is not gone
+      turn: { turn_timeout: 8, silence_end_call_timeout: 180, mode: "turn" },
       conversation: {
         max_duration_seconds: 1800,
         client_events: [

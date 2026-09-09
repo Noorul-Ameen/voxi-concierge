@@ -46,7 +46,7 @@ export const RC = {
 } as const;
 
 export type OrderCfg = { expiryMinutes: number; bookingFeeCentsPerTicket: number; taxRate: number };
-const DEFAULT_CFG: OrderCfg = { expiryMinutes: 10, bookingFeeCentsPerTicket: 250, taxRate: 0.05 };
+const DEFAULT_CFG: OrderCfg = { expiryMinutes: 6, bookingFeeCentsPerTicket: 250, taxRate: 0.05 };
 
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type OrderRow = typeof S.orders.$inferSelect;
@@ -452,11 +452,13 @@ export async function addConcessions(
     CinemaId: string;
     Concessions: { ItemId: string; Quantity: number; Modifiers?: { Id: string }[] | string[] }[];
     Replace?: boolean;
+    /** Food-only orders (after the tickets are paid) are tied to the show they are collected for. */
+    SessionId?: string;
   },
   cfg: OrderCfg = DEFAULT_CFG,
 ) {
   return db.transaction(async (tx) => {
-    const order = await getOrCreateOrder(tx, req.UserSessionId, req.CinemaId, null, cfg);
+    const order = await getOrCreateOrder(tx, req.UserSessionId, req.CinemaId, req.SessionId ?? null, cfg);
     const items = await tx.select().from(S.concessionItems).where(eq(S.concessionItems.active, true));
     const lines = req.Replace ? [] : [...order.concessions];
     const failed: { ItemId: string; Reason: string }[] = [];
@@ -714,8 +716,13 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
     )[0];
     if (b) return { booking: b, order, alreadyCompleted: true };
   }
-  if (!order.tickets.length) throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Order has no tickets");
-  if (!order.seatsAllocated) throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Seats not selected");
+  const fnbOnly = !order.tickets.length && order.concessions.length > 0;
+  if (!order.tickets.length && !fnbOnly)
+    throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Order has no tickets");
+  if (!fnbOnly && !order.seatsAllocated)
+    throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Seats not selected");
+  if (fnbOnly && !order.sessionId)
+    throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Food order needs the session it is collected for");
   const paid = req.PaymentInfoCollection.reduce((a, p) => a + p.PaymentValueCents, 0);
   if (paid !== order.totalValueCents)
     throw new VistaError(
@@ -921,7 +928,7 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
         bookingFeeValueCents: order.bookingFeeValueCents,
         salesChannel: req.OptionalClientClass ?? "WWW",
         source: req.Source ?? "concierge",
-        qrPayload: `VOX|${bookingId}|${order.cinemaId}|${order.sessionId}`,
+        qrPayload: `VOX|${bookingId}|${order.cinemaId}|${order.sessionId}${fnbOnly ? "|FNB" : ""}`,
         bookedAt: new Date(),
         updatedAt: new Date(),
       })

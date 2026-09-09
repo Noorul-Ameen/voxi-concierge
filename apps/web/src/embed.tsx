@@ -27,7 +27,7 @@ window.VoxiConfig = {
   apiBase: window.VoxiConfig?.apiBase ?? script?.dataset.api ?? `${scriptOrigin}/api`,
   lang: (window.VoxiConfig?.lang ?? (script?.dataset.lang as Lang | undefined) ?? "en") as Lang,
   open: window.VoxiConfig?.open ?? script?.dataset.open === "true",
-  theme: window.VoxiConfig?.theme ?? script?.dataset.theme,
+  theme: window.VoxiConfig?.theme ?? script?.dataset.theme ?? "navy",
   vars: window.VoxiConfig?.vars,
 };
 

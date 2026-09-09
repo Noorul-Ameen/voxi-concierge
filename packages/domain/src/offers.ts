@@ -62,6 +62,8 @@ export type OfferContext = {
   promoCode?: string;
   channel?: string;
   memberRedemptions?: number;
+  /** Committed redemptions of this offer by this member (or card) in the current calendar month. */
+  monthlyRedemptions?: number;
   now?: string; // local ISO
 };
 
@@ -140,6 +142,8 @@ export function evaluateOffer(offer: Offer, ctx: OfferContext): Eligibility {
     ctx.memberRedemptions >= offer.perMemberLimit
   )
     reasons.push("Per-member limit reached");
+  if (r.monthlyLimit != null && ctx.monthlyRedemptions != null && ctx.monthlyRedemptions >= r.monthlyLimit)
+    reasons.push(`Monthly limit reached for this offer (${r.monthlyLimit} a month)`);
   if (r.channels?.length && ctx.channel && !r.channels.includes(ctx.channel))
     reasons.push("Not available on this channel");
   return { eligible: reasons.length === 0 && requires.length === 0, reasons, requires };

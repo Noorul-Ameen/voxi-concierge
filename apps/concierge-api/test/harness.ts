@@ -103,5 +103,12 @@ export async function startHarness() {
     await close();
     await mockDb.close();
   };
-  return { api, ctx, db, tool, widget, stop, catalog };
+  /** Simulate Vista's order clean-up: push the hold expiry into the past so the next read expires the order. */
+  const expireOrder = async (userSessionId: string) => {
+    await mockDb.db
+      .update(S.orders)
+      .set({ expiryAt: new Date(Date.now() - 1000) })
+      .where(eq(S.orders.userSessionId, userSessionId));
+  };
+  return { api, ctx, db, tool, widget, stop, catalog, expireOrder };
 }

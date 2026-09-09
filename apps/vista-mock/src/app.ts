@@ -6,7 +6,7 @@ import { type Offer, applyBenefit, evaluateOffer, offerAcceptsBin, offerMatchesB
  * Vista-shaped mock API (VOX Apigee partner API + Vista RESTBooking/RESTLoyalty + Offers Engine + Customer).
  * All routes live under BASE = /vistatickets/vista/v2 (as production) plus /v1/oauth/generate at the root.
  */
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -320,6 +320,7 @@ export function createApp(db: Db, cfg: MockConfig) {
         CinemaId: body.CinemaId,
         Concessions: body.Concessions ?? [],
         Replace: body.Replace,
+        SessionId: body.SessionId ? String(body.SessionId) : undefined,
       },
       cfg.order,
     );
@@ -437,6 +438,7 @@ export function createApp(db: Db, cfg: MockConfig) {
       promoCode: body.PromoCode,
       channel: "WWW",
       memberRedemptions: Number(redemptions ?? 0),
+      monthlyRedemptions: await monthlyRedemptions(offer.id, body.MemberId),
     });
     if (!elig.eligible)
       throw new VistaError(
@@ -792,6 +794,27 @@ export function createApp(db: Db, cfg: MockConfig) {
     );
   });
 
+  // Bank offers cap redemptions per member per calendar month — count what was committed this month.
+  const monthlyRedemptions = async (offerId: string, memberId?: string | null) => {
+    if (!memberId) return undefined;
+    const start = new Date();
+    start.setUTCDate(1);
+    start.setUTCHours(0, 0, 0, 0);
+    const n = (
+      await db
+        .select({ n: sql<number>`count(*)` })
+        .from(S.offerRedemptions)
+        .where(
+          and(
+            eq(S.offerRedemptions.offerId, offerId),
+            eq(S.offerRedemptions.memberId, memberId),
+            eq(S.offerRedemptions.status, "committed"),
+            gte(S.offerRedemptions.createdAt, start),
+          ),
+        )
+    )[0]?.n;
+    return Number(n ?? 0);
+  };
   // ---------------- Offers Engine ----------------
   api.get("/offers/v1/offers", async (c) => {
     const q = c.req.query();
@@ -809,6 +832,9 @@ export function createApp(db: Db, cfg: MockConfig) {
     const acct = q.memberId
       ? (await db.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, q.memberId)))[0]
       : undefined;
+    const monthly = new Map<string, number | undefined>();
+    for (const o of rows)
+      if (o.rules.monthlyLimit != null) monthly.set(o.id, await monthlyRedemptions(o.id, q.memberId));
     const out = rows
       .filter((o) => !q.type || q.type === "any" || o.type === q.type)
       // "which ENBD offers…" → only that bank; a card BIN → only offers that card qualifies for
@@ -827,6 +853,7 @@ export function createApp(db: Db, cfg: MockConfig) {
           cardBin: q.cardBin,
           ticketCount: q.ticketCount ? Number(q.ticketCount) : undefined,
           channel: "WWW",
+          monthlyRedemptions: monthly.get(o.id),
         });
         return { ...o, eligibility: e };
       })
@@ -883,6 +910,7 @@ export function createApp(db: Db, cfg: MockConfig) {
       cardBin: body.cardBin,
       promoCode: body.promoCode,
       channel: "WWW",
+      monthlyRedemptions: await monthlyRedemptions(o.id, body.memberId),
     });
     return c.json({ offerId: o.id, ...e });
   });

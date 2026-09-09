@@ -41,6 +41,20 @@ import { ingestPostCall, verifyElevenLabsSignature } from "./webhooks.js";
 
 export type ApiOptions = { writeWaitMs?: number; logging?: boolean };
 
+/** First message per language: personal for a signed-in member (no balances — those belong at payment), generic otherwise. */
+export function greetings(firstName?: string | null) {
+  const name = (firstName ?? "").trim();
+  return {
+    greetingEn: name
+      ? `Hi ${name}, welcome back. How can I help you today?`
+      : "Hi, I'm Voxi from VOX Cinemas. Showtimes, bookings, food, offers — what can I do for you?",
+    greetingAr: name
+      ? `أهلاً ${name}، سعيد بعودتك. كيف أساعدك اليوم؟`
+      : "مرحباً، أنا فوكسي من فوكس سينما. مواعيد العروض، الحجوزات، المأكولات، العروض — كيف أساعدك؟",
+    firstName: name,
+  };
+}
+
 export function createApp(app: AppContext, opts: ApiOptions = {}) {
   const api = new Hono();
   const catalog = new Catalog(app.vista);
@@ -324,6 +338,13 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         customerId: conversation.customerId ?? "",
         memberId: conversation.memberId ?? "",
         channel: conversation.channel,
+        ...greetings(
+          conversation.customerId
+            ? ((await app.vista.customer(conversation.customerId).catch(() => null))?.firstName as
+                | string
+                | undefined)
+            : undefined,
+        ),
       },
     });
   });
@@ -380,6 +401,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
           customerId: m.CustomerId,
           memberId: m.MemberId ?? "",
           channel: conv?.channel ?? "web",
+          ...greetings(cust.firstName),
         },
       });
     } catch (e) {
@@ -419,6 +441,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         customerId: "",
         memberId: "",
         channel: conv?.channel ?? "web",
+        ...greetings(),
       },
     });
   });
@@ -569,7 +592,12 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
             type: "pay_order",
             resourceKey: `order:${cmd.userSessionId}`,
             idempotencyKey: ledger.idem(conv.id, `pay:${cmd.confirmationId}`),
-            payload: { ...conf.summary, paymentToken: cmd.token, confirmationId: conf.id },
+            payload: {
+              ...conf.summary,
+              ...(cmd.customer?.email ? { customer: cmd.customer } : {}),
+              paymentToken: cmd.token,
+              confirmationId: conf.id,
+            },
             requestedBy: "widget",
           });
           const row = await ledger.waitFor(app.db, action.id, writeWaitMs + 2000);
@@ -638,6 +666,28 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       case "card.action": {
         await appendEvent(app.db, null, conv.id, "ui.action", { value: cmd.value }, "user");
         return c.json({ ok: true });
+      }
+      case "order.recover":
+      case "order.state": {
+        const toolCtx: ToolCtx = {
+          ...app,
+          catalog,
+          conversation: conv,
+          lang: conv.language as "en" | "ar",
+          nowLocal: nowLocalIso(app.cfg.timeZone),
+          toolCallId: prefixedId("tc", 8),
+          correlationId: prefixedId("corr", 8),
+        };
+        const r = await runTool(cmd.type === "order.recover" ? "recover_order" : "resume_order", toolCtx, {
+          userSessionId: cmd.userSessionId,
+        });
+        if (r.ui) await appendEvent(app.db, app.events, conv.id, "ui.render", { ui: r.ui });
+        return c.json({
+          ok: r.ok,
+          speech: r.speech,
+          data: r.data,
+          error: r.ok ? undefined : r.error?.message,
+        });
       }
       case "seat.plan": {
         // run the read tool in-process so the widget can draw the map without a round-trip through the agent

@@ -621,3 +621,26 @@ table.grid tr.sel { background: var(--vox-blue-tint); }
 [data-voxi-theme="navy"] .shareblock { border-color: #c3f2f5; background: #f2fdfd; }
 [data-voxi-theme="navy"] .maplink { color: #0d315f; }
 [data-voxi-theme="navy"] .ticket .t-top { background: #071a33; }
+
+/* ---- booking v2: seat-hold timer, offer hint, guest details, quick F&B, mute ---- */
+.holdbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 14px; font-size: 12px; background: var(--vox-blue-soft); color: var(--ink-2); border-top: 1px solid var(--line); }
+.holdbar b { font-variant-numeric: tabular-nums; font-size: 13px; }
+.holdbar.warn { background: #fff4e0; color: #8a5200; }
+.holdbar.urgent { background: #fde5e3; color: #9b1f19; animation: pulse-bar 1s infinite; }
+@keyframes pulse-bar { 50% { filter: brightness(0.96); } }
+.reviewpay .bookline { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2); margin-bottom: 8px; font-size: 12.5px; position: relative; }
+.reviewpay .bookline b { font-size: 13.5px; }
+.reviewpay .bookline span { color: var(--muted); }
+.reviewpay .bookline .hold { position: absolute; top: 8px; inset-inline-end: 10px; font-style: normal; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ok); }
+.reviewpay .bookline .hold.warn { color: #8a5200; }
+.reviewpay .bookline .hold.urgent { color: var(--danger); }
+.offerhint { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 10px; margin-bottom: 8px; background: linear-gradient(90deg, var(--vox-blue-soft), #fff); border: 1px solid var(--vox-blue-tint); font-size: 12.5px; }
+.offerhint > div { flex: 1; display: grid; gap: 2px; }
+.offerhint span { color: var(--muted); }
+.btn.small { padding: 6px 10px; font-size: 12px; }
+.guestdetails { display: grid; gap: 6px; margin-bottom: 8px; }
+.guestdetails h5 { margin: 0 0 2px; }
+.guestdetails input { border: 1px solid var(--line-2); border-radius: 9px; padding: 8px 10px; font: inherit; font-size: 13px; background: #fff; }
+.guestdetails input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--vox-blue-tint); }
+.fnbcard .best.usual { background: var(--charcoal); }
+.voicestage .btn.mute.on { background: var(--danger); color: #fff; border-color: var(--danger); }

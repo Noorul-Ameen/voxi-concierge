@@ -275,6 +275,86 @@ export const CancelOrderInput = z.object({
   idempotencyKey: z.string().optional(),
 });
 
+// ---------- Booking v2: one-shot booking, recovery, quick F&B ----------
+
+export const QuickBookInput = z.object({
+  title: z.string().optional().describe("Movie title as the guest said it (fuzzy matched)"),
+  hoCode: z.string().optional(),
+  cinemaName: z
+    .string()
+    .optional()
+    .describe(
+      "Cinema/mall the guest named ('MOE', 'Deira', 'Yas Mall'). Omit when not stated — the tool uses the member's usual cinema or the shared location.",
+    ),
+  cinemaId: z.string().optional(),
+  useUsualCinema: z
+    .boolean()
+    .optional()
+    .describe(
+      "true once the guest agreed to their usual cinema ('MOE as usual?' → yes). Omit on the first call so the tool can ask.",
+    ),
+  date: dateStr
+    .optional()
+    .describe("today (default), tonight, tomorrow, weekday or YYYY-MM-DD — pass the word, never compute"),
+  time: timeStr
+    .optional()
+    .describe(
+      "Target time HH:mm in 24h for 'around 8', 'at 9 pm', 'evening' (use 19:30) — a ±30 min window is searched, nearest first",
+    ),
+  timeFrom: timeStr.optional(),
+  timeTo: timeStr.optional(),
+  experience: Experience.optional().describe(
+    "Only when the guest asked for it (IMAX, MAX, GOLD…). Default Standard unless the profile prefers otherwise.",
+  ),
+  language: z.string().optional().describe("Film language when the guest specified one"),
+  tickets: z.number().int().min(1).max(10).default(1).describe("Adult tickets; default 1 when not stated"),
+  childTickets: z.number().int().min(0).max(10).default(0),
+  seatPreference: z.enum(["front", "middle", "back", "aisle", "any"]).optional(),
+  sessionKey: z
+    .string()
+    .optional()
+    .describe(
+      "Book this exact showtime (from a showtimes/alternatives card) — skips film/cinema/time resolution",
+    ),
+});
+
+export const RecoverOrderInput = z.object({
+  userSessionId: z
+    .string()
+    .optional()
+    .describe("The expired/active order; defaults to the conversation's order"),
+});
+
+export const ResumeOrderInput = z.object({});
+
+export const SuggestFnbInput = z.object({
+  cinemaId: z.string().optional(),
+  bookingId: z
+    .string()
+    .optional()
+    .describe("Booking the food is for (after tickets are paid) — defaults to the booking just made"),
+});
+
+export const OrderFnbInput = z.object({
+  items: z
+    .array(
+      z.object({
+        itemId: z.string(),
+        quantity: z.number().int().min(1).max(10),
+        modifierIds: z.array(z.string()).optional(),
+      }),
+    )
+    .min(1),
+  bookingId: z
+    .string()
+    .optional()
+    .describe("Booking the food is for; defaults to the booking just made in this conversation"),
+  repeatUsual: z
+    .boolean()
+    .optional()
+    .describe("true when the guest said 'the same as last time' — items may then be omitted"),
+});
+
 export const GetLoyaltyBalanceInput = z.object({
   memberId: z.string().optional(),
   customerId: z.string().optional(),
@@ -473,6 +553,36 @@ export const TOOL_REGISTRY = {
     kind: "read",
     description:
       "Create the payment summary the customer must confirm. For CARD / SAVED_CARD / APPLE_PAY / SAMSUNG_PAY it opens the secure Review & Pay sheet in the widget — the guest completes payment there and you do NOT call pay_order. For VOX_CREDIT / SHARE_POINTS read the summary, get a yes, then call pay_order with the confirmationId. Never read the confirmationId aloud.",
+  },
+  quick_book: {
+    input: QuickBookInput,
+    kind: "read",
+    description:
+      "ONE-SHOT BOOKING. Give it everything the guest said (movie, cinema, day, time, experience, ticket count, seat wish) and it finds the best showtime, starts the order, holds the best seats and opens Review & Pay — in one call. If a detail is missing it either uses the profile (usual cinema, preferred experience) or returns `needs` with what to ask. If the time isn't available it returns up to three alternatives to pick from (then call it again with the chosen sessionKey). Prefer this over start_order/add_tickets/select_seats whenever the guest wants to book.",
+  },
+  resume_order: {
+    input: ResumeOrderInput,
+    kind: "read",
+    description:
+      "Continue a booking from earlier in this conversation or a previous visit: returns the order if it is still held (and re-opens Review & Pay), or automatically rebuilds it with the same or closest seats if the hold expired.",
+  },
+  recover_order: {
+    input: RecoverOrderInput,
+    kind: "read",
+    description:
+      "After a seat hold expired: rebuilds the order for the same showtime, re-holds the same seats if still free (otherwise the closest equivalent in the same row), re-adds food and offers, and re-opens Review & Pay. Call it when a tool says ORDER_EXPIRED or the widget reports the timer ran out.",
+  },
+  suggest_fnb: {
+    input: SuggestFnbInput,
+    kind: "read",
+    description:
+      "Quick food & drinks picks: the guest's usual order (from history), three popular items and a 'see full menu' option. Use this instead of browse_menu when offering food after the tickets are paid.",
+  },
+  order_fnb: {
+    input: OrderFnbInput,
+    kind: "read",
+    description:
+      "Order food & drinks as a separate order for a paid booking (Vista cannot add items to a paid order): creates the F&B order, adds the items (or repeats the usual order) and opens Review & Pay for it.",
   },
   get_loyalty_balance: {
     input: GetLoyaltyBalanceInput,

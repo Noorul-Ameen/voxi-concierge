@@ -11,7 +11,7 @@ export function loadConfig(env = process.env): MockConfig & { port: number; data
       signingSecret: env.VISTA_MOCK_SIGNING_SECRET ?? "vista-mock-signing-secret",
     },
     order: {
-      expiryMinutes: Number(env.VISTA_MOCK_ORDER_EXPIRY_MINUTES ?? 10),
+      expiryMinutes: Number(env.VISTA_MOCK_ORDER_EXPIRY_MINUTES ?? 6), // simulates Vista's seat-hold timer (real site shows ~7 min; demo agreed on 6)
       bookingFeeCentsPerTicket: Number(env.VISTA_MOCK_BOOKING_FEE_CENTS ?? 0), // uae.voxcinemas.com shows no online booking fee
       taxRate: 0.05, // 5% UAE VAT, included in displayed prices (46.00 = 43.81 + 2.19 VAT)
     },

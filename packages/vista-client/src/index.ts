@@ -297,6 +297,8 @@ export class VistaClient {
     UserSessionId: string;
     CinemaId: string;
     Concessions: { ItemId: string; Quantity: number; Modifiers?: string[] }[];
+    /** food-only order for a paid booking: the show it is collected for */
+    SessionId?: string;
   }) {
     return this.request<{ Order: Record<string, any>; FailedConcessions: unknown } & V1Envelope>(
       "POST",

@@ -11,6 +11,16 @@ export type CardActions = {
   playTrailer: (youtubeId: string, title?: string) => void;
 };
 
+/** "G10, G11" → "G10–G11" when the seats run together in one row. */
+export function seatRange(seats?: string) {
+  const parts = (seats ?? "").split(/,\s*/).filter(Boolean);
+  if (parts.length < 2) return seats ?? "";
+  const row = parts[0]!.replace(/\d+$/, "");
+  const nums = parts.map((x) => Number(x.replace(/^[A-Za-z]+/, "")));
+  const run = parts.every((x) => x.startsWith(row)) && nums.every((n, i) => i === 0 || n === nums[i - 1]! + 1);
+  return run ? `${row}${nums[0]}–${row}${nums[nums.length - 1]}` : parts.join(", ");
+}
+
 export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActions }) {
   const items = ui.items ?? [];
   const body = (() => {
@@ -114,6 +124,12 @@ export function routeAction(value: string, label: string, act: CardActions, lang
       return act.say(ar ? "أرني قائمة المأكولات والمشروبات" : "Show me the food and drinks menu");
     case "pay":
       return act.say(ar ? "أريد الدفع الآن بالبطاقة" : "I'd like to pay now by card");
+    case "usual":
+      return act.say(arg === "yes" ? (ar ? `نعم، ${label}` : `Yes — ${label.replace(/ as usual$/, "")}, as usual`) : ar ? "سينما أخرى من فضلك" : "Another cinema, please");
+    case "fnb_usual":
+      return act.say(ar ? "نفس طلب المرة الماضية من فضلك" : "Same as last time, please");
+    case "fnb_skip":
+      return act.say(ar ? "لا طعام، شكراً" : "No food, thanks");
     default:
       return act.say(label);
   }
@@ -322,7 +338,7 @@ function MenuItem({ m, lang, act }: { m: any; lang: Lang; act: CardActions }) {
   return (
     <div className="fnbcard">
       <div className="img" style={{ backgroundImage: `url(${m.imageUrl})` }}>
-        {m.isBestSeller ? <span className="best">{lang === "ar" ? "الأكثر مبيعاً" : "BEST SELLER"}</span> : null}
+        {m.tag ? <span className="best usual">{m.tag}</span> : m.isBestSeller ? <span className="best">{lang === "ar" ? "الأكثر مبيعاً" : "BEST SELLER"}</span> : null}
       </div>
       <div className="b">
         <b title={m.description}>{m.name}</b>
@@ -631,9 +647,23 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
   const wallet = meta.wallet as { sharePoints: number; sharePointsValueCents: number; voxCreditCents: number } | undefined;
   const [tab, setTab] = useState<"bank" | "voucher">("bank");
   const guest = !!meta.guest;
+  const preferred = saved.find((c) => c.token === meta.preferredToken) ?? saved.find((c) => c.default) ?? saved[0];
   const [method, setMethod] = useState<string>(
-    meta.method === "APPLE_PAY" ? "applepay" : meta.method === "SAMSUNG_PAY" ? "samsungpay" : meta.method === "SAVED_CARD" && saved[0] ? `saved:${saved[0].token}` : meta.method === "CARD" && !saved.length ? "new" : "",
+    meta.method === "APPLE_PAY" ? "applepay" : meta.method === "SAMSUNG_PAY" ? "samsungpay" : meta.method === "SAVED_CARD" && preferred ? `saved:${preferred.token}` : meta.method === "CARD" && !saved.length ? "new" : "",
   );
+  const hint = meta.offerHint as { offerId: string; title: string; benefit: string; cardLabel: string; cardToken: string; cardLast4: string } | undefined;
+  const [hintDone, setHintDone] = useState(false);
+  const [guestName, setGuestName] = useState(meta.customer?.name ?? "");
+  const [guestEmail, setGuestEmail] = useState(meta.customer?.email ?? "");
+  const [guestPhone, setGuestPhone] = useState(meta.customer?.phone ?? "");
+  const [left, setLeft] = useState<number | null>(null);
+  useEffect(() => {
+    if (!meta.expiresAtUtc) return;
+    const tick = () => setLeft(Math.max(0, Math.round((new Date(meta.expiresAtUtc).getTime() - Date.now()) / 1000)));
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [meta.expiresAtUtc]);
   const [pan, setPan] = useState("4111 1111 1111 1111");
   const [exp, setExp] = useState("12/29");
   const [cvv, setCvv] = useState("123");
@@ -660,6 +690,11 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
       setErr(ar ? "اختر طريقة الدفع أولاً." : "Please choose a payment method first.");
       return;
     }
+    if (guest && (!guestName.trim() || !/\S+@\S+\.\S+/.test(guestEmail) || guestPhone.replace(/\D/g, "").length < 7)) {
+      setBusy(false);
+      setErr(ar ? "أدخل الاسم والبريد الإلكتروني ورقم الجوال للتذاكر." : "Please enter a name, email and mobile number for the tickets.");
+      return;
+    }
     if (method.startsWith("saved:")) token = method.slice(6);
     else if (method === "applepay") token = `tok_applepay_0000_${Date.now()}`;
     else if (method === "samsungpay") token = `tok_samsungpay_0000_${Date.now()}`;
@@ -670,7 +705,7 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
       const d = pan.replace(/\D/g, "");
       token = d.endsWith("0002") ? `tok_declined_${Date.now()}` : `tok_${d.startsWith("4") ? "visa" : d.startsWith("3") ? "amex" : "mc"}_${d.slice(0, 6)}_${d.slice(-4)}_${Date.now()}`;
     }
-    const r = await act.command({ type: "payment.token", userSessionId: meta.userSessionId, confirmationId: meta.confirmationId, token });
+    const r = await act.command({ type: "payment.token", userSessionId: meta.userSessionId, confirmationId: meta.confirmationId, token, ...(guest ? { customer: { name: guestName.trim(), email: guestEmail.trim(), phone: guestPhone.trim() } } : {}) });
     setBusy(false);
     if (r.ok) {
       setDone(true);
@@ -692,7 +727,39 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
         <span className="done">{ar ? "بياناتك" : "Your Details"}</span>
         <span className="cur">{ar ? "المراجعة والدفع" : "Review & Pay"}</span>
       </div>
+      {!meta.fnbOnly ? (
+        <div className="bookline">
+          <b>{o.filmTitle}</b>
+          <span>{[o.cinemaName, o.showtimeLabel, o.seats ? (ar ? `المقاعد ${seatRange(o.seats)}` : `Seats ${seatRange(o.seats)}`) : null, `${(o.tickets ?? []).length} ${ar ? "تذكرة" : (o.tickets ?? []).length === 1 ? "ticket" : "tickets"}`].filter(Boolean).join(" · ")}</span>
+          {left != null ? <em className={`hold ${left <= 45 ? "urgent" : left <= 120 ? "warn" : ""}`}>{ar ? "محجوزة" : "Held"} {`${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}</em> : null}
+        </div>
+      ) : null}
+      {hint && !hintDone && !guest ? (
+        <div className="offerhint">
+          <div>
+            <b>{ar ? `بطاقتك ${hint.cardLabel} مؤهلة` : `Your ${hint.cardLabel} qualifies`}</b>
+            <span>{hint.title} — {hint.benefit}</span>
+          </div>
+          <button
+            className="btn cta small"
+            onClick={() => {
+              setHintDone(true);
+              act.say(ar ? `طبّق عرض ${hint.title} باستخدام بطاقتي المنتهية بـ ${hint.cardLast4}` : `Apply the ${hint.title} offer with my card ending ${hint.cardLast4}`);
+            }}
+          >
+            {ar ? "تطبيق العرض" : "Use offer"}
+          </button>
+        </div>
+      ) : null}
 
+      {guest && !meta.customer?.email ? (
+        <div className="guestdetails">
+          <h5>{ar ? "بياناتك للتذاكر" : "Your details for the tickets"}</h5>
+          <input placeholder={ar ? "الاسم الكامل" : "Full name"} value={guestName} onChange={(e) => setGuestName(e.target.value)} autoComplete="name" />
+          <input placeholder={ar ? "البريد الإلكتروني" : "Email"} value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} autoComplete="email" inputMode="email" />
+          <input placeholder={ar ? "رقم الجوال" : "Mobile number"} value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} autoComplete="tel" inputMode="tel" />
+        </div>
+      ) : null}
       {guest ? (
         <div className="loginnudge">
           <b>{ar ? "سجّل الدخول أو أنشئ حساباً" : "Log in or create an account"}</b>

@@ -62,7 +62,7 @@ export function loadConciergeConfig(env = process.env): ConciergeConfig {
     },
     paymentAdapter: "simulated",
     confirmationTtlSeconds: Number(env.CONFIRMATION_TTL_SECONDS ?? 300),
-    orderExpiryMinutes: Number(env.VISTA_MOCK_ORDER_EXPIRY_MINUTES ?? 10),
+    orderExpiryMinutes: Number(env.VISTA_MOCK_ORDER_EXPIRY_MINUTES ?? 6),
   };
 }
 

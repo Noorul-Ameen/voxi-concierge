@@ -12,7 +12,7 @@ import { appendEvent } from "../events.js";
 import type { Catalog } from "../services/catalog.js";
 import { markJourney, updateConversation } from "../services/conversation.js";
 import { fmtDateTime, joinList, money, onDateTime, seatLabels, t } from "../services/format.js";
-import { bookingCard, orderSummary } from "../tools/index.js";
+import { bookingCard, orderSummary, seatRange } from "../tools/index.js";
 import { type ActionRow, complete, fail } from "./ledger.js";
 
 /** "RF-7K2M9Q" style refund number derived from the Vista refund id (letters/digits that are easy to say). */
@@ -434,10 +434,15 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         );
       }
       const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cname(ctx, sess.cinemaId));
+      const tier = /PREFERRED/i.test(s.tickets[0]?.description ?? "")
+        ? "Preferred View"
+        : /PREMIUM/i.test(s.tickets[0]?.description ?? "")
+          ? "Premium"
+          : "";
       const speech = t(
         ctx.lang,
-        `Done — ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} added and I've held seats ${s.seats} (${/PREFERRED/i.test(s.tickets[0]?.description ?? "") ? "Preferred View" : /PREMIUM/i.test(s.tickets[0]?.description ?? "") ? "Premium" : "Regular"}). Subtotal ${money(s.totalCents, "en")}.${offerNotes.length ? ` ${offerNotes.join(" ")}` : ""} Happy with those seats, or would you like to pick from the map? You can also add popcorn and drinks.`,
-        `تم — أضفت ${s.tickets.length} تذكرة وحجزت المقاعد ${s.seats}. الإجمالي ${money(s.totalCents, "ar")}.${offerNotes.length ? ` ${offerNotes.join(" ")}` : ""} هل تناسبك هذه المقاعد أم تفضل الاختيار من الخريطة؟ يمكنك أيضاً إضافة الفشار والمشروبات.`,
+        `${s.tickets.length} seat${s.tickets.length === 1 ? "" : "s"} held: ${seatRange(s.seats)}${tier ? ` (${tier})` : ""}, ${money(s.totalCents, "en")}.${offerNotes.length ? ` ${offerNotes.join(" ")}` : ""} Change seats, add food, or pay?`,
+        `تم حجز ${s.tickets.length} ${s.tickets.length === 1 ? "مقعد" : "مقاعد"}: ${seatRange(s.seats)}، ${money(s.totalCents, "ar")}.${offerNotes.length ? ` ${offerNotes.join(" ")}` : ""} تغيير المقاعد، إضافة طعام، أم الدفع؟`,
       );
       await appendEvent(ctx.db, ctx.events, a.conversationId, "order.updated", {
         userSessionId: inp.userSessionId,
@@ -522,8 +527,8 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         : "";
       const speech = t(
         ctx.lang,
-        `Seats ${s.seats} are yours${tierNote}. Total so far ${money(s.totalCents, "en")}. Want to add food and drinks, apply an offer, or go to payment?`,
-        `المقاعد ${s.seats} لك. الإجمالي حتى الآن ${money(s.totalCents, "ar")}. هل تريد إضافة طعام أو تطبيق عرض أو الانتقال إلى الدفع؟`,
+        `${seatRange(s.seats)} — done${tierNote}. ${money(s.totalCents, "en")}. Food, or straight to payment?`,
+        `${seatRange(s.seats)} — تم${tierNote}. ${money(s.totalCents, "ar")}. طعام، أم الدفع مباشرة؟`,
       );
       return {
         result: { speech, order: s },
@@ -607,8 +612,8 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       const addedText = added.map((c) => `${c.quantity}× ${c.description}`).join(", ");
       const speech = t(
         ctx.lang,
-        `${removed.length ? `${removed.join(", ")} removed. ` : ""}${addedText ? `${addedText} added` : removed.length ? "" : "Nothing changed"}${failed.length ? ` (couldn't add ${failed.map((f) => f.ItemId).join(", ")})` : ""}${addedText || !removed.length ? ". " : ""}Total is now ${money(s.totalCents, "en")}. Anything else, or shall we pay?`,
-        `${removed.length ? `تمت إزالة ${removed.join("، ")}. ` : ""}${addedText ? `تمت إضافة ${addedText}. ` : ""}الإجمالي الآن ${money(s.totalCents, "ar")}. هل تريد شيئاً آخر أم ننتقل إلى الدفع؟`,
+        `${removed.length ? `${removed.join(", ")} removed. ` : ""}${addedText ? `${addedText} added` : removed.length ? "" : "Nothing changed"}${failed.length ? ` (couldn't add ${failed.map((f) => f.ItemId).join(", ")})` : ""}${addedText || !removed.length ? ". " : ""}${money(s.totalCents, "en")} in total. Pay now?`,
+        `${removed.length ? `تمت إزالة ${removed.join("، ")}. ` : ""}${addedText ? `تمت إضافة ${addedText}. ` : ""}الإجمالي ${money(s.totalCents, "ar")}. الدفع الآن؟`,
       );
       return {
         result: { speech, order: s, failed },
@@ -703,6 +708,8 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       };
       const cur = await ctx.vista.getOrder(inp.userSessionId);
       if (!cur.Order) throw new ActionError("NOT_FOUND", "No active order");
+      if (!inp.customer?.email || !inp.customer?.name)
+        throw new ActionError("VALIDATION", "A name, email and mobile number are needed for the tickets");
       const total = cur.Order.TotalValueCents as number;
       const tender =
         inp.method === "VOX_CREDIT"
@@ -736,19 +743,29 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         });
       const b = pay.Booking!;
       ctx.catalog.invalidateSessions(b.CinemaId);
+      const fnbOrderPaid =
+        (ctx.conversation.metadata as { fnbOrder?: string })?.fnbOrder === inp.userSessionId;
       await updateConversation(ctx.db, a.conversationId, {
         metadata: {
           ...(ctx.conversation.metadata ?? {}),
           activeOrder: null,
-          lastBookingId: b.VistaBookingId,
+          fnbOrder: null,
+          ...(fnbOrderPaid ? { lastFnbBookingId: b.VistaBookingId } : { lastBookingId: b.VistaBookingId }),
         },
       });
       const card = bookingCard(b, ctx.lang, ctx.nowLocal, await cname(ctx, b.CinemaId));
-      const speech = t(
-        ctx.lang,
-        `Payment confirmed! Your booking reference is ${b.VistaBookingId} — ${card.ticketCount} ticket${card.ticketCount === 1 ? "" : "s"} for ${b.FilmTitle}, ${card.showtimeLabel} at ${card.cinemaName}, seats ${card.seats}. Your QR code is on screen now and the tickets have been emailed to ${inp.customer.email}. Just scan the QR at the entrance — no need to print. Enjoy the movie!`,
-        `تم الدفع! رقم حجزك ${b.VistaBookingId} — ${card.ticketCount} تذاكر لفيلم ${b.FilmTitle}، ${card.showtimeLabel} في ${card.cinemaName}، المقاعد ${card.seats}. رمز QR ظاهر الآن على الشاشة وأُرسلت التذاكر إلى ${inp.customer.email}. امسح الرمز عند المدخل فقط. استمتع بالفيلم!`,
-      );
+      const fnbOnly = card.ticketCount === 0;
+      const speech = fnbOnly
+        ? t(
+            ctx.lang,
+            `Done — food order ${b.VistaBookingId} is paid. Show the QR at the Candy Bar and it'll be ready for you. Enjoy the show!`,
+            `تم — طلب الطعام ${b.VistaBookingId} مدفوع. أظهر رمز QR عند الكاندي بار وسيكون جاهزاً. استمتع بالعرض!`,
+          )
+        : t(
+            ctx.lang,
+            `You're booked — reference ${b.VistaBookingId}. The QR is on screen and the tickets are in your email; just scan it at the entrance. Want popcorn or a drink for the show?`,
+            `تم الحجز — الرقم ${b.VistaBookingId}. رمز QR على الشاشة والتذاكر في بريدك؛ امسحه عند المدخل. هل تريد فشاراً أو مشروباً للعرض؟`,
+          );
       return {
         result: { speech, bookingId: b.VistaBookingId, qrPayload: b.QrPayload, booking: card },
         ui: {

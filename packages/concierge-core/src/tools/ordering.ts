@@ -119,6 +119,298 @@ async function enqueueOrderAction(
   );
 }
 
+export type OfferHint = {
+  offerId: string;
+  title: string;
+  benefit: string;
+  cardLabel: string;
+  cardToken: string;
+  cardBin: string;
+  cardLast4: string;
+};
+
+const brandName = (b: string) =>
+  b === "MASTERCARD" ? "Mastercard" : b === "VISA" ? "Visa" : b === "AMEX" ? "Amex" : "card";
+
+/**
+ * "Your ADCB Visa ending 2211 gets buy-one-get-one on this" — only when the basket already qualifies
+ * (ticket count, day, experience, monthly limit…); the card itself is the one thing still to verify.
+ */
+export async function savedCardOfferHint(
+  ctx: ToolCtx,
+  sessionKey: string | undefined,
+  cinemaId: string,
+  ticketCount: number,
+  customer: Record<string, any>,
+): Promise<OfferHint | null> {
+  const cards = (customer.savedCards ?? []) as {
+    token: string;
+    brand: string;
+    first6: string;
+    last4: string;
+  }[];
+  if (!cards.length) return null;
+  const { offers } = await ctx.vista
+    .offers({
+      sessionKey,
+      cinemaId,
+      type: "bank",
+      memberId: ctx.conversation.memberId ?? undefined,
+      ticketCount,
+    })
+    .catch(() => ({ offers: [] as Record<string, any>[] }));
+  for (const o of offers) {
+    const bins: string[] = o.rules?.bankBins ?? [];
+    const card = cards.find((c) => bins.some((b) => c.first6.startsWith(b)));
+    if (!card) continue;
+    // eligible apart from the card check itself
+    const elig = await ctx.vista
+      .offerEligibility(o.id, {
+        sessionKey,
+        memberId: ctx.conversation.memberId,
+        cardBin: card.first6,
+        ticketCount,
+      })
+      .catch(() => null);
+    if (!elig?.eligible) continue;
+    return {
+      offerId: o.id,
+      title: o.title,
+      benefit: describeBenefit(o.benefit, ctx.lang),
+      cardLabel: `${o.rules?.bankName ?? ""} ${brandName(card.brand)} ending ${card.last4}`.trim(),
+      cardToken: card.token,
+      cardBin: card.first6,
+      cardLast4: card.last4,
+    };
+  }
+  return null;
+}
+
+/** Review & Pay: the payment summary + confirmation + sheet. Shared by prepare_payment, quick_book, recovery and F&B orders. */
+export async function reviewAndPay(
+  ctx: ToolCtx,
+  input: { userSessionId: string; method: string; customer?: { name: string; email: string; phone: string } },
+  extra: { offerHint?: OfferHint; fnbOnly?: boolean },
+) {
+  const r = await ctx.vista.getOrder(input.userSessionId);
+  if (!r.Order)
+    return err(
+      ErrorCodes.NOT_FOUND,
+      t(ctx.lang, "There's no active order to pay for.", "لا يوجد طلب نشط للدفع."),
+    );
+  const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cinemaName(ctx, r.Order.CinemaId));
+  const fnbOnly = extra.fnbOnly || (!s.tickets.length && s.concessions.length > 0);
+  if (s.state === "expired")
+    return err(
+      ErrorCodes.ORDER_EXPIRED,
+      t(
+        ctx.lang,
+        "The seat hold expired — I'll get those seats back.",
+        "انتهى الحجز المؤقت للمقاعد — سأستعيدها.",
+      ),
+    );
+  if (!fnbOnly && !s.seatsAllocated)
+    return err(
+      ErrorCodes.ORDER_INVALID_STATE,
+      t(
+        ctx.lang,
+        "Seats haven't been chosen yet. Shall I pick the best available?",
+        "لم يتم اختيار المقاعد بعد. هل أختار الأفضل المتاح؟",
+      ),
+    );
+  let customer = input.customer;
+  let savedCards: {
+    token: string;
+    brand: string;
+    masked: string;
+    expiry: string;
+    default: boolean;
+    first6?: string;
+    last4?: string;
+  }[] = [];
+  let wallet: { sharePoints: number; sharePointsValueCents: number; voxCreditCents: number } | undefined;
+  const c = ctx.conversation.customerId ? await loadCustomer(ctx) : null;
+  if (c) {
+    customer ??= { name: `${c.firstName} ${c.lastName}`, email: c.email, phone: c.phone };
+    savedCards = (c.savedCards ?? []) as typeof savedCards;
+    if (ctx.conversation.memberId) {
+      const bal = await ctx.vista
+        .balances(ctx.conversation.memberId)
+        .catch(() => ({ Balances: [] as any[] }));
+      const pts = bal.Balances.find((x) => x.BalanceTypeId === "SHARE_POINTS");
+      const cr = bal.Balances.find((x) => x.BalanceTypeId === "VOX_REWARDS");
+      wallet = {
+        sharePoints: pts?.Points ?? 0,
+        sharePointsValueCents: pts?.ValueCents ?? 0,
+        voxCreditCents: cr?.ValueCents ?? 0,
+      };
+    }
+  }
+  let method = input.method;
+  if (method === "SAVED_CARD" && !savedCards.length) method = "CARD";
+  const sheetMethods = ["CARD", "SAVED_CARD", "APPLE_PAY", "SAMSUNG_PAY", "GOOGLE_PAY"];
+  const usesSheet = sheetMethods.includes(method);
+  // guests type name / email / mobile straight into the Review & Pay sheet — no separate question
+  if (!customer && !usesSheet)
+    return err(
+      ErrorCodes.VALIDATION,
+      t(
+        ctx.lang,
+        "I need a name, email and mobile number for the tickets. What should I use?",
+        "أحتاج الاسم والبريد الإلكتروني ورقم الجوال للتذاكر. ما هي البيانات؟",
+      ),
+    );
+  if (method === "VOX_CREDIT" || method === "SHARE_POINTS") {
+    if (!ctx.conversation.memberId)
+      return err(
+        ErrorCodes.LOGIN_REQUIRED,
+        t(
+          ctx.lang,
+          "Please log in to pay with VOX credit or Share Points.",
+          "يرجى تسجيل الدخول للدفع برصيد فوكس أو نقاط شير.",
+        ),
+      );
+    const bal = await ctx.vista.balances(ctx.conversation.memberId);
+    const b = bal.Balances.find(
+      (x) => x.BalanceTypeId === (method === "VOX_CREDIT" ? "VOX_REWARDS" : "SHARE_POINTS"),
+    )!;
+    if (b.ValueCents < s.totalCents)
+      return err(
+        ErrorCodes.INSUFFICIENT_POINTS,
+        t(
+          ctx.lang,
+          `Your ${method === "VOX_CREDIT" ? "VOX credit" : "Share Points"} cover ${money(b.ValueCents, ctx.lang)} of the ${s.total} total. I can apply them and take the rest by card — shall I?`,
+          `رصيدك يغطي ${money(b.ValueCents, "ar")} من الإجمالي ${s.total}. يمكنني تطبيقه ودفع الباقي بالبطاقة — هل أفعل؟`,
+        ),
+      );
+  }
+  const isGuest = !c;
+  const sessionKey = (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey;
+  const bankOffers =
+    isGuest || fnbOnly
+      ? []
+      : await ctx.vista
+          .offers({
+            sessionKey,
+            cinemaId: s.cinemaId,
+            type: "bank",
+            memberId: ctx.conversation.memberId ?? undefined,
+            ticketCount: s.tickets.length,
+          })
+          .then((r) =>
+            (r.offers ?? [])
+              .filter((o: any) => o.rules?.bankName)
+              .slice(0, 8)
+              .map((o: any) => ({
+                offerId: o.id,
+                title: o.title,
+                benefit: describeBenefit(o.benefit, ctx.lang),
+                imageUrl: o.imageUrl,
+                bankName: o.rules?.bankName,
+                cardDigits: o.rules?.cardDigits ?? { first: 6, last: 4 },
+                monthlyLimit: o.rules?.monthlyLimit,
+                requiresMember: !!o.rules?.membersOnly,
+                eligible: o.eligibility?.eligible || (o.eligibility?.requires ?? []).includes("card"),
+              })),
+          )
+          .catch(() => []);
+  // which saved card to pre-select: the one carrying an applicable offer, else the default card
+  const hint =
+    extra.offerHint ??
+    (c && !fnbOnly && s.tickets.length
+      ? await savedCardOfferHint(ctx, sessionKey, s.cinemaId, s.tickets.length, c)
+      : null);
+  const preferredToken = hint?.cardToken ?? savedCards.find((x) => x.default)?.token ?? savedCards[0]?.token;
+  const summary = {
+    userSessionId: input.userSessionId,
+    method,
+    amountCents: s.totalCents,
+    customer: customer ?? { name: "", email: "", phone: "" },
+    memberId: ctx.conversation.memberId ?? undefined,
+    customerId: ctx.conversation.customerId ?? undefined,
+    filmTitle: s.filmTitle,
+    showtime: s.showtime,
+    seats: s.seats,
+    cinemaId: s.cinemaId,
+    fnbOnly,
+  };
+  const items = fnbOnly
+    ? joinList(s.concessions.map((x) => `${x.quantity}× ${x.description}`))
+    : `${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"}, seats ${s.seats}${s.concessions.length ? ` + ${joinList(s.concessions.map((x) => `${x.quantity}× ${x.description}`))}` : ""}`;
+  // Short by design: the sheet on screen carries the detail; the voice line only says what is needed to confirm.
+  const spoken = usesSheet
+    ? t(
+        ctx.lang,
+        `${s.total} — ${items}. ${preferredToken && method === "SAVED_CARD" ? `Your ${brandName(savedCards.find((x) => x.token === preferredToken)?.brand ?? "")} ending ${(savedCards.find((x) => x.token === preferredToken)?.masked ?? "").slice(-4)} is selected — tap Pay when ready.` : isGuest && !customer ? "Pop your name, email and mobile into the sheet, choose card, Apple Pay or Samsung Pay, and tap Pay." : "Complete the payment in the sheet on screen."}`,
+        `${s.total} — ${items}. ${preferredToken && method === "SAVED_CARD" ? "بطاقتك المحفوظة محددة — اضغط ادفع عندما تكون جاهزاً." : isGuest && !customer ? "أدخل اسمك وبريدك ورقم جوالك في النافذة، اختر طريقة الدفع، ثم اضغط ادفع." : "أكمل الدفع في النافذة على الشاشة."}`,
+      )
+    : t(
+        ctx.lang,
+        `${s.total} — ${items}, paying with ${method === "VOX_CREDIT" ? "VOX credit" : "Share Points"}. Shall I proceed?`,
+        `${s.total} — ${items}، الدفع بـ${method === "VOX_CREDIT" ? "رصيد فوكس" : "نقاط شير"}. هل أتابع؟`,
+      );
+  const conf = await createConfirmation(ctx.db, {
+    conversationId: ctx.conversation.id,
+    actionType: "pay_order",
+    resourceKey: `order:${input.userSessionId}`,
+    summary,
+    spokenSummary: spoken,
+    ttlSeconds: ctx.cfg.confirmationTtlSeconds,
+  });
+  return ok(
+    {
+      confirmationId: conf.id,
+      summary: { ...summary, order: s },
+      offerHint: hint ?? undefined,
+      sheet: {
+        preferredToken,
+        guest: isGuest,
+        requiresSheet: usesSheet,
+        fnbOnly,
+        expiresAtUtc: s.expiresAtUtc,
+        customerKnown: !!customer,
+      },
+    },
+    spoken,
+    {
+      type: "payment",
+      title: fnbOnly
+        ? t(ctx.lang, "Food & drinks — Review & Pay", "المأكولات — المراجعة والدفع")
+        : t(ctx.lang, "Review & Pay", "المراجعة والدفع"),
+      items: [{ ...s, method, customer }],
+      meta: {
+        confirmationId: conf.id,
+        userSessionId: input.userSessionId,
+        method,
+        amountCents: s.totalCents,
+        vat: { beforeVatCents: s.totalCents - s.taxCents, vatCents: s.taxCents, rate: 5 },
+        savedCards,
+        preferredToken,
+        offerHint: hint ?? undefined,
+        wallet,
+        bankOffers,
+        customer: customer ?? undefined,
+        guest: isGuest,
+        requiresSheet: usesSheet,
+        fnbOnly,
+        expiresAtUtc: s.expiresAtUtc,
+        sessionKey,
+      },
+      actions:
+        method === "VOX_CREDIT" || method === "SHARE_POINTS"
+          ? [
+              {
+                label: t(ctx.lang, "Confirm payment", "تأكيد الدفع"),
+                value: `confirm:${conf.id}`,
+                style: "primary",
+              },
+              { label: t(ctx.lang, "Cancel", "إلغاء"), value: "abort" },
+            ]
+          : [],
+    },
+  );
+}
+
 export const orderingTools: Pick<
   ToolHandlers,
   | "browse_menu"
@@ -677,183 +969,7 @@ export const orderingTools: Pick<
   },
 
   async prepare_payment(ctx, input) {
-    const r = await ctx.vista.getOrder(input.userSessionId);
-    if (!r.Order)
-      return err(
-        ErrorCodes.NOT_FOUND,
-        t(ctx.lang, "There's no active order to pay for.", "لا يوجد طلب نشط للدفع."),
-      );
-    const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cinemaName(ctx, r.Order.CinemaId));
-    if (s.state === "expired")
-      return err(
-        ErrorCodes.ORDER_EXPIRED,
-        t(ctx.lang, "The order expired — let's start again.", "انتهت صلاحية الطلب — لنبدأ من جديد."),
-      );
-    if (!s.seatsAllocated)
-      return err(
-        ErrorCodes.ORDER_INVALID_STATE,
-        t(
-          ctx.lang,
-          "Seats haven't been chosen yet. Shall I pick the best available?",
-          "لم يتم اختيار المقاعد بعد. هل أختار الأفضل المتاح؟",
-        ),
-      );
-    let customer = input.customer;
-    // logged-in members: pre-fill details and surface stored cards + balances, like the real "Review & pay" step
-    let savedCards: { token: string; brand: string; masked: string; expiry: string; default: boolean }[] = [];
-    let wallet: { sharePoints: number; sharePointsValueCents: number; voxCreditCents: number } | undefined;
-    // unknown / stale customer ids (e.g. a widget reloaded after a reseed) fall back to the guest path
-    const c = ctx.conversation.customerId ? await loadCustomer(ctx) : null;
-    if (c) {
-      customer ??= { name: `${c.firstName} ${c.lastName}`, email: c.email, phone: c.phone };
-      savedCards = (c.savedCards ?? []) as typeof savedCards;
-      if (ctx.conversation.memberId) {
-        const bal = await ctx.vista
-          .balances(ctx.conversation.memberId)
-          .catch(() => ({ Balances: [] as any[] }));
-        const pts = bal.Balances.find((x) => x.BalanceTypeId === "SHARE_POINTS");
-        const cr = bal.Balances.find((x) => x.BalanceTypeId === "VOX_REWARDS");
-        wallet = {
-          sharePoints: pts?.Points ?? 0,
-          sharePointsValueCents: pts?.ValueCents ?? 0,
-          voxCreditCents: cr?.ValueCents ?? 0,
-        };
-      }
-    }
-    if (!customer)
-      return err(
-        ErrorCodes.VALIDATION,
-        t(
-          ctx.lang,
-          "I need a name, email and mobile number for the tickets. What should I use?",
-          "أحتاج الاسم والبريد الإلكتروني ورقم الجوال للتذاكر. ما هي البيانات؟",
-        ),
-      );
-    if (input.method === "VOX_CREDIT" || input.method === "SHARE_POINTS") {
-      if (!ctx.conversation.memberId)
-        return err(
-          ErrorCodes.LOGIN_REQUIRED,
-          t(
-            ctx.lang,
-            "Please log in to pay with VOX credit or Share Points.",
-            "يرجى تسجيل الدخول للدفع برصيد فوكس أو نقاط شير.",
-          ),
-        );
-      const bal = await ctx.vista.balances(ctx.conversation.memberId);
-      const b = bal.Balances.find(
-        (x) => x.BalanceTypeId === (input.method === "VOX_CREDIT" ? "VOX_REWARDS" : "SHARE_POINTS"),
-      )!;
-      if (b.ValueCents < s.totalCents)
-        return err(
-          ErrorCodes.INSUFFICIENT_POINTS,
-          t(
-            ctx.lang,
-            `Your ${input.method === "VOX_CREDIT" ? "VOX credit" : "Share Points"} cover ${money(b.ValueCents, ctx.lang)} of the ${s.total} total. I can apply them and take the rest by card — shall I?`,
-            `رصيدك يغطي ${money(b.ValueCents, "ar")} من الإجمالي ${s.total}. يمكنني تطبيقه ودفع الباقي بالبطاقة — هل أفعل؟`,
-          ),
-        );
-    }
-    const sheetMethods = ["CARD", "SAVED_CARD", "APPLE_PAY", "SAMSUNG_PAY", "GOOGLE_PAY"];
-    const usesSheet = sheetMethods.includes(input.method);
-    const methodText = {
-      CARD: t(ctx.lang, "card", "البطاقة"),
-      SAVED_CARD: savedCards.length
-        ? t(
-            ctx.lang,
-            `your saved card ending ${savedCards[0]!.masked.slice(-4)}`,
-            `بطاقتك المحفوظة المنتهية بـ ${savedCards[0]!.masked.slice(-4)}`,
-          )
-        : t(ctx.lang, "card", "البطاقة"),
-      VOX_CREDIT: t(ctx.lang, "VOX credit", "رصيد فوكس"),
-      SHARE_POINTS: t(ctx.lang, "Share Points", "نقاط شير"),
-      APPLE_PAY: "Apple Pay",
-      SAMSUNG_PAY: "Samsung Pay",
-      GOOGLE_PAY: "Google Pay",
-    }[input.method];
-    // bank offers for this session — the real "Review & pay" step lists them with a card-verification box.
-    // Guests never see them: bank offers require a VOX account.
-    const sessionKey = (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey;
-    const isGuest = !c;
-    const bankOffers = isGuest
-      ? []
-      : await ctx.vista
-          .offers({
-            sessionKey,
-            cinemaId: s.cinemaId,
-            type: "bank",
-            memberId: ctx.conversation.memberId ?? undefined,
-          })
-          .then((r) =>
-            (r.offers ?? [])
-              .filter((o: any) => o.rules?.bankName)
-              .slice(0, 8)
-              .map((o: any) => ({
-                offerId: o.id,
-                title: o.title,
-                benefit: describeBenefit(o.benefit, ctx.lang),
-                imageUrl: o.imageUrl,
-                bankName: o.rules?.bankName,
-                cardDigits: o.rules?.cardDigits ?? { first: 6, last: 4 },
-                monthlyLimit: o.rules?.monthlyLimit,
-                requiresMember: !!o.rules?.membersOnly,
-                eligible: o.eligibility?.eligible,
-              })),
-          )
-          .catch(() => []);
-    const summary = {
-      userSessionId: input.userSessionId,
-      method: input.method,
-      amountCents: s.totalCents,
-      customer,
-      memberId: ctx.conversation.memberId ?? undefined,
-      customerId: ctx.conversation.customerId ?? undefined,
-      filmTitle: s.filmTitle,
-      showtime: s.showtime,
-      seats: s.seats,
-      cinemaId: s.cinemaId,
-    };
-    const spoken = t(
-      ctx.lang,
-      `To confirm: ${s.tickets.length} ticket${s.tickets.length === 1 ? "" : "s"} for ${s.filmTitle}, ${s.showtimeLabel} at ${s.cinemaName}, seats ${s.seats}${s.concessions.length ? `, with ${joinList(s.concessions.map((c) => `${c.quantity}× ${c.description}`))}` : ""}. Total ${s.total}, paying by ${methodText} for ${customer.name}, tickets to ${customer.email}. ${usesSheet ? `I've opened the secure payment sheet${savedCards.length && input.method === "SAVED_CARD" ? ` with your ${savedCards[0]!.brand === "MASTERCARD" ? "Mastercard" : savedCards[0]!.brand === "VISA" ? "Visa" : "card"} ending ${savedCards[0]!.masked.slice(-4)} selected` : ""} — complete it there and I'll confirm.${isGuest ? " Log in or create an account to view eligible offers and earn Share Points." : ""}` : "Shall I complete the payment?"}`,
-      `للتأكيد: ${s.tickets.length} تذكرة لفيلم ${s.filmTitle}، ${s.showtimeLabel} في ${s.cinemaName}، المقاعد ${s.seats}. الإجمالي ${s.total}، الدفع عبر ${methodText} باسم ${customer.name}، وتُرسل التذاكر إلى ${customer.email}. ${usesSheet ? `فتحت نافذة الدفع الآمن — أكمل الدفع هناك وسأؤكد.${isGuest ? " سجّل الدخول أو أنشئ حساباً لعرض العروض المؤهلة وكسب نقاط شير." : ""}` : "هل أكمل الدفع؟"}`,
-    );
-    const conf = await createConfirmation(ctx.db, {
-      conversationId: ctx.conversation.id,
-      actionType: "pay_order",
-      resourceKey: `order:${input.userSessionId}`,
-      summary,
-      spokenSummary: spoken,
-      ttlSeconds: ctx.cfg.confirmationTtlSeconds,
-    });
-    return ok({ confirmationId: conf.id, summary: { ...summary, order: s } }, spoken, {
-      type: "payment",
-      title: t(ctx.lang, "Payment", "الدفع"),
-      items: [{ ...s, method: input.method, customer }],
-      meta: {
-        confirmationId: conf.id,
-        userSessionId: input.userSessionId,
-        method: input.method,
-        amountCents: s.totalCents,
-        vat: { beforeVatCents: s.totalCents - s.taxCents, vatCents: s.taxCents, rate: 5 },
-        savedCards,
-        wallet,
-        bankOffers,
-        customer,
-        guest: isGuest,
-        requiresSheet: usesSheet,
-      },
-      actions:
-        input.method === "VOX_CREDIT" || input.method === "SHARE_POINTS"
-          ? [
-              {
-                label: t(ctx.lang, "Confirm payment", "تأكيد الدفع"),
-                value: `confirm:${conf.id}`,
-                style: "primary",
-              },
-              { label: t(ctx.lang, "Cancel", "إلغاء"), value: "abort" },
-            ]
-          : [],
-    });
+    return reviewAndPay(ctx, input, {});
   },
 
   async pay_order(ctx, input) {
