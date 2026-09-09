@@ -654,6 +654,7 @@ function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, 
       </div>
       <div className="selseats">
         <b>{lang === "ar" ? "مقاعدك المختارة:" : "Your Selected Seats:"}</b>
+        <p className="muted">{lang === "ar" ? "الأسعار تقديرية للتذاكر العادية للبالغين. قد تختلف أسعار الأعضاء والأطفال والعروض. يظهر الإجمالي النهائي في طلبك." : "Standard adult estimates. Member and child fares and offers may differ. Your order shows the final total."}</p>
         {picked.length ? (
           Object.entries(groups).map(([area, n]) => (
             <div key={area}>
@@ -667,7 +668,7 @@ function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, 
         {picked.length && subtotal ? (
           <div className="sub">
             <span>{picked.map((p) => `${p.row}-${p.number}`).join(", ")}</span>
-            <b>{money(subtotal, lang)}</b>
+            <b>{lang === "ar" ? "التقدير" : "Estimate"}: {money(subtotal, lang)}</b>
           </div>
         ) : null}
       </div>
