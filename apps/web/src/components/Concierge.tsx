@@ -576,7 +576,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
             <p>{t(lang, "connecting")}</p>
           </div>
         ) : null}
-        {mode === "idle" && !items.length ? (
+        {mode === "idle" && !connected && items.every((i) => i.kind === "note") ? (
           <div className="start">
             <div className="hero-orb"><i /><i /><i /></div>
             <h3>{lang === "ar" ? "مرحباً، أنا فوكسي" : "Hi, I'm Voxi"}</h3>
