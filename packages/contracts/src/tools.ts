@@ -748,7 +748,7 @@ export const CLIENT_TOOLS = {
   },
   render_seat_map: {
     description:
-      "Draw the interactive seat map for the current order on the guest's screen (the widget fetches the live seat plan itself). Returns whether the map is on screen.",
+      "Fetch and draw the live interactive seat map in the widget, then return whether it is on screen. For a spoken request to see the map, prefer server get_seat_plan, which fetches and renders it in one call. If this client tool is used, await its result and say the map is open only when ok:true and rendered:true. An order summary is not a seat map.",
     params: z.object({ sessionKey: z.string(), userSessionId: z.string().optional() }),
   },
   render_order_summary: {

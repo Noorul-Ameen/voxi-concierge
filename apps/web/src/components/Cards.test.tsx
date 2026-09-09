@@ -2,11 +2,32 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Customer } from "../lib/api";
 import { AccountPanel } from "./AccountPanel";
-import { Cards, type CardActions } from "./Cards";
+import { Cards, routeAction, seatPlanCommand, type CardActions } from "./Cards";
 
 const act: CardActions = { say: () => undefined, command: async () => ({ ok: true }), openLink: () => undefined, playTrailer: () => undefined };
 
 describe("concierge decision cards", () => {
+  it("opens the card's verified seat map directly in either language without asking the agent", async () => {
+    const commands: Record<string, unknown>[] = [];
+    const messages: string[] = [];
+    const actions: CardActions = { ...act, command: async (command) => { commands.push(command); return { ok: true }; }, say: (message) => { messages.push(message); } };
+    const ui = { type: "order", meta: { sessionKey: "cinema-current-show", userSessionId: "current-order" }, items: [{ cinemaId: "older-cinema", sessionId: "older-show", userSessionId: "older-order" }] };
+    await routeAction("seats:open", "Change seats", actions, "en", ui);
+    await routeAction("seatmap:open", "تغيير المقاعد", actions, "ar", ui);
+    expect(commands.filter((command) => command.type === "seat.plan")).toEqual([
+      { type: "seat.plan", sessionKey: "cinema-current-show", userSessionId: "current-order" },
+      { type: "seat.plan", sessionKey: "cinema-current-show", userSessionId: "current-order" },
+    ]);
+    expect(messages).toEqual([]);
+  });
+
+  it("uses legacy order summary IDs and disables unavailable seat-map controls", () => {
+    expect(seatPlanCommand({ type: "order", items: [{ cinemaId: "cinema", sessionId: "show", userSessionId: "held-order" }] }))
+      .toEqual({ type: "seat.plan", sessionKey: "cinema-show", userSessionId: "held-order" });
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "order", items: [{ tickets: [], totalCents: 0 }], actions: [{ value: "seats:open", label: "Change seats" }] }} />);
+    expect(html).toMatch(/disabled=""[^>]*>Choose seats/);
+  });
+
   it("shows preserved expired booking choices with localized recovery controls and no payment", () => {
     const ui = { type: "order", title: "Your booking", meta: { expired: true }, items: [{ filmTitle: "The Journey", cinemaName: "Mall of the Emirates", showtime: "2026-09-12T19:15:00", tickets: [{ seat: "G8" }, { seat: "G9" }], concessions: [{ quantity: 1, description: "Popcorn" }], totalCents: 14000 }], actions: [{ label: "Check seats again", value: "recover:confirm" }, { label: "Another show", value: "booking:restart" }, { label: "Pay now", value: "pay:start" }, { label: "Edit seats", value: "seats:open" }] };
     const en = renderToStaticMarkup(<Cards lang="en" act={act} ui={ui} />);

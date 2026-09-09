@@ -9,7 +9,7 @@ import { isRtl, t } from "../lib/i18n";
 import { type CardActions, Cards, Feedback, seatRange } from "./Cards";
 import { type Loc, LocationBar } from "./LocationBar";
 import { AccountPanel } from "./AccountPanel";
-import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, holdSeconds, recordUserActivity, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
+import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, holdSeconds, recordUserActivity, renderVerifiedSeatMap, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
 
 
 const nid = () => crypto.randomUUID();
@@ -212,15 +212,13 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         return "The widget renders validated server tool results automatically. No additional cards are needed.";
       },
       render_seat_map: async (p: { sessionKey: string; userSessionId?: string }) => {
-        // fetch the live seat plan for this order and draw it — no need for the agent to call get_seat_plan first
         const s = sessionRef.current;
-        if (!s) return "widget not ready";
-        const r = (await sendCommand(s, { type: "seat.plan", sessionKey: p.sessionKey, userSessionId: p.userSessionId })) as { ok: boolean; ui?: any; error?: string };
-        if (r.ok && r.ui) {
-          push({ kind: "cards", ui: r.ui });
-          return "seat map is on screen";
-        }
-        return `could not show the seat map: ${r.error ?? "unknown"}`;
+        if (!s) return JSON.stringify({ ok: false, rendered: false, error: "The widget is not ready." });
+        return JSON.stringify(await renderVerifiedSeatMap(
+          () => sendCommand(s, { type: "seat.plan", sessionKey: p.sessionKey, userSessionId: p.userSessionId }),
+          (ui) => push({ kind: "cards", ui }),
+          () => sessionRef.current?.token === s.token,
+        ));
       },
       render_order_summary: async () => "The order summary is shown after each order step.",
       render_payment_sheet: async () => "The payment sheet appears after prepare_payment.",

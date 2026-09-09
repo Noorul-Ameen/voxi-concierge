@@ -1,4 +1,4 @@
-import type { Lang, UiHint, WidgetEvent } from "./api";
+import type { CommandResult, Lang, UiHint, WidgetEvent } from "./api";
 import { cinemaDate } from "./cinema-time";
 
 export type UserActivityClock = { lastUserAt: number; lastProviderPingAt: number };
@@ -9,6 +9,19 @@ export function recordUserActivity(clock: UserActivityClock, notifyProvider?: ()
   if (notifyProvider && now - clock.lastProviderPingAt >= 1000) {
     clock.lastProviderPingAt = now;
     notifyProvider();
+  }
+}
+
+/** A client tool may claim the map opened only after its verified response is rendered. */
+export async function renderVerifiedSeatMap(load: () => Promise<CommandResult>, render: (ui: UiHint) => void, isCurrent: () => boolean) {
+  try {
+    const result = await load();
+    if (!isCurrent()) return { ok: false, rendered: false, error: "The widget session changed. Check the current booking again." };
+    if (!result.ok || result.ui?.type !== "seatmap") return { ok: false, rendered: false, error: result.error ?? "No verified seat map was returned." };
+    render(result.ui);
+    return { ok: true, rendered: true };
+  } catch {
+    return { ok: false, rendered: false, error: "The seat map could not load. Please try again." };
   }
 }
 

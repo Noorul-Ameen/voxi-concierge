@@ -46,7 +46,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
         return items.map((b, i) => <BookingCard key={i} b={b} lang={lang} act={act} confirmationId={ui.meta?.confirmationId} />);
       case "order":
         if (expired) return <div className="order expired-choices"><p className="muted">{lang === "ar" ? "احتفظنا باختياراتك. سنتحقق من التوفر قبل حجز المقاعد مجدداً." : "Your choices are kept. We'll check availability before holding seats again."}</p>{items[0] ? <><p>{decisionSummary(ui, lang)}</p>{items[0].concessions?.length ? <p>{items[0].concessions.map((food: any) => `${food.quantity}× ${lang === "ar" ? food.descriptionAlt || food.description : food.description}`).join(" · ")}</p> : null}{Number.isFinite(Number(items[0].totalCents)) ? <div className="line"><span>{lang === "ar" ? "الإجمالي السابق" : "Previous total"}</span><b>{money(Number(items[0].totalCents), lang)}</b></div> : null}</> : null}</div>;
-        return items[0] && "tickets" in items[0] ? <OrderSummary o={items[0]} lang={lang} act={act} hideActions={!!ui.actions?.length} /> : <TicketTypes items={items} lang={lang} act={act} sessionKey={ui.meta?.sessionKey} />;
+        return items[0] && "tickets" in items[0] ? <OrderSummary o={items[0]} meta={ui.meta} lang={lang} act={act} hideActions={!!ui.actions?.length} /> : <TicketTypes items={items} lang={lang} act={act} sessionKey={ui.meta?.sessionKey} />;
       case "seatmap":
         return <SeatMap rows={items} meta={ui.meta ?? {}} lang={lang} act={act} />;
       case "payment":
@@ -84,7 +84,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
       {ui.type !== "quantity" && actions?.length ? (
         <div className="actionsrow">
           {actions.map((a, i) => (
-            <button key={i} className={`btn ${a.style === "primary" ? "primary" : a.style === "danger" ? "danger" : "ghost"}`} onClick={() => routeAction(a.value, a.label, act, lang)}>
+            <button key={i} className={`btn ${a.style === "primary" ? "primary" : a.style === "danger" ? "danger" : "ghost"}`} disabled={isSeatMapAction(a.value) && !seatPlanCommand(ui)} onClick={() => routeAction(a.value, a.label, act, lang, ui)}>
               {uiActionLabel(a.value, a.label, lang)}
             </button>
           ))}
@@ -94,8 +94,19 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
   );
 }
 
-/** Card buttons are translated into natural-language messages so the agent stays in control. */
-export function routeAction(value: string, label: string, act: CardActions, lang: Lang) {
+const isSeatMapAction = (value: string) => value === "seatmap:open" || value === "seats:open";
+
+/** Use the card's verified IDs; older order cards carry cinema/session IDs in their summary. */
+export function seatPlanCommand(ui?: UiHint): Record<string, unknown> | undefined {
+  const order = ui?.items?.[0];
+  const sessionKey = ui?.meta?.sessionKey ?? order?.sessionKey ?? (order?.cinemaId && order?.sessionId ? `${order.cinemaId}-${order.sessionId}` : undefined);
+  if (typeof sessionKey !== "string" || !sessionKey) return;
+  const userSessionId = ui?.meta?.userSessionId ?? order?.userSessionId;
+  return { type: "seat.plan", sessionKey, ...(typeof userSessionId === "string" && userSessionId ? { userSessionId } : {}) };
+}
+
+/** Verified seat-map requests run directly; conversational choices retain their existing routes. */
+export function routeAction(value: string, label: string, act: CardActions, lang: Lang, ui?: UiHint) {
   const [kind, ...rest] = value.split(":");
   const arg = rest.join(":");
   const ar = lang === "ar";
@@ -131,7 +142,7 @@ export function routeAction(value: string, label: string, act: CardActions, lang
       return act.say(ar ? `أضف ${label.replace(/^أضف /, "")} إلى طلبي` : `Add ${label.replace(/^Add /, "")} to my order`);
     case "seatmap":
     case "seats":
-      return act.say(ar ? "أريد اختيار المقاعد من الخريطة" : "I want to choose my seats on the map");
+      { const command = seatPlanCommand(ui); return command ? act.command(command) : undefined; }
     case "menu":
       return act.say(ar ? "أرني قائمة المأكولات والمشروبات" : "Show me the food and drinks menu");
     case "fnb":
@@ -501,7 +512,8 @@ function TicketTypes({ items, lang, act }: { items: any[]; lang: Lang; act: Card
   );
 }
 
-export function OrderSummary({ o, lang, act, hideActions }: { o: any; lang: Lang; act: CardActions; hideActions?: boolean }) {
+export function OrderSummary({ o, meta, lang, act, hideActions }: { o: any; meta?: Record<string, any>; lang: Lang; act: CardActions; hideActions?: boolean }) {
+  const ui: UiHint = { type: "order", items: [o], meta };
   const tickets = o.tickets ?? [];
   const seats = seatRange(tickets.map((ticket: any) => ticket.seat).filter(Boolean).join(", "));
   const ticketTotal = tickets.reduce((sum: number, ticket: any) => sum + Number(ticket.finalCents ?? ticket.priceCents ?? 0), 0);
@@ -537,7 +549,7 @@ export function OrderSummary({ o, lang, act, hideActions }: { o: any; lang: Lang
       </div>
       {hideActions ? null : (
       <div className="actions">
-        <button className="btn ghost" onClick={() => routeAction("seatmap:open", "", act, lang)}>
+        <button className="btn ghost" disabled={!seatPlanCommand(ui)} onClick={() => routeAction("seatmap:open", "", act, lang, ui)}>
           {lang === "ar" ? "المقاعد" : "Seats"}
         </button>
         <button className="btn ghost" onClick={() => routeAction("menu:open", "", act, lang)}>

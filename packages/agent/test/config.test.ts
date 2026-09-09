@@ -1,8 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { buildAgentBehaviorPatch, buildAgentConfig, buildWebhookTools } from "../src/index.js";
+import {
+  buildAgentBehaviorPatch,
+  buildAgentConfig,
+  buildClientTools,
+  buildWebhookTools,
+} from "../src/index.js";
 
 const opts = { conciergeUrl: "https://fixture.invalid", toolSecretHeader: { secret_id: "fixture-secret" } };
 describe("agent configuration contracts", () => {
+  it("waits for the live seat-map result instead of assuming the screen opened", () => {
+    const map = buildClientTools().find((tool) => tool.name === "render_seat_map")!;
+    expect(map.expects_response).toBe(true);
+    expect(map.response_timeout_secs).toBeGreaterThanOrEqual(20);
+    expect(map.parameters.required).toContain("sessionKey");
+  });
   it("keeps film language free of the UI language enum and includes booking refinements", () => {
     const tools = buildWebhookTools(opts);
     const props = (name: string) =>

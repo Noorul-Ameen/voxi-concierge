@@ -1,7 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, holdSeconds, recordUserActivity, uiActionLabel, type TranscriptItem } from "../src/lib/widget-state";
+import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, holdSeconds, recordUserActivity, renderVerifiedSeatMap, uiActionLabel, type TranscriptItem } from "../src/lib/widget-state";
 
 describe("authoritative widget state", () => {
+  it("reports seat-map success only after the awaited verified map renders", async () => {
+    let resolve!: (result: { ok: boolean; ui: { type: string; items: [] } }) => void;
+    const pending = new Promise<{ ok: boolean; ui: { type: string; items: [] } }>((done) => { resolve = done; });
+    const rendered: string[] = [];
+    let finished = false;
+    const result = renderVerifiedSeatMap(() => pending, (ui) => { rendered.push(ui.type); }, () => true).then((value) => { finished = true; return value; });
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    expect(rendered).toEqual([]);
+    resolve({ ok: true, ui: { type: "seatmap", items: [] } });
+    expect(await result).toEqual({ ok: true, rendered: true });
+    expect(rendered).toEqual(["seatmap"]);
+  });
+
+  it("never claims a seat map opened after backend failure, wrong UI, network loss or account change", async () => {
+    const rendered: string[] = [];
+    const render = (ui: { type: string }) => { rendered.push(ui.type); };
+    const failed = await renderVerifiedSeatMap(async () => ({ ok: false, error: "Seat hold expired" }), render, () => true);
+    expect(failed).toEqual({ ok: false, rendered: false, error: "Seat hold expired" });
+    expect(await renderVerifiedSeatMap(async () => ({ ok: true, ui: { type: "order", items: [] } }), render, () => true)).toMatchObject({ ok: false, rendered: false });
+    expect(await renderVerifiedSeatMap(async () => { throw new Error("network"); }, render, () => true)).toMatchObject({ ok: false, rendered: false });
+    expect(await renderVerifiedSeatMap(async () => ({ ok: true, ui: { type: "seatmap", items: [] } }), render, () => false)).toMatchObject({ ok: false, rendered: false });
+    expect(rendered).toEqual([]);
+  });
+
   it("keeps activity current during wheel/input bursts while throttling provider pings", () => {
     const clock = { lastUserAt: 0, lastProviderPingAt: Number.NEGATIVE_INFINITY };
     const pings: number[] = [];
