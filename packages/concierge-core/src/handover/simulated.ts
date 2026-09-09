@@ -20,8 +20,8 @@ export class SimulatedHandover implements HandoverPort {
     const ext = `sim_${req.transferId}`;
     const greeting =
       req.language === "ar"
-        ? `مرحباً ${req.customer.name?.split(" ")[0] ?? ""}، معك ${agentName} من خدمة عملاء فوكس. اطلعت على ملخص محادثتك مع فوكسي — كيف أساعدك؟`
-        : `Hi ${req.customer.name?.split(" ")[0] ?? "there"}, this is ${agentName} from VOX Customer Care. I've read the summary from Voxi — how can I help?`;
+        ? `مرحباً ${req.customer.name?.split(" ")[0] ?? ""}، معك ${agentName} من خدمة عملاء فوكس. اطلعت على ملخص محادثتك مع المساعد الافتراضي — كيف أساعدك؟`
+        : `Hi ${req.customer.name?.split(" ")[0] ?? "there"}, this is ${agentName} from VOX Customer Care. I've read the summary from the virtual assistant — how can I help?`;
     this.queue.push({
       externalConversationId: ext,
       transferId: req.transferId,

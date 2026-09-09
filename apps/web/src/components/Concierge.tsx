@@ -196,7 +196,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     },
     onError: (m: unknown, ctx?: unknown) => {
       const detail = typeof m === "string" ? m : (m as { message?: string })?.message ?? (ctx as { reason?: string })?.reason ?? "";
-      push({ kind: "note", text: `⚠️ ${detail || (lang === "ar" ? "تعذّر الاتصال بفوكسي — حاول مجدداً" : "Could not connect to Voxi — please try again")}` });
+      push({ kind: "note", text: `⚠️ ${detail || (lang === "ar" ? "تعذّر الاتصال بالمساعد الافتراضي — حاول مجدداً" : "Could not connect to the Virtual Assistant — please try again")}` });
     },
     onMessage: (m: { source: string; message: string }) => {
       if (!m.message) return;
@@ -578,7 +578,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
               {lang === "ar" ? "إلغاء" : "Cancel"}
             </button>
           </div>
-          <small>{lang === "ar" ? "أو ابدأ كضيف — يمكن لفوكسي تسجيل دخولك أثناء المحادثة أيضاً." : "Or continue as a guest — Voxi can also sign you in during the conversation."}</small>
+          <small>{lang === "ar" ? "أو ابدأ كضيف — يمكنك تسجيل الدخول أثناء المحادثة أيضاً." : "Or continue as a guest — you can also sign in during the conversation."}</small>
         </form>
       ) : null}
 
@@ -592,7 +592,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         {mode === "idle" && !connected && items.every((i) => i.kind === "note") ? (
           <div className="start">
             <div className="hero-orb"><i /><i /><i /></div>
-            <h3>{lang === "ar" ? "مرحباً، أنا فوكسي" : "Hi, I'm Voxi"}</h3>
+            <h3>{lang === "ar" ? "مساعد فوكس سينما الافتراضي" : "VOX Cinemas Virtual Assistant"}</h3>
             <p>{lang === "ar" ? "اسألني عن الأفلام والمواعيد والحجوزات والاسترداد والعروض والمأكولات — بالصوت أو الكتابة." : "Movies, showtimes, bookings, refunds, offers and food — by voice or text, in English or Arabic."}</p>
             <div className="startbtns">
               <button className="btn primary big" onClick={() => start("voice")}>
@@ -716,7 +716,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           </button>
         </div>
       </div>
-      <div className="powered">VOX Cinemas · <span>Voxi</span></div>
+      <div className="powered">VOX Cinemas · <span>{lang === "ar" ? "المساعد الافتراضي" : "Virtual Assistant"}</span></div>
     </div>
   );
 }

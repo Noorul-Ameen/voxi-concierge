@@ -707,7 +707,7 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
 
   it("the first message is personal for a signed-in member and generic for a guest", async () => {
     const guest = await widgetSession(conv("greet-g"));
-    expect(guest.dynamicVariables.greetingEn).toMatch(/^Hi, I'm Voxi/);
+    expect(guest.dynamicVariables.greetingEn).toBe("Hi there, welcome to VOX Cinemas. How can I help you today?");
     const c = conv("greet-m");
     await h.tool("login_customer", c, { phone: "0501234567", pin: "1234" });
     const member = await widgetSession(c);

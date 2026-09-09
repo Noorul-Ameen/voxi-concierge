@@ -21,7 +21,7 @@ const C = {
   gray: "#c7ced3",
 };
 const OUTCOME_COLOR: Record<string, string> = { resolved: C.blue, transferred: C.amber, dropped: C.red, other: C.gray, active: C.gray, unknown: C.gray };
-const OUTCOME_LABEL: Record<string, string> = { resolved: "Resolved by Voxi", transferred: "Transferred", dropped: "Dropped", other: "Other", active: "Active", unknown: "Unknown" };
+const OUTCOME_LABEL: Record<string, string> = { resolved: "Resolved by the assistant", transferred: "Transferred", dropped: "Dropped", other: "Other", active: "Active", unknown: "Unknown" };
 
 type Filters = Required<Pick<ReportingFilters, "days" | "language" | "modality" | "channel" | "outcome" | "demo">>;
 const DEFAULT: Filters = { days: 30, language: "all", modality: "all", channel: "all", outcome: "all", demo: "include" };
@@ -358,7 +358,7 @@ export function Dashboard() {
 
         <div className="kpis">
           <Kpi label="Conversations" value={s.conversations.total} delta={totalDelta} deltaLabel="vs previous window" spark={daily.map((d) => d.total)} />
-          <Kpi label="Contained by Voxi" value={`${s.containment.rate}%`} delta={rateDelta} deltaLabel="pt vs previous window" spark={daily.map((d) => (d.total ? Math.round((d.resolved / d.total) * 100) : 0))} />
+          <Kpi label="Contained by the assistant" value={`${s.containment.rate}%`} delta={rateDelta} deltaLabel="pt vs previous window" spark={daily.map((d) => (d.total ? Math.round((d.resolved / d.total) * 100) : 0))} />
           <Kpi label="Transferred to agent" value={s.containment.transferred} spark={daily.map((d) => d.transferred)} sparkColor={C.amber} />
           <Kpi label="Dropped" value={s.containment.dropped} spark={daily.map((d) => d.dropped)} sparkColor={C.red} />
           <Kpi label={`CSAT (${s.feedback.count} ratings)`} value={s.feedback.csat != null ? `${s.feedback.csat}%` : "–"} spark={undefined} />
@@ -396,7 +396,7 @@ export function Dashboard() {
           </div>
 
           <div className="panel c8">
-            <h3>When guests talk to Voxi <small>weekday × hour, Dubai time</small></h3>
+            <h3>When guests talk to the assistant <small>weekday × hour, Dubai time</small></h3>
             <Heat heat={s.heat} tip={tip} />
           </div>
           <div className="panel c4">

@@ -195,8 +195,8 @@ export function systemPrompt(): string {
 }
 
 export const FIRST_MESSAGE = {
-  en: "Hi, I'm Voxi from VOX Cinemas. I can help with showtimes, bookings, cancellations and refunds, offers and food — in English or Arabic. What can I do for you?",
-  ar: "مرحباً، أنا فوكسي من فوكس سينما. أساعدك في مواعيد العروض والحجوزات والإلغاء والاسترداد والعروض والمأكولات — بالعربية أو الإنجليزية. كيف أساعدك؟",
+  en: "Hi there, welcome to VOX Cinemas. How can I help you today?",
+  ar: "أهلاً بك في فوكس سينما. كيف أساعدك اليوم؟",
 };
 
 /** Words the TTS/ASR should treat as brand terms (pronunciation dictionary / keywords). */
@@ -278,7 +278,7 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
   };
   if (opts.inlineTools) promptCfg.tools = [...webhookTools, ...clientTools, ...systemTools];
   return {
-    name: opts.agentName ?? "Voxi — VOX Cinemas Concierge (Phase 1 & 2 demo)",
+    name: opts.agentName ?? "VOX Cinemas Virtual Assistant (Phase 1 & 2 demo)",
     tags: ["voxi", "vox-cinemas", "demo"],
     conversation_config: {
       agent: {
@@ -353,7 +353,7 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
         outcome: {
           type: "string",
           description:
-            "One of: resolved, transferred, dropped, unknown — was the guest's need fully handled by Voxi?",
+            "One of: resolved, transferred, dropped, unknown — was the guest's need fully handled by the assistant?",
         },
         topics: {
           type: "string",

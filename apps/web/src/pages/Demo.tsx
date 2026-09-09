@@ -44,7 +44,7 @@ export function Demo() {
         </nav>
       </header>
       <section className="hero">
-        <h1>{ar ? <>تعرّف على <em>فوكسي</em> — مساعدك الذكي في فوكس سينما</> : <>Meet <em>Voxi</em> — your VOX Cinemas concierge</>}</h1>
+        <h1>{ar ? <>مساعد فوكس سينما <em>الافتراضي</em></> : <>VOX Cinemas <em>Virtual Assistant</em></>}</h1>
         <p>{ar ? "اسأل بالصوت أو الكتابة: مواعيد العرض، الحجز واختيار المقاعد، الإلغاء والاسترداد، العروض، المأكولات والمشروبات، والتحويل إلى موظف خدمة العملاء." : "Talk or type: showtimes, booking with seat selection, cancellations and refunds, offers, food & drinks, and a hand-over to Customer Care — in English or Arabic."}</p>
         <div className="chips">
           {(ar

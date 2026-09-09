@@ -47,10 +47,10 @@ export function greetings(firstName?: string | null) {
   return {
     greetingEn: name
       ? `Hi ${name}, welcome back. How can I help you today?`
-      : "Hi, I'm Voxi from VOX Cinemas. Showtimes, bookings, food, offers — what can I do for you?",
+      : "Hi there, welcome to VOX Cinemas. How can I help you today?",
     greetingAr: name
       ? `أهلاً ${name}، سعيد بعودتك. كيف أساعدك اليوم؟`
-      : "مرحباً، أنا فوكسي من فوكس سينما. مواعيد العروض، الحجوزات، المأكولات، العروض — كيف أساعدك؟",
+      : "أهلاً بك في فوكس سينما. كيف أساعدك اليوم؟",
     firstName: name,
   };
 }

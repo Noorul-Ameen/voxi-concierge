@@ -5,12 +5,12 @@ category: "faq"
 source: ""
 ---
 
-# مصطلحات فوكس سينما — Arabic glossary for Voxi
+# مصطلحات فوكس سينما — Arabic glossary for the VOX Cinemas Virtual Assistant
 
 | English | العربية |
 |---|---|
 | VOX Cinemas | فوكس سينما |
-| Voxi (the concierge) | فوكسي |
+| Virtual assistant | المساعد الافتراضي |
 | SHARE / Share Points | شير / نقاط شير |
 | VOX credit / VOX Rewards wallet | رصيد فوكس / محفظة فوكس |
 | Booking reference | الرقم المرجعي للحجز |
