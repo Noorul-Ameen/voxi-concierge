@@ -12,6 +12,7 @@ import { appendEvent } from "../events.js";
 import type { Catalog } from "../services/catalog.js";
 import { markJourney, updateConversation } from "../services/conversation.js";
 import { fmtDateTime, joinList, money, onDateTime, seatLabels, t } from "../services/format.js";
+import { resolveLinkedConversation } from "../services/relink.js";
 import { bookingCard, orderSummary, seatRange } from "../tools/index.js";
 import { type ActionRow, complete, fail } from "./ledger.js";
 
@@ -36,6 +37,24 @@ type Outcome = {
   ui?: Record<string, unknown>;
   journey?: { name: string; status: "completed" | "abandoned" | "failed" };
 };
+
+async function appendActionEvent(
+  ctx: ExecCtx,
+  action: ActionRow,
+  type: string,
+  payload: Record<string, unknown>,
+  actor: "user" | "agent" | "system" | "human_agent" = "system",
+) {
+  return appendEvent(
+    ctx.db,
+    ctx.events,
+    action.conversationId,
+    type,
+    payload,
+    actor,
+    Number(action.input._widgetAuthGeneration ?? 0),
+  );
+}
 
 class ActionError extends Error {
   constructor(
@@ -90,6 +109,60 @@ const tenderFor = (method: string): "EWALLET" | "LOYALTY" | "CREDIT" =>
 
 const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["steps"]) => Promise<Outcome>> =
   {
+    async simulated_reply(ctx, a) {
+      const reply = a.input as {
+        transferId: string;
+        conversationId: string;
+        text: string;
+        agentName: string;
+        at: number;
+      };
+      const delay = Math.min(5000, Math.max(0, reply.at - Date.now()));
+      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      const transfer = (
+        await ctx.db.select().from(S.transfers).where(eq(S.transfers.id, reply.transferId))
+      )[0];
+      const liveConversation = await resolveLinkedConversation(ctx.db, a.conversationId);
+      if (
+        !transfer ||
+        transfer.conversationId !== liveConversation?.id ||
+        ["ended", "failed"].includes(transfer.status)
+      )
+        return { result: { delivered: false } };
+      const delivered = (
+        await ctx.db
+          .select({ id: S.conversationEvents.id })
+          .from(S.conversationEvents)
+          .where(
+            and(
+              eq(S.conversationEvents.conversationId, liveConversation.id),
+              eq(S.conversationEvents.type, "human.message"),
+              sql`${S.conversationEvents.payload}->>'actionId' = ${a.id}`,
+            ),
+          )
+      )[0];
+      if (!delivered) {
+        if (transfer.status !== "connected") {
+          await ctx.db
+            .update(S.transfers)
+            .set({ status: "connected", connectedAt: new Date(), agentName: reply.agentName })
+            .where(eq(S.transfers.id, transfer.id));
+          await appendActionEvent(ctx, a, "transfer.status", {
+            transferId: transfer.id,
+            status: "connected",
+            agentName: reply.agentName,
+          });
+        }
+        await appendActionEvent(
+          ctx,
+          a,
+          "human.message",
+          { actionId: a.id, transferId: transfer.id, text: reply.text, agentName: reply.agentName },
+          "human_agent",
+        );
+      }
+      return { result: { delivered: true, transferId: transfer.id } };
+    },
     async cancel_booking(ctx, a) {
       const inp = a.input as {
         bookingId: string;
@@ -250,7 +323,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
             ? {
                 PaymentTenderCategory: "LOYALTY",
                 PaymentValueCents: order.TotalValueCents,
-                PointsRedeemed: order.TotalValueCents,
+                PointsRedeemed: centsToPoints(order.TotalValueCents),
                 MemberId: memberId,
               }
             : {
@@ -444,7 +517,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         `${s.tickets.length} seat${s.tickets.length === 1 ? "" : "s"} held: ${seatRange(s.seats)}${tier ? ` (${tier})` : ""}, ${money(s.totalCents, "en")}.${offerNotes.length ? ` ${offerNotes.join(" ")}` : ""} Change seats, add food, or pay?`,
         `تم حجز ${s.tickets.length} ${s.tickets.length === 1 ? "مقعد" : "مقاعد"}: ${seatRange(s.seats)}، ${money(s.totalCents, "ar")}.${offerNotes.length ? ` ${offerNotes.join(" ")}` : ""} تغيير المقاعد، إضافة طعام، أم الدفع؟`,
       );
-      await appendEvent(ctx.db, ctx.events, a.conversationId, "order.updated", {
+      await appendActionEvent(ctx, a, "order.updated", {
         userSessionId: inp.userSessionId,
         summary: s,
       });
@@ -509,7 +582,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       }
       ctx.catalog.invalidateSessions(sess.cinemaId);
       const s = orderSummary(order, ctx.lang, ctx.nowLocal, await cname(ctx, sess.cinemaId));
-      await appendEvent(ctx.db, ctx.events, a.conversationId, "order.updated", {
+      await appendActionEvent(ctx, a, "order.updated", {
         userSessionId: inp.userSessionId,
         summary: s,
       });
@@ -604,7 +677,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           });
       const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cname(ctx, cur.Order.CinemaId));
       const failed = (r.FailedConcessions as { ItemId: string; Reason: string }[] | null) ?? [];
-      await appendEvent(ctx.db, ctx.events, a.conversationId, "order.updated", {
+      await appendActionEvent(ctx, a, "order.updated", {
         userSessionId: inp.userSessionId,
         summary: s,
       });
@@ -646,7 +719,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           throw fromVista(e);
         });
       const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cname(ctx, r.Order.CinemaId));
-      await appendEvent(ctx.db, ctx.events, a.conversationId, "order.updated", {
+      await appendActionEvent(ctx, a, "order.updated", {
         userSessionId: inp.userSessionId,
         summary: s,
       });
@@ -683,7 +756,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           throw fromVista(e);
         });
       const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cname(ctx, r.Order.CinemaId));
-      await appendEvent(ctx.db, ctx.events, a.conversationId, "order.updated", {
+      await appendActionEvent(ctx, a, "order.updated", {
         userSessionId: inp.userSessionId,
         summary: s,
       });
@@ -718,7 +791,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
             ? {
                 PaymentTenderCategory: "LOYALTY",
                 PaymentValueCents: total,
-                PointsRedeemed: total,
+                PointsRedeemed: centsToPoints(total),
                 MemberId: inp.memberId,
               }
             : {
@@ -951,20 +1024,28 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           : "",
       ].filter(Boolean);
       const summary = lines.join("\n");
-      await ctx.db.insert(S.transfers).values({
-        id: transferId,
-        conversationId: a.conversationId,
-        reason: inp.reason,
-        summary,
-        context: { bookingIds, complaintId: complaint?.id, toolsUsed },
-        adapter: ctx.handover.name,
-        status: "requested",
+      const liveConversationId = await ctx.db.transaction(async (tx) => {
+        const live = await resolveLinkedConversation(tx, a.conversationId, true);
+        if (Number(live?.metadata?.widgetAuthGeneration ?? 0) !== Number(a.input._widgetAuthGeneration ?? 0))
+          return null;
+        const conversationId = live?.id ?? a.conversationId;
+        await tx.insert(S.transfers).values({
+          id: transferId,
+          conversationId,
+          reason: inp.reason,
+          summary,
+          context: { bookingIds, complaintId: complaint?.id, toolsUsed },
+          adapter: ctx.handover.name,
+          status: "requested",
+        });
+        return conversationId;
       });
+      if (!liveConversationId) return { result: { cancelled: true, reason: "session_changed" } };
       let res: Awaited<ReturnType<typeof ctx.handover.start>>;
       try {
         res = await ctx.handover.start({
           transferId,
-          conversationId: a.conversationId,
+          conversationId: liveConversationId,
           reason: inp.reason,
           summary,
           language: inp.language,
@@ -989,22 +1070,46 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           true,
         );
       }
-      await ctx.db
-        .update(S.transfers)
-        .set({
-          status: res.status,
-          externalConversationId: res.externalConversationId,
-          externalReference: res.externalReference ?? null,
-          agentName: res.agentName ?? null,
-          oneViewNoteId: `OV-NOTE-${transferId.slice(-6).toUpperCase()}`,
-        })
-        .where(eq(S.transfers.id, transferId));
-      await updateConversation(ctx.db, a.conversationId, {
-        mode: "human",
-        status: "transferred",
-        outcome: "transferred",
+      const stillCurrent = await ctx.db.transaction(async (tx) => {
+        const live = await resolveLinkedConversation(tx, a.conversationId, true);
+        const [transfer] = await tx.select().from(S.transfers).where(eq(S.transfers.id, transferId));
+        if (
+          Number(live?.metadata?.widgetAuthGeneration ?? 0) !== Number(a.input._widgetAuthGeneration ?? 0) ||
+          transfer?.status === "ended"
+        ) {
+          await tx
+            .update(S.transfers)
+            .set({ status: "ended", endedAt: new Date() })
+            .where(eq(S.transfers.id, transferId));
+          return false;
+        }
+        await tx
+          .update(S.transfers)
+          .set({
+            status: res.status,
+            externalConversationId: res.externalConversationId,
+            externalReference: res.externalReference ?? null,
+            agentName: res.agentName ?? null,
+            oneViewNoteId: `OV-NOTE-${transferId.slice(-6).toUpperCase()}`,
+          })
+          .where(eq(S.transfers.id, transferId));
+        return true;
       });
-      await appendEvent(ctx.db, ctx.events, a.conversationId, "transfer.status", {
+      if (!stillCurrent) {
+        await ctx.handover.end(res.externalConversationId, "session_changed").catch(() => undefined);
+        return { result: { cancelled: true, reason: "session_changed" } };
+      }
+      await updateConversation(
+        ctx.db,
+        a.conversationId,
+        {
+          mode: "human",
+          status: "transferred",
+          outcome: "transferred",
+        },
+        Number(a.input._widgetAuthGeneration ?? 0),
+      );
+      await appendActionEvent(ctx, a, "transfer.status", {
         transferId,
         status: res.status,
         agentName: res.agentName,
@@ -1026,10 +1131,9 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
     },
   };
 
-export async function executeAction(app: AppContext, catalog: Catalog, a: ActionRow) {
-  const conversation = (
-    await app.db.select().from(S.conversations).where(eq(S.conversations.id, a.conversationId))
-  )[0];
+export async function executeAction(app: AppContext, catalog: Catalog, claimed: ActionRow) {
+  const conversation = await resolveLinkedConversation(app.db, claimed.conversationId);
+  const a = { ...claimed, conversationId: conversation?.id ?? claimed.conversationId };
   if (!conversation)
     return fail(app.db, app.events, a, {
       code: "NOT_FOUND",
@@ -1039,7 +1143,13 @@ export async function executeAction(app: AppContext, catalog: Catalog, a: Action
   const ctx: ExecCtx = {
     ...app,
     catalog,
-    conversation,
+    conversation: {
+      ...conversation,
+      metadata: {
+        ...(conversation.metadata ?? {}),
+        widgetAuthGeneration: Number(a.input._widgetAuthGeneration ?? 0),
+      },
+    },
     lang: (conversation.language as Language) ?? "en",
     nowLocal: nowLocalIso(app.cfg.timeZone),
   };
@@ -1054,12 +1164,14 @@ export async function executeAction(app: AppContext, catalog: Catalog, a: Action
   const started = Date.now();
   try {
     const out = await handler(ctx, a, steps);
-    if (out.journey) await markJourney(app.db, a.conversationId, out.journey.name, out.journey.status);
+    const finished = await complete(app.db, app.events, a, out.result, out.ui, steps);
+    if (!finished) return null;
+    if (out.journey) await markJourney(app.db, finished.conversationId, out.journey.name, out.journey.status);
     app.log.info(
       { actionId: a.id, type: a.type, conversationId: a.conversationId, ms: Date.now() - started },
       "action succeeded",
     );
-    return complete(app.db, app.events, a, out.result, out.ui, steps);
+    return finished;
   } catch (e) {
     const err = e instanceof ActionError ? e : fromVista(e);
     app.log.warn(

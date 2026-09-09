@@ -4,29 +4,53 @@
  */
 import { type DisconnectionDetails, useConversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type Customer, type Lang, type Session, type UiHint, type WidgetEvent, createSession, devTool, getSignedUrl, getState, linkConversation, sendCommand, subscribe, widgetLogin, widgetLogout } from "../lib/api";
+import { type BookingHistory, type CustomerProfile, type Customer, type Lang, type Session, type UiHint, type WidgetEvent, createSession, devTool, getCustomerProfile, getSignedUrl, getState, linkConversation, sendCommand, subscribe, widgetLogin, widgetLogout } from "../lib/api";
 import { isRtl, t } from "../lib/i18n";
 import { type CardActions, Cards, Feedback, seatRange } from "./Cards";
 import { type Loc, LocationBar } from "./LocationBar";
+import { AccountPanel } from "./AccountPanel";
+import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, holdSeconds, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
 
-type ItemBody =
-  | { kind: "msg"; role: "user" | "agent" | "human"; text: string; who?: string }
-  | { kind: "cards"; ui: UiHint }
-  | { kind: "note"; text: string }
-  | { kind: "feedback" };
-type Item = ItemBody & { id: string };
 
-let idc = 0;
-const nid = () => `i${++idc}`;
+const nid = () => crypto.randomUUID();
 
-export function Concierge({ initialLang = "en", initialOpen = true, onExpand, onAuth }: { initialLang?: Lang; initialOpen?: boolean; onExpand?: (b: boolean) => void; onAuth?: (c: Customer | null) => void }) {
+export function Concierge({ initialLang = "en", initialOpen = true, onExpand, onAuth, onLanguage }: { initialLang?: Lang; initialOpen?: boolean; onExpand?: (b: boolean) => void; onAuth?: (c: Customer | null) => void; onLanguage?: (language: Lang) => void }) {
   const [lang, setLang] = useState<Lang>(initialLang);
   const [session, setSession] = useState<Session | null>(null);
+  const langRef = useRef(lang);
+  langRef.current = lang;
+  const sessionRef = useRef<Session | null>(null);
+  const authEpochRef = useRef(0);
+  const authBusyRef = useRef(false);
+  const restoreRef = useRef<Promise<void> | null>(null);
+  const pendingLinkRef = useRef<Promise<void> | null>(null);
+  const connectionAttemptRef = useRef(0);
+  const startingRef = useRef(false);
+  const commitSession = useCallback((next: Session | null) => {
+    sessionRef.current = next;
+    setSession(next);
+  }, []);
   // ---------- sign-in (page header "Log in" and the widget's own link open the same sheet) ----------
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authErr, setAuthErr] = useState<string | null>(null);
+  const [profile, setProfile] = useState<CustomerProfile | null>(null);
+  const [history, setHistory] = useState<BookingHistory[]>([]);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const refreshProfile = async (current: Session) => {
+    if (!current.isLoggedIn) return;
+    const epoch = authEpochRef.current;
+    const stillCurrent = () => epoch === authEpochRef.current && sessionRef.current?.token === current.token && sessionRef.current.conversationId === current.conversationId;
+    setProfileLoading(true);
+    try {
+      const details = await getCustomerProfile(current);
+      if (!stillCurrent()) return;
+      setCustomer(details.customer); setProfile(details.profile); setHistory(details.history);
+      onAuth?.(details.customer);
+    } catch { if (stillCurrent()) setAuthErr(langRef.current === "ar" ? "تعذر تحميل حسابك. حاول مرة أخرى." : "Your account could not load. Try again."); }
+    finally { if (stillCurrent()) setProfileLoading(false); }
+  };
   useEffect(() => {
     const openIt = () => {
       setOpen(true);
@@ -35,27 +59,38 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     const logoutIt = () => void doLogout();
     const openOnly = () => setOpen(true);
     window.addEventListener("voxi:login", openIt);
+    window.addEventListener("voxi:profile", openIt);
     window.addEventListener("voxi:logout", logoutIt);
     window.addEventListener("voxi:open", openOnly);
     return () => {
       window.removeEventListener("voxi:login", openIt);
+      window.removeEventListener("voxi:profile", openIt);
       window.removeEventListener("voxi:logout", logoutIt);
       window.removeEventListener("voxi:open", openOnly);
     };
   }); // eslint-disable-line react-hooks/exhaustive-deps
-  const doLogin = async (identifier: string, pin: string) => {
+  const doLogin = async (email: string, password: string) => {
+    if (authBusyRef.current) return;
+    authBusyRef.current = true;
+    const epoch = ++authEpochRef.current;
     setAuthBusy(true);
     setAuthErr(null);
     try {
-      const s = session ?? (await createSession({ language: lang, modality: "text" }));
-      const r = await widgetLogin(s, identifier, pin);
+      await restoreRef.current;
+      await pendingLinkRef.current;
+      const s = sessionRef.current ?? (await createSession({ language: langRef.current, modality: "text" }));
+      if (!sessionRef.current) commitSession(s);
+      const r = await widgetLogin(s, email, password);
+      if (epoch !== authEpochRef.current) return;
       if (!r.ok || !r.customer) {
         setAuthErr(r.error ?? (lang === "ar" ? "تعذّر تسجيل الدخول" : "Could not sign in"));
         return;
       }
       const next = { ...s, token: r.token ?? s.token, isLoggedIn: true, dynamicVariables: r.dynamicVariables ?? s.dynamicVariables };
-      setSession(next);
+      commitSession(next);
+      if (customer && customer.id !== r.customer.id) { setItems([]); setOrder(null); }
       setCustomer(r.customer);
+      void refreshProfile(next);
       onAuth?.(r.customer);
       setAuthOpen(false);
       push({ kind: "note", text: lang === "ar" ? `تم تسجيل الدخول باسم ${r.customer.firstName}` : `Signed in as ${r.customer.firstName}` });
@@ -63,18 +98,35 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         conversation.sendContextualUpdate(
           `The guest has just signed in as ${r.customer.firstName} ${r.customer.lastName} (SHARE ${r.customer.tier}, member ${r.customer.memberId ?? ""}). Treat them as logged in from now on: call get_session_context for their details.`,
         );
+    } catch {
+      setAuthErr(lang === "ar" ? "تعذر تسجيل الدخول. حاول مرة أخرى." : "Could not sign in. Please try again.");
     } finally {
+      authBusyRef.current = false;
       setAuthBusy(false);
     }
   };
   const doLogout = async () => {
-    if (session) {
-      const r = await widgetLogout(session).catch(() => ({ ok: false }) as { ok: boolean; token?: string; dynamicVariables?: Record<string, string> });
-      if (r.ok) setSession({ ...session, token: r.token ?? session.token, isLoggedIn: false, dynamicVariables: r.dynamicVariables ?? session.dynamicVariables });
-      if (statusRef.current === "connected") conversation.sendContextualUpdate("The guest has signed out. Treat them as a guest from now on.");
-    }
-    setCustomer(null);
-    onAuth?.(null);
+    if (authBusyRef.current) return;
+    authBusyRef.current = true;
+    ++authEpochRef.current;
+    setAuthBusy(true); setAuthErr(null);
+    try {
+      await restoreRef.current;
+      await pendingLinkRef.current;
+      const current = sessionRef.current;
+      if (!current) return;
+      const result = await widgetLogout(current);
+      if (!result.ok) throw new Error("Sign-out failed");
+      ++connectionAttemptRef.current;
+      startingRef.current = false;
+      switchingRef.current = true;
+      try { await conversation.endSession(); } catch { /* Backend sign-out already succeeded. */ } finally { switchingRef.current = false; }
+      commitSession({ ...current, token: result.token ?? current.token, isLoggedIn: false, dynamicVariables: result.dynamicVariables ?? current.dynamicVariables });
+      setCustomer(null); setProfile(null); setHistory([]); setProfileLoading(false); setOrder(null); setItems([]); setAuthOpen(false); setMode("idle");
+      pendingAckRef.current.clear(); completedActionsRef.current.clear(); ackQueueRef.current = [];
+      onAuth?.(null);
+    } catch { setAuthErr(lang === "ar" ? "تعذر تسجيل الخروج. حاول مرة أخرى." : "Could not sign out. Please try again."); }
+    finally { authBusyRef.current = false; setAuthBusy(false); }
   };
   const [items, setItems] = useState<Item[]>([]);
   const [mode, setMode] = useState<"idle" | "voice" | "text">("idle");
@@ -87,7 +139,14 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const [holdLeft, setHoldLeft] = useState<number | null>(null); // seconds
   const warnedRef = useRef<{ two?: string; short?: string; expired?: string }>({});
   const lastUserAtRef = useRef<number>(Date.now());
-  const nudgedRef = useRef<number>(0);
+  const idleEndedRef = useRef(false);
+  const switchingRef = useRef(false);
+  const eventSeqRef = useRef(new Map<string, number>());
+  const eventIdsRef = useRef(new Set<string>());
+  const pendingAckRef = useRef(new Set<string>());
+  const completedActionsRef = useRef(new Map<string, { type: string; status: string; result?: Record<string, unknown>; error?: { message: string } }>());
+  const ackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const ackQueueRef = useRef<string[]>([]);
   const [humanMode, setHumanMode] = useState<{ transferId: string; agentName?: string; status: string } | null>(null);
   const [input, setInput] = useState("");
   const [level, setLevel] = useState(0);
@@ -116,17 +175,41 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const [devName, setDevName] = useState("search_films");
   const [devInput, setDevInput] = useState('{"query":"spider"}');
   const bodyRef = useRef<HTMLDivElement>(null);
-  const sessionRef = useRef<Session | null>(null);
-  sessionRef.current = session;
   const statusRef = useRef<string>("disconnected"); // live connection status for callbacks that outlive a render
-  const push = useCallback((it: ItemBody) => setItems((xs) => [...xs, { ...it, id: nid() } as Item]), []);
+  const push = useCallback((it: ItemBody) => {
+    if (it.kind === "cards" && it.ui.type === "login") { setAuthOpen(true); setOpen(true); return; }
+    setItems((xs) => appendTranscript(xs, { ...it, id: nid() } as Item));
+  }, []);
+  const acknowledge = (context: string) => {
+    ackQueueRef.current.push(context);
+    if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
+    ackTimerRef.current = setTimeout(() => {
+      const changes = ackQueueRef.current.splice(0);
+      if (statusRef.current !== "connected" || !changes.length) return;
+      conversation.sendUserMessage('[widget] User interface updates: ' + changes.join('; ') + '. Briefly acknowledge the latest meaningful choice once. Draft selections are not applied offers or completed purchases; successful API results are authoritative. Do not repeat completed actions with tools or ask for known information. Pending actions are not completed.');
+    }, 650);
+  };
+  useEffect(() => () => { if (ackTimerRef.current) clearTimeout(ackTimerRef.current); }, []);
+
+  const changeLanguage = async (next: Lang, tellAgent = false) => {
+    langRef.current = next;
+    setLang(next);
+    const current = sessionRef.current;
+    if (current) {
+      const result = await sendCommand(current, { type: "language", language: next }).catch(() => null);
+      if (result?.ok && sessionRef.current?.token === current.token)
+        commitSession({ ...sessionRef.current, language: next, dynamicVariables: { ...sessionRef.current.dynamicVariables, language: next } });
+    }
+    if (tellAgent && statusRef.current === "connected") conversation.sendUserMessage(next === "ar" ? "من فضلك تابع بالعربية." : "Please continue in English.");
+  };
+  useEffect(() => { if (initialLang !== langRef.current) void changeLanguage(initialLang, true); }, [initialLang]);
+  useEffect(() => { onLanguage?.(lang); }, [lang, onLanguage]);
 
   // ---------- client tools (called by the agent) ----------
   const clientTools = useMemo(
     () => ({
       render_cards: async (p: { ui: UiHint }) => {
-        if (p?.ui?.type) push({ kind: "cards", ui: p.ui });
-        return "rendered";
+        return "The widget renders validated server tool results automatically. No additional cards are needed.";
       },
       render_seat_map: async (p: { sessionKey: string; userSessionId?: string }) => {
         // fetch the live seat plan for this order and draw it — no need for the agent to call get_seat_plan first
@@ -151,7 +234,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         if (known) return JSON.stringify({ lat: known.lat, lng: known.lng, label: known.label, source: known.source });
         try {
           const pos = await new Promise<GeolocationPosition>((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 8000 }));
-          const l: Loc = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy, label: lang === "ar" ? "موقعي الحالي" : "My current location", source: "gps" };
+          const l: Loc = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracyM: pos.coords.accuracy, label: langRef.current === "ar" ? "موقعي الحالي" : "My current location", source: "gps" };
           changeLoc(l);
           return JSON.stringify({ lat: l.lat, lng: l.lng, label: l.label, source: "gps" });
         } catch {
@@ -167,7 +250,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         return "opened";
       },
       set_language: async (p: { language: Lang }) => {
-        setLang(p.language);
+        await changeLanguage(p.language);
         return "ok";
       },
       set_mode: async (p: { mode: "bot" | "human"; transferId?: string }) => {
@@ -188,11 +271,13 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     micMuted: muted,
     onConnect: () => push({ kind: "note", text: lang === "ar" ? "متصل" : "Connected" }),
     onDisconnect: (d?: DisconnectionDetails) => {
+      if (switchingRef.current) return;
       setMode("idle");
       const why = d?.reason === "error" ? d.message : d?.reason === "agent" && d.context?.code && d.context.code !== 1000 ? `${d.context.code} ${d.context.reason ?? ""}`.trim() : "";
+      if (idleEndedRef.current) { push({ kind: "note", text: lang === "ar" ? "توقفت المحادثة بعد ثلاث دقائق من عدم النشاط. يمكنك المتابعة متى أردت." : "The conversation paused after three minutes of inactivity. Reconnect whenever you’re ready." }); return; }
       if (why) push({ kind: "note", text: `⚠️ ${lang === "ar" ? "انقطع الاتصال" : "Connection closed"}: ${why}` });
       else push({ kind: "note", text: lang === "ar" ? "انتهت المحادثة" : "Conversation ended" });
-      push({ kind: "feedback" });
+      if (!switchingRef.current && !idleEndedRef.current) push({ kind: "feedback" });
     },
     onError: (m: unknown, ctx?: unknown) => {
       const detail = typeof m === "string" ? m : (m as { message?: string })?.message ?? (ctx as { reason?: string })?.reason ?? "";
@@ -210,14 +295,25 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
 
   // link ElevenLabs conversation id ↔ concierge conversation
   useEffect(() => {
+    if (conversation.status !== "connected" || authBusyRef.current || pendingLinkRef.current) return;
     const id = conversation.getId();
     if (!id || !session || session.conversationId === id) return;
-    linkConversation(session, id).then(setSession).catch(() => undefined);
-  }, [conversation.status]); // eslint-disable-line react-hooks/exhaustive-deps
+    const current = sessionRef.current;
+    if (!current) return;
+    const pending = linkConversation(current, id).then((linked) => {
+      if (sessionRef.current?.token !== current.token || conversation.getId() !== id) return;
+      commitSession(linked);
+      if (linked.isLoggedIn) void refreshProfile(linked);
+      if (statusRef.current === "connected") conversation.sendContextualUpdate("Reconnected to the same account and booking draft. Call get_session_context before suggesting a booking. A seat hold expiry stays unchanged; ask before making a fresh hold.");
+    }).catch(() => push({ kind: "note", text: langRef.current === "ar" ? "تعذر استعادة المحادثة. حاول إعادة الاتصال." : "Could not restore the conversation. Please reconnect." }))
+      .finally(() => { if (pendingLinkRef.current === pending) pendingLinkRef.current = null; });
+    pendingLinkRef.current = pending;
+  }, [conversation.status, session?.conversationId, session?.token, authBusy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Cards that carry the order's hold expiry (Review & Pay, order summary) keep the timer in sync; a receipt ends it. */
   const trackOrderFromUi = (ui?: UiHint) => {
     if (!ui) return;
+    if (ui.type === "login") { setAuthOpen(true); return; }
     if (ui.type === "qr") {
       setOrder(null);
       return;
@@ -235,25 +331,48 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     } catch {}
   }, [session]);
 
+  // Restore the signed-in session independently from the voice/text connection.
+  useEffect(() => {
+    let disposed = false;
+    const epoch = authEpochRef.current;
+    try {
+      const saved = JSON.parse(localStorage.getItem("voxi.session") ?? "null") as { conversationId: string; token: string; at: number; language?: Lang } | null;
+      if (saved?.token && Date.now() - saved.at < 6 * 60 * 60000) {
+        restoreRef.current = createSession({ language: saved.language === "ar" ? "ar" : saved.language === "en" ? "en" : initialLang, modality: "text", conversationId: saved.conversationId, token: saved.token })
+          .then((restored) => { if (!disposed && epoch === authEpochRef.current && !sessionRef.current) { commitSession(restored); setLang(restored.language); langRef.current = restored.language; void refreshProfile(restored); } })
+          .catch(() => { if (!disposed && epoch === authEpochRef.current) try { localStorage.removeItem("voxi.session"); } catch {} });
+      }
+    } catch {}
+    return () => { disposed = true; ++authEpochRef.current; ++connectionAttemptRef.current; };
+  }, []);
+  useEffect(() => { if (authOpen && session?.isLoggedIn) void refreshProfile(session); }, [authOpen]);
+
   // SSE subscription to concierge events
   useEffect(() => {
     if (!session) return;
+    let subscribed = true;
+    const isCurrent = () => subscribed && sessionRef.current?.token === session.token && sessionRef.current.conversationId === session.conversationId;
     const onEvent = (e: WidgetEvent) => {
+      if (!isCurrent()) return;
+      if (!acceptWidgetEvent(eventSeqRef.current, eventIdsRef.current, session.conversationId, e)) return;
       switch (e.type) {
         case "ui.render":
           if (e.ui?.type) push({ kind: "cards", ui: e.ui });
           trackOrderFromUi(e.ui);
           break;
         case "action.completed":
+          completedActionsRef.current.set(e.action.actionId, e.action);
+          if (completedActionsRef.current.size > 100) completedActionsRef.current.delete(completedActionsRef.current.keys().next().value!);
+          if (pendingAckRef.current.delete(e.action.actionId)) acknowledge(actionContext(e.action.type, { ok: e.action.status === "succeeded", action: e.action, error: e.action.error?.message }));
           if (e.ui?.type) push({ kind: "cards", ui: e.ui });
           else if (e.action.status !== "succeeded" && e.action.error?.message) push({ kind: "note", text: `⚠️ ${e.action.error.message}` });
           trackOrderFromUi(e.ui);
           break;
         case "order.updated": {
           const sm = e.summary as Record<string, any>;
-          if (sm && (sm.state === "paid" || sm.state === "cancelled" || sm.state === "expired")) setOrder(null);
+          if (sm && (sm.state === "paid" || sm.state === "cancelled")) setOrder(null);
           else setOrder({ userSessionId: e.userSessionId, expiresAtUtc: sm?.expiresAtUtc, totalCents: sm?.totalCents, filmTitle: sm?.filmTitle, seats: sm?.seats });
-          warnedRef.current = {};
+          if (sm?.expiresAtUtc !== orderRef.current?.expiresAtUtc) warnedRef.current = {};
           // keep an open Review & Pay sheet for this order in sync (offer applied, points redeemed, F&B added)
           if (sm)
             setItems((xs) =>
@@ -274,7 +393,10 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           push({ kind: "msg", role: "human", text: e.text, who: e.agentName });
           break;
         case "language.changed":
+          langRef.current = e.language;
           setLang(e.language);
+          if (sessionRef.current && sessionRef.current.language !== e.language)
+            commitSession({ ...sessionRef.current, language: e.language, dynamicVariables: { ...sessionRef.current.dynamicVariables, language: e.language } });
           break;
         default:
           break;
@@ -283,16 +405,20 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     const unsub = subscribe(session, onEvent, setSseStatus);
     getState(session)
       .then((s) => {
+        if (!isCurrent()) return;
         if (s.transfer && ["queued", "connected", "requested"].includes(s.transfer.status)) setHumanMode({ transferId: s.transfer.id, agentName: s.transfer.agentName, status: s.transfer.status });
+        if (s.conversation?.metadata?.activeOrder) void sendCommand(session, { type: "order.state" }).then((result) => {
+          if (isCurrent() && result.ui) { trackOrderFromUi(result.ui); push({ kind: "cards", ui: result.ui }); }
+        });
       })
       .catch(() => undefined);
-    return unsub;
-  }, [session?.conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => { subscribed = false; unsub(); };
+  }, [session?.conversationId, session?.token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // mic level meter
   useEffect(() => {
     if (mode !== "voice") return;
-    const iv = setInterval(() => setLevel(Math.min(1, (conversation.getInputVolume?.() ?? 0) * 3)), 100);
+    const iv = setInterval(() => { const volume = conversation.getInputVolume?.() ?? 0; setLevel(Math.min(1, volume * 3)); }, 100);
     return () => clearInterval(iv);
   }, [mode, conversation]);
 
@@ -301,6 +427,8 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   useEffect(() => {
     const el = bodyRef.current;
     if (!el) return;
+    if (!items.length) { el.scrollTop = 0; return; }
+    if (!items.some((item) => item.kind !== "note")) return;
     const toBottom = () => el.scrollTo({ top: el.scrollHeight, behavior: "instant" as ScrollBehavior });
     toBottom();
     const t1 = setTimeout(toBottom, 150);
@@ -334,122 +462,115 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     if (session && l) void sendCommand(session, { type: "location", lat: l.lat, lng: l.lng, accuracyM: l.accuracyM, label: l.label, source: l.source });
   }, [session]);
 
-  // Seat-hold countdown: warn at 2:00 and 0:45, then recover the order automatically when it runs out.
+  // The backend owns the hold expiry. Disconnecting never extends it.
   useEffect(() => {
-    if (!order?.expiresAtUtc) {
-      setHoldLeft(null);
-      return;
-    }
-    const tick = async () => {
-      const o = orderRef.current;
-      if (!o?.expiresAtUtc) return;
-      const left = Math.max(0, Math.round((new Date(o.expiresAtUtc).getTime() - Date.now()) / 1000));
+    const tick = () => {
+      const current = orderRef.current;
+      const left = holdSeconds(current?.expiresAtUtc);
       setHoldLeft(left);
-      const w = warnedRef.current;
-      const ctxNote = (text: string) => {
-        if (statusRef.current !== "connected") return;
-        // a contextual update alone never makes the agent speak — send it as a hidden "[widget]" turn as well
-        conversation.sendContextualUpdate(text);
-        conversation.sendUserMessage(`[widget] ${text}`);
-      };
-      if (left <= 120 && left > 45 && w.two !== o.expiresAtUtc) {
-        w.two = o.expiresAtUtc;
-        push({ kind: "note", text: lang === "ar" ? "⏳ مقاعدك محجوزة لدقيقتين إضافيتين — أكمل التذاكر أولاً، ويمكن إضافة الطعام بعدها." : "⏳ Your seats are held for 2 more minutes — complete the tickets first, food can come after." });
-        ctxNote("Seat hold expires in 2 minutes. Tell the guest once, briefly, and prioritise completing the ticket payment; food can be added after.");
-      } else if (left <= 45 && left > 0 && w.short !== o.expiresAtUtc) {
-        w.short = o.expiresAtUtc;
-        push({ kind: "note", text: lang === "ar" ? "⏳ 45 ثانية متبقية على حجز المقاعد." : "⏳ 45 seconds left on your seat hold." });
-        ctxNote("Seat hold expires in 45 seconds — urge the guest to tap Pay now, in one short line.");
-      } else if (left === 0 && w.expired !== o.expiresAtUtc) {
-        w.expired = o.expiresAtUtc;
-        const s = sessionRef.current;
-        if (!s || o.paid) return;
-        push({ kind: "note", text: lang === "ar" ? "انتهى حجز المقاعد — أستعيد المقاعد نفسها أو الأقرب إليها…" : "Seat hold expired — getting the same or the closest seats back…" });
-        const r = (await sendCommand(s, { type: "order.recover", userSessionId: o.userSessionId })) as { ok: boolean; speech?: string; error?: string };
-        if (r.ok) ctxNote(`The seat hold expired and the widget already rebuilt the order: ${r.speech ?? ""} Relay this in one line and continue with payment — do not restart the booking.`);
-        else {
-          push({ kind: "note", text: `⚠️ ${r.error ?? (lang === "ar" ? "تعذّر استعادة المقاعد" : "Could not recover the seats")}` });
-          ctxNote(`The seat hold expired and recovery failed (${r.error ?? "unknown"}). Call recover_order, or offer to rebook.`);
-        }
+      if (!current?.expiresAtUtc || left === null) return;
+      const expiry = current.expiresAtUtc;
+      if (left === 0 && warnedRef.current.expired !== expiry) {
+        warnedRef.current.expired = expiry;
+        push({ kind: "note", text: lang === "ar" ? "انتهت مهلة المقاعد. احتفظنا باختياراتك؛ يمكنك طلب التحقق من المقاعد مجدداً." : "Your seat hold expired. Your choices are saved—check availability again when you’re ready." });
+        const currentSession = sessionRef.current;
+        if (currentSession) void sendCommand(currentSession, { type: "order.state", userSessionId: current.userSessionId }).then((result) => {
+          if (sessionRef.current?.token === currentSession.token && result.ui) push({ kind: "cards", ui: result.ui });
+        }).catch(() => undefined);
+        if (statusRef.current === "connected") conversation.sendContextualUpdate("The seat hold expired. Choices are preserved. Ask before recover_order confirmed:true; never automatically hold seats or restart the timer.");
+      } else if (left > 0 && left <= 120 && warnedRef.current.two !== expiry) {
+        warnedRef.current.two = expiry;
+        push({ kind: "note", text: lang === "ar" ? "تبقى أقل من دقيقتين على مهلة المقاعد." : "Less than two minutes remain on your seat hold." });
       }
     };
-    void tick();
-    const iv = setInterval(() => void tick(), 1000);
-    return () => clearInterval(iv);
-  }, [order?.expiresAtUtc, order?.userSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [order?.expiresAtUtc, lang]);
 
-  // Inactivity: 60 s of silence during a live booking → one gentle nudge (widget note + context for the agent).
   useEffect(() => {
-    if (!order || statusRef.current !== "connected") return;
-    const iv = setInterval(() => {
-      const idle = Date.now() - lastUserAtRef.current;
-      if (idle > 60000 && Date.now() - nudgedRef.current > 90000 && statusRef.current === "connected") {
-        nudgedRef.current = Date.now();
-        const left = holdLeft != null ? Math.ceil(holdLeft / 60) : null;
-        push({ kind: "note", text: lang === "ar" ? `ما زلت هنا؟${left ? ` مقاعدك محجوزة لـ ${left} دقائق أخرى.` : ""}` : `Still there?${left ? ` Your seats are held for ${left} more minute${left === 1 ? "" : "s"}.` : ""}` });
-        conversation.sendUserMessage(`[widget] The guest has been silent for a minute with a booking in progress${left ? ` (seats held for ${left} more minutes)` : ""}. Nudge once, briefly and warmly; do not repeat the summary.`);
+    const timer = setInterval(() => {
+      if (statusRef.current === "connected" && !idleEndedRef.current && Date.now() - lastUserAtRef.current >= 180000) {
+        idleEndedRef.current = true;
+        void conversation.endSession();
       }
-    }, 5000);
-    return () => clearInterval(iv);
-  }, [order, holdLeft, lang]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [conversation.status]);
 
   const start = async (m: "voice" | "text") => {
+    if (startingRef.current || authBusyRef.current || statusRef.current === "connected") return;
+    startingRef.current = true;
+    const attempt = ++connectionAttemptRef.current;
+    const valid = () => attempt === connectionAttemptRef.current;
     setMode(m);
     lastUserAtRef.current = Date.now();
-    // resume the previous conversation on this device (same booking, same seats) when it is recent
-    let resumeId: string | undefined;
-    if (!session) {
-      try {
-        const saved = JSON.parse(localStorage.getItem("voxi.session") ?? "null") as { conversationId: string; at: number } | null;
-        if (saved && Date.now() - saved.at < 30 * 60000) resumeId = saved.conversationId;
-      } catch {}
-    }
-    const s = session ?? (await createSession({ language: lang, modality: m, conversationId: resumeId }));
-    setSession(s);
-    const { signedUrl, agentId, wsOrigin } = await getSignedUrl(s);
-    const dyn = { ...s.dynamicVariables, language: lang, channel: "web" };
-    if (resumeId) void sendCommand(s, { type: "order.state" }).catch(() => undefined);
+    idleEndedRef.current = false;
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
     try {
+      await restoreRef.current;
+      if (!valid()) return;
+      const s = sessionRef.current ?? (await createSession({ language: langRef.current, modality: m }));
+      if (!valid()) return;
+      commitSession(s);
+      const { signedUrl, agentId, wsOrigin } = await getSignedUrl(s);
+      if (!valid()) return;
+      const currentLang = langRef.current;
+      const pendingOrder = orderRef.current;
+      const dyn = { ...s.dynamicVariables, language: currentLang, channel: "web", ...(pendingOrder ? {
+        greetingEn: holdSeconds(pendingOrder.expiresAtUtc) === 0 ? "Welcome back. Your choices are saved—shall I check and hold seats again?" : "Welcome back. Shall we pick up your booking?",
+        greetingAr: holdSeconds(pendingOrder.expiresAtUtc) === 0 ? "أهلاً بعودتك. اختياراتك محفوظة، هل أتحقق وأحجز المقاعد مجدداً؟" : "أهلاً بعودتك. هل نكمل حجزك؟",
+      } : {}) };
+      if (s.isLoggedIn && !customer) void refreshProfile(s);
       if (m === "voice") {
-        await navigator.mediaDevices.getUserMedia({ audio: true });
+        const permission = await navigator.mediaDevices.getUserMedia({ audio: true });
+        for (const track of permission.getTracks()) track.stop();
       }
-      const overrides = { agent: { language: lang }, conversation: { textOnly: m === "text" } } as const;
-      // EU/IN data-residency workspaces live on a different host; the API tells the widget which one.
-      const serverLocation = /eu\.residency/.test(wsOrigin ?? "")
-        ? "eu-residency"
-        : /in\.residency/.test(wsOrigin ?? "")
-          ? "in-residency"
-          : "us";
-      // `textOnly` at the top level selects the SDK's text transport (no microphone / AudioContext at all);
-      // the conversation override only tells the agent side. Without it, text mode still waits on a mic permission.
+      if (!valid()) return;
+      const overrides = { agent: { language: currentLang }, conversation: { textOnly: m === "text" } } as const;
+      const serverLocation = /eu\.residency/.test(wsOrigin ?? "") ? "eu-residency" : /in\.residency/.test(wsOrigin ?? "") ? "in-residency" : "us";
       const origin = { serverLocation, textOnly: m === "text" };
       const started = signedUrl
         ? conversation.startSession({ signedUrl, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never)
         : conversation.startSession({ agentId, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never);
-      // Watchdog: the SDK can sit in "connecting" forever when the socket is blocked (CSP, proxy, offline).
       await Promise.race([
         started,
-        new Promise((_, rej) => setTimeout(() => rej(new Error(lang === "ar" ? "انتهت مهلة الاتصال — تحقق من الشبكة أو إعدادات الصفحة المضيفة" : "Connection timed out — check the network or the host page's security policy (websocket to elevenlabs.io must be allowed)")), 20000)),
+        new Promise((_, reject) => { watchdog = setTimeout(() => reject(new Error(currentLang === "ar" ? "تعذر الاتصال الآن. حاول مجدداً." : "The connection took too long. Please try again.")), 20000); }),
       ]);
-    } catch (e) {
-      if (m === "voice" && String(e).match(/NotAllowed|Permission|denied/i)) {
-        push({ kind: "note", text: t(lang, "micDenied") });
-        return start("text");
+      if (!valid()) await conversation.endSession();
+    } catch (error) {
+      if (!valid()) return;
+      switchingRef.current = true;
+      try { await conversation.endSession(); } catch { /* Clean up a partially opened connection. */ } finally { switchingRef.current = false; }
+      if (m === "voice" && /NotAllowed|Permission|denied/i.test(String(error))) {
+        push({ kind: "note", text: t(langRef.current, "micDenied") });
+        startingRef.current = false;
+        return await start("text");
       }
-      push({ kind: "note", text: `⚠️ ${(e as Error).message}` });
+      push({ kind: "note", text: (error as Error).message || (langRef.current === "ar" ? "تعذر الاتصال. حاول مجدداً." : "Could not connect. Please try again.") });
       setMode("idle");
+    } finally {
+      if (watchdog) clearTimeout(watchdog);
+      if (valid()) startingRef.current = false;
     }
   };
 
-  /** Switch between voice and text without losing the concierge session (same conversation, cards, order). */
+  /** Start a fresh voice/text transport while preserving the authenticated booking session. */
   const switchMode = async (m: "voice" | "text") => {
-    if (connected) await conversation.endSession();
-    await start(m);
+    if (switchingRef.current || startingRef.current || authBusyRef.current) return;
+    switchingRef.current = true;
+    try {
+      if (statusRef.current === "connected") await conversation.endSession();
+      // The SDK status prop can lag its resolved endSession promise by one render.
+      statusRef.current = "disconnected";
+      await start(m);
+    } finally { switchingRef.current = false; }
   };
 
   const say = useCallback(
     (text: string) => {
       if (!text.trim()) return;
+      lastUserAtRef.current = Date.now();
       if (humanMode && session) {
         push({ kind: "msg", role: "user", text });
         void sendCommand(session, { type: "human.message", transferId: humanMode.transferId, text });
@@ -464,17 +585,46 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     [conversation, humanMode, session, mode, lang, push],
   );
 
+  const ask = async (text: string) => {
+    if (!text.trim()) return;
+    if (humanMode && session) { say(text); return; }
+    const epoch = authEpochRef.current;
+    if (statusRef.current !== "connected") await start("text");
+    // A card click is a new explicit request, so restore the transport before sending it.
+    for (let i = 0; i < 66 && statusRef.current !== "connected" && epoch === authEpochRef.current; i++) await new Promise((resolve) => setTimeout(resolve, 300));
+    if (epoch !== authEpochRef.current) return;
+    if (statusRef.current === "connected") say(text);
+  };
+
   const act: CardActions = useMemo(
     () => ({
-      say,
+      say: (text) => { if (statusRef.current === "connected" || humanMode) say(text); else void ask(text); },
       command: async (cmd) => {
         lastUserAtRef.current = Date.now();
-        return session ? sendCommand(session, cmd) : { ok: false, error: "no session" };
+        const current = sessionRef.current;
+        if (!current) return { ok: false, error: "no session" };
+        const result = await sendCommand(current, { ...cmd, ...(["booking.select", "order.recover"].includes(String(cmd.type)) && !cmd.idempotencyKey ? { idempotencyKey: crypto.randomUUID() } : {}) })
+          .catch((): Awaited<ReturnType<typeof sendCommand>> => ({ ok: false, error: langRef.current === "ar" ? "انقطع الاتصال. تحقق من حالة الحجز قبل إعادة المحاولة." : "The connection was interrupted. Check the booking status before trying again." }));
+        if (sessionRef.current?.token !== current.token) return { ok: false, error: langRef.current === "ar" ? "تغيرت جلسة الحساب. تحقق من الطلب مجدداً." : "Your account session changed. Check the current booking again." };
+        if (result.ui) { trackOrderFromUi(result.ui); push({ kind: "cards", ui: result.ui }); }
+        const meaningful = ["seat.select", "payment.token", "booking.select", "order.recover"].includes(String(cmd.type));
+        if (meaningful && result.action && ["queued", "running"].includes(result.action.status)) {
+          const completed = completedActionsRef.current.get(result.action.actionId);
+          if (completed) acknowledge(actionContext(completed.type, { ok: completed.status === "succeeded", action: completed, error: completed.error?.message }));
+          else pendingAckRef.current.add(result.action.actionId);
+        }
+        else if (meaningful) acknowledge(actionContext(String(cmd.type), result));
+        if (!result.ok && !result.action && result.error) push({ kind: "note", text: result.error });
+        return result;
+      },
+      selection: (selection) => {
+        lastUserAtRef.current = Date.now();
+        acknowledge(JSON.stringify({ draftSelection: { kind: selection.kind, label: selection.label, cardLast4: selection.cardLast4 }, applied: false }));
       },
       openLink: (url) => window.open(url, "_blank", "noopener"),
       playTrailer: (id) => window.open(`https://www.youtube.com/watch?v=${id}`, "_blank", "noopener"),
     }),
-    [say, session],
+    [say, ask, session],
   );
 
   const connected = conversation.status === "connected";
@@ -491,14 +641,8 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   }, [open]);
   const thinking = connected && !humanMode && lastItem?.kind === "msg" && lastItem.role === "user" && !conversation.isSpeaking;
   const suggestions = lang === "ar"
-    ? ["ماذا يُعرض الليلة في مول الإمارات؟", "احجز تذكرتين لفيلم عائلي غداً", "ألغِ حجزي WXA7K2M", "ما هي عروض البنوك؟"]
-    : ["What's on tonight at Mall of the Emirates?", "Book two tickets for a family movie tomorrow", "Cancel my booking WXA7K2M", "Which bank offers are on?"];
-  const ask = async (text: string) => {
-    if (!connected) await start("text");
-    // the socket connects asynchronously — wait for it (up to 20 s) before sending the suggestion
-    for (let i = 0; i < 66 && statusRef.current !== "connected"; i++) await new Promise((r) => setTimeout(r, 300));
-    say(text);
-  };
+    ? ["اقترح لي فيلماً", "ما الذي يُعرض بين الرابعة والسادسة؟", "ساعدني في حجز سابق", "ما عروض بطاقتي؟"]
+    : ["Suggest me a movie", "Anything good between 4 and 6?", "Help with an existing booking", "Does my card have an offer?"];
   const statusText = connected
     ? conversation.isSpeaking
       ? t(lang, "speaking")
@@ -520,7 +664,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     );
 
   return (
-    <div className={`widget ${expanded ? "expanded" : ""} state-${voiceState}`} dir={dir}>
+    <div className={`widget ${expanded ? "expanded" : ""} state-${voiceState}`} dir={dir} onPointerDown={() => { lastUserAtRef.current = Date.now(); if (connected) conversation.sendUserActivity(); }} onKeyDown={() => { lastUserAtRef.current = Date.now(); if (connected) conversation.sendUserActivity(); }}>
       <div className="widget-head">
         <div className={`orb ${voiceState}`} aria-hidden="true">
           <i /><i /><i />
@@ -532,14 +676,14 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
             {humanMode ? `${t(lang, "human")}${humanMode.agentName ? ` · ${humanMode.agentName}` : ""}` : statusText || t(lang, "subtitle")}
           </small>
         </div>
-        <button className="iconbtn auth" onClick={() => (customer ? void doLogout() : setAuthOpen(true))} title={customer ? (lang === "ar" ? "تسجيل الخروج" : "Log out") : lang === "ar" ? "تسجيل الدخول" : "Log in"}>
-          {customer ? `${customer.firstName} · ${lang === "ar" ? "خروج" : "Log out"}` : lang === "ar" ? "تسجيل الدخول" : "Log in"}
+        <button className="iconbtn auth" onClick={() => setAuthOpen(true)} title={customer ? (lang === "ar" ? "حسابي" : "My account") : lang === "ar" ? "تسجيل الدخول" : "Sign in"}>
+          {customer ? customer.firstName : lang === "ar" ? "تسجيل الدخول" : "Log in"}
         </button>
         <div className="langtoggle" role="group" aria-label="language" title={`events: ${sseStatus}`}>
-          <button className={lang === "en" ? "on" : ""} onClick={() => { setLang("en"); if (connected) conversation.sendUserMessage("Please continue in English."); }}>
+          <button className={lang === "en" ? "on" : ""} onClick={() => void changeLanguage("en", true)}>
             EN
           </button>
-          <button className={lang === "ar" ? "on" : ""} onClick={() => { setLang("ar"); if (connected) conversation.sendUserMessage("من فضلك تابع بالعربية."); }}>
+          <button className={lang === "ar" ? "on" : ""} onClick={() => void changeLanguage("ar", true)}>
             ع
           </button>
         </div>
@@ -557,30 +701,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       </div>
 
       <LocationBar lang={lang} loc={loc} onChange={changeLoc} />
-      {authOpen ? (
-        <form
-          className="authsheet"
-          onSubmit={(e) => {
-            e.preventDefault();
-            const f = new FormData(e.currentTarget);
-            void doLogin(String(f.get("identifier") ?? ""), String(f.get("pin") ?? ""));
-          }}
-        >
-          <b>{lang === "ar" ? "تسجيل الدخول إلى حساب شير" : "Sign in to your SHARE account"}</b>
-          <input name="identifier" autoFocus placeholder={lang === "ar" ? "البريد الإلكتروني أو رقم الجوال أو رقم العضوية" : "Email, mobile number or member id"} autoComplete="username" />
-          <input name="pin" type="password" inputMode="numeric" placeholder="PIN" autoComplete="current-password" />
-          {authErr ? <div className="err">{authErr}</div> : null}
-          <div className="row">
-            <button className="btn cta" type="submit" disabled={authBusy}>
-              {authBusy ? t(lang, "processing") : lang === "ar" ? "دخول" : "Sign in"}
-            </button>
-            <button className="btn ghost" type="button" onClick={() => setAuthOpen(false)}>
-              {lang === "ar" ? "إلغاء" : "Cancel"}
-            </button>
-          </div>
-          <small>{lang === "ar" ? "أو ابدأ كضيف — يمكنك تسجيل الدخول أثناء المحادثة أيضاً." : "Or continue as a guest — you can also sign in during the conversation."}</small>
-        </form>
-      ) : null}
+      {authOpen ? <AccountPanel lang={lang} customer={customer} profile={profile} history={history} loading={profileLoading} busy={authBusy} error={authErr} onLogin={doLogin} onLogout={doLogout} onClose={() => setAuthOpen(false)} /> : null}
 
       <div className="widget-body" ref={bodyRef}>
         {mode !== "idle" && !items.length && !connected ? (
@@ -593,7 +714,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           <div className="start">
             <div className="hero-orb"><i /><i /><i /></div>
             <h3>{lang === "ar" ? "مساعد فوكس سينما الافتراضي" : "VOX Cinemas Virtual Assistant"}</h3>
-            <p>{lang === "ar" ? "اسألني عن الأفلام والمواعيد والحجوزات والاسترداد والعروض والمأكولات — بالصوت أو الكتابة." : "Movies, showtimes, bookings, refunds, offers and food — by voice or text, in English or Arabic."}</p>
+            <p>{lang === "ar" ? "ما نوع الفيلم الذي ودك تشوفه؟" : "What are you in the mood to watch?"}</p>
             <div className="startbtns">
               <button className="btn primary big" onClick={() => start("voice")}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
@@ -625,7 +746,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
               </div>
             </div>
           ) : it.kind === "cards" ? (
-            <Cards key={it.id} ui={it.ui} lang={lang} act={act} />
+            <div key={it.id}>{it.archived ? <button className="booking-summary" type="button" onClick={() => void ask(`${lang === "ar" ? "أود تعديل" : "I'd like to change"} ${decisionSummary(it.ui, lang)}`)}><span>{decisionSummary(it.ui, lang)}</span><small>{lang === "ar" ? "تعديل" : "Edit"}</small></button> : <Cards ui={it.ui} lang={lang} act={act} />}</div>
           ) : it.kind === "feedback" ? (
             <div key={it.id} className="cards">
               <Feedback lang={lang} act={act} />
@@ -653,7 +774,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
             className="btn"
             onClick={async () => {
               const s = session ?? (await createSession({ language: lang, modality: "text" }));
-              setSession(s);
+              commitSession(s);
               if (mode === "idle") setMode("text");
               push({ kind: "msg", role: "user", text: `[dev] ${devName} ${devInput}` });
               const r = await devTool(s, devName, JSON.parse(devInput || "{}"));
@@ -689,11 +810,13 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       ) : null}
       {holdLeft != null && order && !order.paid ? (
         <div className={`holdbar ${holdLeft <= 45 ? "urgent" : holdLeft <= 120 ? "warn" : ""}`} role="status">
-          <span>{lang === "ar" ? "المقاعد محجوزة" : "Seats held"}{order.seats ? ` · ${seatRange(order.seats)}` : ""}</span>
+          <span>{holdLeft === 0 ? (lang === "ar" ? "انتهت مهلة المقاعد" : "Seat hold expired") : (lang === "ar" ? "المقاعد محجوزة" : "Seats held")}{order.seats ? ` · ${seatRange(order.seats)}` : ""}</span>
           <b>{`${Math.floor(holdLeft / 60)}:${String(holdLeft % 60).padStart(2, "0")}`}</b>
+          {holdLeft === 0 ? <button className="btn small" onClick={() => void act.command({ type: "order.recover", userSessionId: order.userSessionId, confirmed: true })}>{lang === "ar" ? "تحقق واحجز المقاعد مجدداً" : "Check and hold seats again"}</button> : null}
         </div>
       ) : null}
 
+      {!connected && conversation.status !== "connecting" && items.some((item) => item.kind !== "note") ? <div className="reconnect-bar"><button className="btn primary" onClick={() => void start("text")}>{lang === "ar" ? "متابعة المحادثة" : "Reconnect to chat"}</button>{order ? <span>{lang === "ar" ? "اختياراتك محفوظة" : "Your choices are saved"}</span> : null}</div> : null}
       <div className="widget-foot">
         {!humanMode ? (
           <button

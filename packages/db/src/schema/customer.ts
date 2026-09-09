@@ -1,5 +1,22 @@
 /** Customers, loyalty (Share Points / VOX Rewards), offers engine, purchase history. */
-import { boolean, index, integer, jsonb, pgTable, text, timestamp, varchar } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  customType,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  varchar,
+} from "drizzle-orm/pg-core";
+
+/** SHARE supports tenths of a point (10 points/AED); deserialize PostgreSQL numeric as a number. */
+export const pointsNumber = customType<{ data: number; driverData: string }>({
+  dataType: () => "numeric(16,1)",
+  toDriver: (value) => String(value),
+  fromDriver: (value) => Number(value),
+});
 
 export type CustomerPreferences = {
   genres?: string[];
@@ -38,6 +55,8 @@ export const customers = pgTable(
     savedCards: jsonb("saved_cards").$type<SavedCard[]>().default([]),
     persona: text("persona").default(""), // seed label for demo personas
     demoPin: varchar("demo_pin", { length: 8 }).default("0000"), // simulated login
+    passwordHash: text("password_hash"), // scrypt hash; never returned by a customer API
+    demoProfileVersion: integer("demo_profile_version").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -53,7 +72,7 @@ export const loyaltyAccounts = pgTable("loyalty_accounts", {
     .notNull()
     .references(() => customers.id),
   tier: varchar("tier", { length: 16 }).notNull().default("Blue"), // Blue | Silver | Gold | Platinum
-  sharePointsBalance: integer("share_points_balance").notNull().default(0), // SHARE: 10 points = AED 1 (as shown on uae.voxcinemas.com)
+  sharePointsBalance: pointsNumber("share_points_balance").notNull().default(0), // SHARE: 10 points = AED 1
   voxRewardsBalanceCents: integer("vox_rewards_balance_cents").notNull().default(0), // VOX credit wallet
   version: integer("version").notNull().default(1),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -67,7 +86,7 @@ export const loyaltyLedger = pgTable(
       .notNull()
       .references(() => loyaltyAccounts.memberId),
     balanceType: varchar("balance_type", { length: 16 }).notNull(), // SHARE_POINTS | VOX_REWARDS
-    delta: integer("delta").notNull(),
+    delta: pointsNumber("delta").notNull(), // SHARE points may have tenths; VOX credit remains whole fils
     reason: text("reason").notNull(),
     reference: varchar("reference", { length: 32 }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -165,6 +184,8 @@ export const purchaseHistory = pgTable(
     ticketCount: integer("ticket_count").notNull().default(1),
     concessionItemIds: jsonb("concession_item_ids").$type<string[]>().default([]),
     spendCents: integer("spend_cents").notNull().default(0),
+    seatPreference: varchar("seat_preference", { length: 8 }).$type<"front" | "middle" | "back" | "aisle">(),
+    synthetic: boolean("synthetic").notNull().default(false),
   },
   (t) => [index("purchase_history_customer_idx").on(t.customerId)],
 );

@@ -233,7 +233,7 @@ export const movieTools: Pick<
           },
         );
       }
-      film = cands[0]?.film ?? null;
+      film = cands[0] && cands[0].score >= 0.55 ? cands[0].film : null;
       if (!film)
         return err(
           "NOT_FOUND",
@@ -250,7 +250,8 @@ export const movieTools: Pick<
           f.title.toLowerCase() === film!.title.toLowerCase() &&
           (!wantLangForVersions || similarity(f.language, wantLangForVersions) >= 0.7),
       );
-      for (const f of sameTitle.length ? sameTitle : [film]) versionCodes.add(f.hoCode);
+      for (const f of sameTitle.length ? sameTitle : wantLangForVersions ? [] : [film])
+        versionCodes.add(f.hoCode);
       if (wantLangForVersions && sameTitle.length) film = sameTitle[0]!;
     }
     // ---- resolve cinema(s) ----
@@ -316,7 +317,11 @@ export const movieTools: Pick<
     // (dubbed/subtitled sessions may carry a different language tag than the film itself).
     const wantLang = film ? undefined : normaliseFilmLanguage(input.language);
     const base = (await sessionsFor(ctx, cinemaIds)).filter(
-      (s) => (!film || versionCodes.has(s.hoCode)) && s.showtime >= ctx.nowLocal,
+      (s) =>
+        (!film || versionCodes.has(s.hoCode)) &&
+        s.showtime > ctx.nowLocal &&
+        s.allowTicketSales &&
+        !s.soldOut,
     );
     const apply = (rows: Session[], f: { date?: boolean; time?: boolean; exp?: boolean; lang?: boolean }) =>
       rows.filter((s) => {
@@ -341,7 +346,9 @@ export const movieTools: Pick<
         const all = (await sessionsFor(ctx, allCinemaIds)).filter(
           (s) =>
             (!film || versionCodes.has(s.hoCode)) &&
-            s.showtime >= ctx.nowLocal &&
+            s.showtime > ctx.nowLocal &&
+            s.allowTicketSales &&
+            !s.soldOut &&
             !cinemaIds.includes(s.cinemaId),
         );
         let r = apply(all, {});

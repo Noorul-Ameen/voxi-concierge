@@ -1,9 +1,10 @@
 import { createDb } from "@voxi/db";
 import { afterAll, describe, expect, it } from "vitest";
+import { assertLocalTestDatabase } from "../../../infra/test-db-guard.js";
 import { appendEvent, createPgEventBus } from "../src/events.js";
 
-const a = createDb(undefined, { max: 2 });
-const b = createDb(undefined, { max: 2 });
+const a = createDb(assertLocalTestDatabase(), { max: 2 });
+const b = createDb(assertLocalTestDatabase(), { max: 2 });
 afterAll(async () => {
   await a.close();
   await b.close();

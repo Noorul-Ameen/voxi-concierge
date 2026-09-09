@@ -1,4 +1,4 @@
-const fs = require("fs");
+const fs = require("node:fs");
 const wrapped = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
 let text = wrapped[0].text;
 const cut = text.indexOf("\n\n(captured at origin");

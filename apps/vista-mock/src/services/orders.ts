@@ -226,7 +226,7 @@ export async function addTickets(
     const { sess, tpl, state } = await loadSeatState(tx, req.CinemaId, req.SessionId);
     if (!sess.allowTicketSales || sess.soldoutStatus === 2)
       throw new VistaError(RC.GENERAL, RC.SEATS_UNAVAILABLE, "Session is sold out");
-    if (sess.showtime.getTime() < nowLocalDate().getTime() - 30 * 60000)
+    if (sess.showtime.getTime() <= nowLocalDate().getTime())
       throw new VistaError(RC.GENERAL, RC.SESSION_NOT_FOUND, "Session has already started");
     const types = await tx
       .select()
@@ -770,7 +770,28 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
     }
   }
   return withSessionLock(db, order.cinemaId, order.sessionId!, async (tx) => {
+    // A second payment can enter before the first commits; re-read under the session lock.
+    const fresh = (await tx.select().from(S.orders).where(eq(S.orders.userSessionId, req.UserSessionId)))[0];
+    if (fresh?.state === "paid") {
+      const booking = (
+        await tx
+          .select()
+          .from(S.bookings)
+          .where(eq(S.bookings.vistaBookingId, fresh.completedBookingId ?? ""))
+      )[0];
+      if (booking) return { booking, order: fresh, alreadyCompleted: true };
+    }
+    if (!fresh || fresh.version !== order.version)
+      throw new VistaError(
+        RC.GENERAL,
+        RC.INVALID_STATE,
+        "The order changed; review its current total before payment",
+      );
+    if (fresh.expiryAt.getTime() <= Date.now() || fresh.state === "expired")
+      throw new VistaError(RC.GENERAL, RC.ORDER_EXPIRED, "Order has expired");
     const { state, sess } = await loadSeatState(tx, order.cinemaId, order.sessionId!);
+    if (!fnbOnly && sess.showtime.getTime() <= nowLocalDate().getTime())
+      throw new VistaError(RC.GENERAL, RC.SESSION_NOT_FOUND, "Session has already started");
     const film = (await tx.select().from(S.films).where(eq(S.films.hoCode, sess.hoCode)))[0]!;
     const custId = req.CustomerId ?? order.customerId ?? null;
     const savedCards = custId
@@ -787,11 +808,21 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
             "Member id required for loyalty/wallet payments",
           );
         const acct = (
-          await tx.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, memberId))
+          await tx
+            .select()
+            .from(S.loyaltyAccounts)
+            .where(eq(S.loyaltyAccounts.memberId, memberId))
+            .for("update")
         )[0];
         if (!acct) throw new VistaError(RC.GENERAL, RC.INSUFFICIENT_FUNDS, "Loyalty account not found");
         if (p.PaymentTenderCategory === "LOYALTY") {
-          const pts = p.PointsRedeemed ?? centsToPoints(p.PaymentValueCents); // 10 points = AED 1
+          const pts = centsToPoints(p.PaymentValueCents); // 10 points = AED 1
+          if (p.PointsRedeemed != null && p.PointsRedeemed !== pts)
+            throw new VistaError(
+              RC.GENERAL,
+              RC.PAYMENT_DECLINED,
+              "Share Points do not match the payment amount",
+            );
           if (acct.sharePointsBalance < pts)
             throw new VistaError(
               RC.GENERAL,

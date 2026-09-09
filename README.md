@@ -1,72 +1,62 @@
-# Voxi — VOX 2.0 Digital Concierge (Phase 1 + Phase 2 demo)
+# VOX Cinemas Virtual Assistant
 
-A production-grade, portable implementation of the **VOX 2.0 Digital Concierge** re-prioritised
-scope (22 features across Phase 1 and Phase 2), showcased with **ElevenLabs Agents** (voice + text,
-EN/AR) and a **Lovable**-buildable React widget.
+A voice and text cinema concierge for English and Arabic, built on the existing ElevenLabs agent, Railway API and React widget. The same widget is used by the standalone Railway demo and the Cloudflare-hosted website.
 
-Movies, cinemas and showtimes are **real** (extracted from uae.voxcinemas.com). Everything else —
-bookings, customers, loyalty, offers, F&B, seat plans, payments — is dummy data held in a local
-Postgres database exposed through a **Vista Connect / VOX Apigee-shaped mock API**. Going live is an
-endpoint + credentials swap (see `docs/03-go-live-swap.md`).
+The current enhancement adds email/password sign-in, history-backed recommendations, compact booking steps, optional snacks before one checkout, and explicit consent before replacing an expired seat hold. See [the current behavior and acceptance guide](docs/13-concierge-enhancements.md).
 
-```
-ElevenLabs Agent ──webhook tools──▶ concierge-api ──▶ vista-client ──▶ vista-mock (Apigee/Connect shape)
-        ▲                               │  ▲                              │
-        │ client tools / SSE            │  │ Action Ledger + worker       ▼
-   Web widget (React, Lovable)  ◀───────┘  └──────── Postgres (reference + commerce + concierge)
-```
+This is a demonstration system: the catalogue starts from a captured VOX website snapshot; an explicitly enabled synthetic schedule can keep demo screenings current. Accounts, bookings, seat plans, offers, loyalty and payments are simulated. A real integration requires provider-contract, identity, payment and operational validation; changing an endpoint alone does not establish production readiness.
 
-## Repository layout
+## Architecture
+
+ElevenLabs handles conversation and calls 44 server tools. The concierge API validates inputs and authenticated session state, reads catalogue/profile data, and coordinates booking actions through the Vista-shaped mock and durable action worker. Twelve client tools and server events drive the shared widget. The API and order state determine the functional UI; the model supplies concise wording.
 
 | Path | Purpose |
 |---|---|
-| `apps/vista-mock` | Vista Connect V1 / Apigee mock: OAuth handshake, OData reference data, Ticketing order lifecycle, RESTBooking search/refund/cancel, RESTLoyalty, Offers Engine, Customer profile |
-| `apps/concierge-api` | Concierge orchestration API (Hono): 39 agent tools, widget session/SSE endpoints, ElevenLabs + Genesys webhooks, reporting, OpenAPI |
-| `apps/worker` | Action executor — drains the Action Ledger so write actions run exactly once, independent of the conversation |
-| `apps/web` | React widget + demo page + reporting dashboard (import into Lovable) |
-| `apps/scraper` | Extracts real films/cinemas/showtimes + KB pages from the VOX website (browser-driven snapshot committed under `out/`) |
-| `packages/db` | Drizzle schema, migrations, seed (real catalogue + dummy personas/bookings/offers/menu) |
-| `packages/contracts` | Zod schemas for every tool, client tool, event and error — the single source of truth for ElevenLabs tool definitions, OpenAPI and the widget |
-| `packages/domain` | Pure business rules: cancellation/refund policy, offers, recommendations, geo, spoken-name matching |
-| `packages/vista-client` | The **only** module that changes at go-live (base URL, OAuth, retries, V1 result-code handling) |
-| `packages/concierge-core` | Action Ledger, executor, confirmation gate, swap saga, handover port (simulated / Genesys), event bus |
-| `packages/agent` | ElevenLabs agent-as-code: system prompt, tool export, KB build, deploy script |
-| `infra` | Docker Compose, Dockerfiles, nginx, CI, e2e (Playwright), concurrency proof, OpenAPI + Postman collections |
-| `docs` | Architecture, runbook, go-live swap, demo script, scope traceability |
+| `apps/concierge-api` | Tool routes, secure widget sessions, profile/history, events, webhooks and reporting |
+| `apps/vista-mock` | Simulated Vista/Apigee catalogue, orders, booking management, loyalty, offers and accounts |
+| `apps/worker` | Durable action execution and simulated handover |
+| `apps/web` | Shared React widget, Railway demo page and dashboard |
+| `apps/scraper` | Captured VOX reference content and catalogue |
+| `packages/contracts` | Shared tool and event schemas |
+| `packages/domain` | Recommendations, history inference, offers, policy and geography |
+| `packages/db` | Schema, migrations, initial fixtures and bounded demo updates |
+| `packages/vista-client` | Provider adapter, authentication, retries and result handling |
+| `packages/concierge-core` | Booking journeys, confirmation gates, state, actions and handover |
+| `packages/agent` | Prompt/configuration, tool generation and offline coaching/regressions |
+| `infra` | Deployment, OpenAPI, Postman and test utilities |
 
-## Live demo
+## Demo and embedding
 
-Demo site: https://voxi-demo.up.railway.app · API: https://concierge-api-production-3d90.up.railway.app · details in `docs/06-live-environment.md`.
-
-### Embed the widget on any page
+The deployment targets are the [Railway demo](https://voxi-demo.up.railway.app) and the [Cloudflare website](https://voxi.kris-pradip.workers.dev/). Current deployment/version evidence belongs in the acceptance record; source changes are not proof that either target has been promoted.
 
 ```html
 <script src="https://voxi-demo.up.railway.app/embed/voxi.js" charset="utf-8" defer></script>
 ```
 
-One script tag adds the "Ask Voxi" launcher to the bottom-right of the page (`apps/web/src/embed.tsx`, built by `vite.embed.config.ts` into `dist/embed/voxi.js`, ~245 KB gzipped, React included). It renders in a Shadow DOM, so the host page's CSS and the widget's never interfere. Options: `data-lang="ar"` (start in Arabic), `data-open="true"` (start expanded), `data-theme="navy"` (colour preset matching the navy/cyan VOX prototype site; presets live at the end of `apps/web/src/styles.css`, and `window.VoxiConfig.vars = { "--accent": "#…" }` overrides any variable), `data-api="https://…/api"` (another concierge API; default is the script's origin + `/api`), or `window.VoxiConfig = { apiBase, lang, open }` before the tag. The page can call `Voxi.open()`, `Voxi.login()`, `Voxi.logout()`, `Voxi.unmount()`. Example host page: https://voxi-demo.up.railway.app/embed/demo.html. Every hostname that embeds the widget must be on the ElevenLabs agent's origin allowlist (or the allowlist must be empty), otherwise the socket is refused with "Host … is not allowed to connect to this agent".
+The embed mounts the VOX Cinemas Virtual Assistant in a Shadow DOM. Supported settings include `data-lang="ar"`, `data-open="true"`, `data-theme="navy"`, `data-api`, and `window.VoxiConfig`. The host can call `Voxi.open()`, `Voxi.login()`, `Voxi.logout()`, `Voxi.profile()` and `Voxi.unmount()`. These global names, package scopes, URLs and asset filenames remain technical compatibility identifiers; they are not the displayed product name.
 
-## Quick start
+## Local setup
 
-```bash
+Use Node 22 or newer and the repository's pinned pnpm 10.28.0. Load environment settings from a private local file or shell. Provision the three demo passwords through `DEMO_SARA_PASSWORD`, `DEMO_RAHUL_PASSWORD` and `DEMO_JAMES_PASSWORD`; passwords are hashed and never displayed as demo hints.
+
+For a fresh, disposable local database:
+
+```sh
 pnpm install
-cp .env.example .env
 docker compose -f infra/docker-compose.yml up -d postgres
-pnpm db:migrate && pnpm db:seed && pnpm db:seed:history   # real catalogue + demo personas + synthetic dashboard history
-infra/dev-up.sh            # vista-mock :4010, concierge-api :4020, worker, web :5173
-open http://localhost:5173 # demo page (text mode works without ElevenLabs credentials)
+pnpm db:migrate
+pnpm db:seed
+pnpm build:packages
 ```
 
-Full stack in Docker: `docker compose -f infra/docker-compose.yml up --build` (web on :8080).
+Run `pnpm dev:vista`, `pnpm dev:api`, `pnpm dev:worker` and `pnpm dev:web` in separate terminals. The web page is at `http://localhost:5173`. Voice **and natural-language text conversation** use ElevenLabs; the development tool bridge is an explicit API testing facility, not a replacement conversational model.
+
+The full seed resets demo data. Do not use it as a routine update to a populated shared environment. The deployment bootstrap applies migrations, provisions missing account hashes, and updates only recognized demo-profile records; the optional schedule refresh is separately gated. See [the runbook](docs/02-runbook.md).
 
 ## Verification
 
-```bash
-pnpm typecheck && pnpm lint && pnpm test      # unit + integration (mock 22, concierge 16, domain 10, events 1)
-node infra/load/concurrency.mjs               # 6 concurrency invariants (idempotency, single-writer, seat races)
-node infra/e2e/booking.mjs                    # Playwright: full guided booking → QR in the widget
-```
+Run `pnpm typecheck`, `pnpm lint` and `pnpm test` against the intended isolated test environment. Database suites reset local test fixtures; do not point them at the demo database. Report actual results rather than relying on historical test counts.
 
-See `docs/02-runbook.md` for environment variables, ElevenLabs agent deployment, Lovable import and
-Genesys handover configuration; `docs/05-scope-traceability.md` maps each of the 22 scope items to
-code and test evidence.
+The [simulation runbook](packages/agent/coaching/SIMULATION-RUNBOOK.md) defines 17 mocked ElevenLabs simulations covering the 13 agreed scenario groups. Provider results, browser checks on both hosts, mobile layout, and actual English/Arabic voice checks are separate acceptance gates.
+
+Operational details: [runbook](docs/02-runbook.md), [demo script](docs/04-demo-script.md), [deployment identifiers](docs/06-live-environment.md), [current enhancement guide](docs/13-concierge-enhancements.md). Older architecture and audit documents describe earlier snapshots and are not evidence that the current candidate passed.

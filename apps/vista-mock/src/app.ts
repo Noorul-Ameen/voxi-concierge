@@ -1,7 +1,8 @@
 import type { Db } from "@voxi/db";
-import { schema as S, shortId } from "@voxi/db";
+import { schema as S, nowLocalIso, shortId, verifyPassword } from "@voxi/db";
 import { centsToPoints, pointsToCents } from "@voxi/domain";
 import { type Offer, applyBenefit, evaluateOffer, offerAcceptsBin, offerMatchesBank } from "@voxi/domain";
+import { inferCustomerProfile, preferenceCalendar, visitDayType } from "@voxi/domain";
 /**
  * Vista-shaped mock API (VOX Apigee partner API + Vista RESTBooking/RESTLoyalty + Offers Engine + Customer).
  * All routes live under BASE = /vistatickets/vista/v2 (as production) plus /v1/oauth/generate at the root.
@@ -707,24 +708,16 @@ export function createApp(db: Db, cfg: MockConfig) {
 
   // ---------------- Loyalty (RESTLoyalty.svc) ----------------
   api.post("/RESTLoyalty.svc/member/validate", async (c) => {
-    const body = (await c.req.json()) as { MemberId?: string; Email?: string; Phone?: string; Pin?: string };
-    const conds = [];
-    if (body.MemberId) conds.push(eq(S.customers.memberId, body.MemberId));
-    if (body.Email) conds.push(sql`lower(${S.customers.email}) = ${body.Email.toLowerCase()}`);
-    if (body.Phone)
-      conds.push(
-        sql`regexp_replace(${S.customers.phone}, '\\D', '', 'g') like ${`%${body.Phone.replace(/\D/g, "").slice(-9)}`}`,
-      );
-    if (!conds.length) throw new VistaError(RC.GENERAL, RC.GENERAL, "Provide MemberId, Email or Phone");
-    const cust = (
-      await db
-        .select()
-        .from(S.customers)
-        .where(and(...conds))
-    )[0];
-    if (!cust) return c.json({ Result: 1, ExtendedResultCode: 404, ErrorDescription: "Member not found" });
-    if (body.Pin && cust.demoPin !== body.Pin)
-      return c.json({ Result: 1, ExtendedResultCode: 401, ErrorDescription: "Invalid PIN" });
+    const body = (await c.req.json()) as { Email?: unknown; Password?: unknown };
+    const email = typeof body.Email === "string" ? body.Email.trim().toLowerCase() : "";
+    const cust = (await db.select().from(S.customers).where(sql`lower(${S.customers.email}) = ${email}`))[0];
+    const validPassword = await verifyPassword(body.Password, cust?.passwordHash);
+    if (!email || !cust || !validPassword)
+      return c.json({
+        Result: 1,
+        ExtendedResultCode: 401,
+        ErrorDescription: "Email or password does not match",
+      });
     const acct = cust.memberId
       ? (await db.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, cust.memberId)))[0]
       : undefined;
@@ -742,6 +735,7 @@ export function createApp(db: Db, cfg: MockConfig) {
           HomeCinemaId: cust.homeCinemaId,
         },
         LoyaltySessionToken: `lst_${shortId(16)}`,
+        Authentication: { Method: "password", Verified: true, Version: 1 },
       }),
     );
   });
@@ -927,6 +921,20 @@ export function createApp(db: Db, cfg: MockConfig) {
     const acct = cust.memberId
       ? (await db.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, cust.memberId)))[0]
       : undefined;
+    const history = await db
+      .select()
+      .from(S.purchaseHistory)
+      .where(eq(S.purchaseHistory.customerId, cust.id))
+      .orderBy(desc(S.purchaseHistory.showtime))
+      .limit(50);
+    const profile = inferCustomerProfile(
+      history.map((h) => ({ ...h, showtime: h.showtime.toISOString().slice(0, 19) })),
+      preferenceCalendar(process.env),
+      nowLocalIso(),
+    );
+    const cinema = profile.cinemaId
+      ? (await db.select().from(S.cinemas).where(eq(S.cinemas.id, profile.cinemaId)))[0]
+      : null;
     return c.json({
       id: cust.id,
       firstName: cust.firstName,
@@ -935,8 +943,14 @@ export function createApp(db: Db, cfg: MockConfig) {
       phone: cust.phone,
       memberId: cust.memberId,
       preferredLanguage: cust.preferredLanguage,
-      preferences: cust.preferences,
-      homeCinemaId: cust.homeCinemaId,
+      preferences: {
+        ...cust.preferences,
+        languages: profile.movieLanguage ? [profile.movieLanguage] : [],
+        cinemas: profile.cinemaId ? [profile.cinemaId] : [],
+        seatPreference: profile.seatPreference ?? cust.preferences?.seatPreference,
+      },
+      homeCinemaId: profile.cinemaId ?? cust.homeCinemaId,
+      profile: { ...profile, cinemaName: cinema?.name ?? null },
       tier: acct?.tier ?? null,
       sharePoints: acct?.sharePointsBalance ?? 0,
       voxRewardsCents: acct?.voxRewardsBalanceCents ?? 0,
@@ -963,6 +977,8 @@ export function createApp(db: Db, cfg: MockConfig) {
     // enrich with the film rating and child-ticket count so recommendations can tell family visits apart
     const films = await db.select({ hoCode: S.films.hoCode, rating: S.films.rating }).from(S.films);
     const ratingOf = new Map(films.map((f) => [f.hoCode, f.rating]));
+    const cinemas = await db.select({ id: S.cinemas.id, name: S.cinemas.name }).from(S.cinemas);
+    const cinemaName = new Map(cinemas.map((cinema) => [cinema.id, cinema.name]));
     const bookingIds = rows.map((r) => r.bookingId).filter((x): x is string => !!x);
     const bks = bookingIds.length
       ? await db
@@ -980,6 +996,7 @@ export function createApp(db: Db, cfg: MockConfig) {
       history: rows.map((r) => ({
         bookingId: r.bookingId,
         cinemaId: r.cinemaId,
+        cinemaName: cinemaName.get(r.cinemaId) ?? r.cinemaId,
         hoCode: r.hoCode,
         filmTitle: r.filmTitle,
         genres: r.genres,
@@ -991,6 +1008,9 @@ export function createApp(db: Db, cfg: MockConfig) {
         childTickets: r.bookingId ? (childOf.get(r.bookingId) ?? 0) : 0,
         concessionItemIds: r.concessionItemIds,
         spendCents: r.spendCents,
+        seatPreference: r.seatPreference,
+        dayType: visitDayType(r.showtime.toISOString().slice(0, 19), preferenceCalendar(process.env)),
+        synthetic: r.synthetic,
       })),
     });
   });

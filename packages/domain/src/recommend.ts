@@ -1,4 +1,5 @@
 /** Personalisation: score films/sessions/F&B against profile preferences and purchase history. Pure. */
+import { type PreferenceCalendar, preferenceCalendar, visitDayType } from "./profile.js";
 export type Prefs = {
   genres?: string[];
   languages?: string[];
@@ -43,9 +44,11 @@ const slot = (iso: string) => {
   const h = Number(iso.slice(11, 13));
   return h < 12 ? "morning" : h < 17 ? "afternoon" : h < 21 ? "evening" : "late";
 };
-const dayType = (iso: string) => ([5, 6].includes(new Date(`${iso}Z`).getUTCDay()) ? "weekend" : "weekday");
-
-export function buildTasteProfile(prefs: Prefs, history: HistoryItem[]) {
+export function buildTasteProfile(
+  prefs: Prefs,
+  history: HistoryItem[],
+  calendar: PreferenceCalendar = preferenceCalendar(),
+) {
   const genres = tally([...(prefs.genres ?? []).flatMap((g) => [g, g]), ...history.flatMap((h) => h.genres)]);
   const languages = tally([
     ...(prefs.languages ?? []).flatMap((l) => [l, l]),
@@ -57,7 +60,7 @@ export function buildTasteProfile(prefs: Prefs, history: HistoryItem[]) {
   ]);
   const cinemas = tally([...(prefs.cinemas ?? []).flatMap((c) => [c, c]), ...history.map((h) => h.cinemaId)]);
   const slots = tally([...(prefs.timeOfDay ?? []), ...history.map((h) => slot(h.showtime))]);
-  const days = tally([...(prefs.days ?? []), ...history.map((h) => dayType(h.showtime))]);
+  const days = tally([...(prefs.days ?? []), ...history.map((h) => visitDayType(h.showtime, calendar))]);
   const items = tally(history.flatMap((h) => h.concessionItemIds));
   const seen = new Set(history.map((h) => h.hoCode).filter(Boolean) as string[]);
   const top = (m: Map<string, number>, n = 3) =>
@@ -74,11 +77,12 @@ export function buildTasteProfile(prefs: Prefs, history: HistoryItem[]) {
     days,
     items,
     seen,
+    calendar,
     summary: {
       genres: top(genres),
-      languages: top(languages, 2),
+      languages: top(languages, 1),
       experiences: top(experiences, 2),
-      cinemas: top(cinemas, 2),
+      cinemas: top(cinemas, 1),
       slots: top(slots, 1),
       days: top(days, 1),
     },
@@ -114,7 +118,7 @@ export function scoreSession(s: SessionLite, p: ReturnType<typeof buildTasteProf
   score += Math.min(3, p.experiences.get(s.experience) ?? 0);
   score += Math.min(3, p.cinemas.get(s.cinemaId) ?? 0);
   score += Math.min(2, p.slots.get(slot(s.showtime)) ?? 0);
-  score += Math.min(1, p.days.get(dayType(s.showtime)) ?? 0);
+  score += Math.min(1, p.days.get(visitDayType(s.showtime, p.calendar)) ?? 0);
   if (s.seatsAvailable < 4) score -= 2;
   return score;
 }

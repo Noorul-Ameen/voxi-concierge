@@ -8,5 +8,8 @@
 | worker | repo | infra/Dockerfile | `node apps/worker/dist/main.js` | – | no |
 | web | repo | infra/Dockerfile.web | nginx (PORT=80, API_UPSTREAM=http://concierge-api.railway.internal:4020) | / | yes → demo URL |
 
-Bootstrap applies migrations on every deploy and seeds only when the catalogue is empty; set `SEED_FORCE=true` on
-concierge-api and redeploy to reset demo data before a demo (then remove it).
+Bootstrap applies migrations on every deploy and seeds only when the catalogue is empty. Keep `SEED_FORCE=false` for normal deployment: existing bookings, balances, holds and customer history must be preserved.
+
+Provision the three private `DEMO_SARA_PASSWORD`, `DEMO_RAHUL_PASSWORD` and `DEMO_JAMES_PASSWORD` values on concierge-api. The bounded updater fills missing password hashes and upgrades only the known demo personas. Enable `DEMO_SCHEDULE_REFRESH=true` with `VISTA_PROVIDER=mock` there to add seven days of synthetic bookable sessions without replacing existing sessions or bookings. Keep `DEV_TOOL_BRIDGE=false` on the hosted API.
+
+The Railway web bundle is also loaded by the linked Cloudflare website at `/embed/voxi.js`. Verify both entry points after deployment; the existing embed cache can retain the previous bundle for up to five minutes. Follow [the current runbook](../docs/02-runbook.md) for deployment and verification.

@@ -9,15 +9,15 @@ window.__cap = { status: "running", log: [], films: [], sessions: [], cinemaName
       if (r.ok) return r.text();
       await new Promise((x) => setTimeout(x, 800 * (i + 1)));
     }
-    throw new Error("GET " + p);
+    throw new Error(`GET ${p}`);
   };
   const dom = (html) => new DOMParser().parseFromString(html, "text/html");
   const parseMovieList = (html) => {
     const d = dom(html);
     const out = new Map();
-    d.querySelectorAll('a[href^="/movies/"]').forEach((a) => {
+    for (const a of d.querySelectorAll('a[href^="/movies/"]')) {
       const href = (a.getAttribute("href") || "").split("#")[0];
-      if (/whatson|comingsoon|advance/.test(href) || href === "/movies/") return;
+      if (/whatson|comingsoon|advance/.test(href) || href === "/movies/") continue;
       const card = a.closest("li, article, div") || a;
       const img = card.querySelector("img");
       const src = (img && (img.getAttribute("src") || img.getAttribute("data-src"))) || "";
@@ -25,15 +25,15 @@ window.__cap = { status: "running", log: [], films: [], sessions: [], cinemaName
       const prev = out.get(href);
       out.set(href, {
         slug: href.replace("/movies/", ""),
-        ho: ho || (prev && prev.ho) || "",
-        title: txt(card.querySelector("h3")?.textContent) || (prev && prev.title) || "",
-        rating: txt(card.querySelector(".classification")?.textContent) || (prev && prev.rating) || "",
+        ho: ho || prev?.ho || "",
+        title: txt(card.querySelector("h3")?.textContent) || prev?.title || "",
+        rating: txt(card.querySelector(".classification")?.textContent) || prev?.rating || "",
         language:
           txt(card.querySelector(".language")?.textContent).replace(/^Language:\s*/i, "") ||
-          (prev && prev.language) ||
+          prev?.language ||
           "",
       });
-    });
+    }
     return [...out.values()];
   };
   const parseShowtimes = (html, dateStr) => {
@@ -52,10 +52,10 @@ window.__cap = { status: "running", log: [], films: [], sessions: [], cinemaName
         for (const li of el.children) {
           if (li.tagName !== "LI") continue;
           const exp = txt(li.querySelector(":scope > strong")?.textContent);
-          li.querySelectorAll("li[data-id]").forEach((s) => {
+          for (const s of li.querySelectorAll("li[data-id]")) {
             const id = s.getAttribute("data-id") || "";
             const [cinemaId, sessionId] = id.split("-");
-            if (!cinemaId || !sessionId) return;
+            if (!cinemaId || !sessionId) continue;
             const a = s.querySelector("a");
             rows.push({
               cinema,
@@ -64,9 +64,9 @@ window.__cap = { status: "running", log: [], films: [], sessions: [], cinemaName
               experience: exp,
               time: txt(a?.textContent),
               date: dateStr,
-              soldOut: /sold/i.test((s.getAttribute("class") || "") + " " + (a?.getAttribute("class") || "")),
+              soldOut: /sold/i.test(`${s.getAttribute("class") || ""} ${a?.getAttribute("class") || ""}`),
             });
-          });
+          }
         }
       }
     }
@@ -75,22 +75,22 @@ window.__cap = { status: "running", log: [], films: [], sessions: [], cinemaName
   const parseMovieMeta = (html) => {
     const d = dom(html);
     let ld = {};
-    d.querySelectorAll('script[type="application/ld+json"]').forEach((s) => {
+    for (const s of d.querySelectorAll('script[type="application/ld+json"]')) {
       try {
         const j = JSON.parse(s.textContent);
         if (j && j["@type"] === "Movie") ld = j;
       } catch {}
-    });
+    }
     const aside = {};
-    d.querySelectorAll("aside p").forEach((p) => {
+    for (const p of d.querySelectorAll("aside p")) {
       const st = p.querySelector("strong");
       if (st) aside[txt(st.textContent).replace(/:$/, "")] = txt(p.textContent.replace(st.textContent, ""));
-    });
-    const yt = (html.match(/youtube(?:-nocookie)?\.com\/embed\/([A-Za-z0-9_-]{6,})/) || [, ""])[1];
+    }
+    const yt = html.match(/youtube(?:-nocookie)?\.com\/embed\/([A-Za-z0-9_-]{6,})/)?.[1] ?? "";
     const dates = [
       ...new Set(
         [...d.querySelectorAll('#showtimes nav a[href*="d="]')]
-          .map((a) => ((a.getAttribute("href") || "").match(/d=(\d{8})/) || [, ""])[1])
+          .map((a) => (a.getAttribute("href") || "").match(/d=(\d{8})/)?.[1] ?? "")
           .filter(Boolean),
       ),
     ];
@@ -109,9 +109,7 @@ window.__cap = { status: "running", log: [], films: [], sessions: [], cinemaName
       poster: (html.match(/P_HO\d{8}/) || [""])[0],
       hero: (html.match(/B_HO\d{8}/) || [""])[0],
       dates,
-      director: Array.isArray(director)
-        ? director.map((x) => x.name).join(", ")
-        : (director && director.name) || "",
+      director: Array.isArray(director) ? director.map((x) => x.name).join(", ") : director?.name || "",
     };
   };
   const today = (() => {
@@ -152,7 +150,7 @@ window.__cap = { status: "running", log: [], films: [], sessions: [], cinemaName
           C.sessions.push([ho, r.cinemaId, r.sessionId, r.experience, r.date, r.time, r.soldOut ? 1 : 0]);
         }
       } catch (e) {
-        C.log.push(m.slug + ": " + e.message);
+        C.log.push(`${m.slug}: ${e.message}`);
       }
       C.done++;
     }
@@ -160,6 +158,6 @@ window.__cap = { status: "running", log: [], films: [], sessions: [], cinemaName
   await Promise.all([worker(), worker(), worker(), worker()]);
   C.status = "done";
 })().catch((e) => {
-  window.__cap.status = "error: " + e.message;
+  window.__cap.status = `error: ${e.message}`;
 });
 ("started");

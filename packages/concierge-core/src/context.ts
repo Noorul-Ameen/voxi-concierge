@@ -94,6 +94,6 @@ export function createContext(
     overrides.handover ??
     (cfg.handoverAdapter === "genesys" && cfg.genesys.clientId
       ? new GenesysHandover(cfg.genesys, log)
-      : new SimulatedHandover());
+      : new SimulatedHandover(db));
   return { db, vista, cfg, events, handover, log };
 }

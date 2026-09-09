@@ -624,7 +624,7 @@
     rec(
       "17 prepare payment: saved card, sheet with saved cards + wallet + VAT",
       r.ok && paySheet?.meta?.savedCards?.length === 2 && paySheet.meta.wallet && paySheet.meta.vat,
-      r.speech + " | meta=" + JSON.stringify(paySheet?.meta).slice(0, 120),
+      `${r.speech} | meta=${JSON.stringify(paySheet?.meta).slice(0, 120)}`,
     );
     rec(
       "17 prepare payment: bank offers listed for member",

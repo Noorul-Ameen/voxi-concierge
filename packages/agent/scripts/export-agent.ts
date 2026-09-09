@@ -8,7 +8,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const out = path.resolve(here, "../dist/agent");
 const opts = {
   conciergeUrl: process.env.CONCIERGE_PUBLIC_URL ?? "https://voxi-concierge.example.com",
-  toolSecretHeader: { value: process.env.TOOL_HMAC_SECRET ?? "change-me-tool-secret" },
+  // Review artifacts must never contain the deployed shared secret.
+  toolSecretHeader: {
+    secret_id: process.env.ELEVENLABS_TOOL_SECRET_ID ?? "configure-tool-secret-in-elevenlabs",
+  },
   inlineTools: true,
 };
 await mkdir(out, { recursive: true });

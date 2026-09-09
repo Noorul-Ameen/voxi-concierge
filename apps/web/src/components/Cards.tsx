@@ -1,14 +1,16 @@
-/** Rich cards driven by the agent (ui hints). Every button routes back through the conversation. */
+/** Cards render verified backend choices; commands persist decisions before the agent acknowledges them. */
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
-import type { Lang, UiHint } from "../lib/api";
+import type { CommandResult, Lang, UiHint } from "../lib/api";
 import { money, t } from "../lib/i18n";
+import { decisionSummary, uiActionLabel } from "../lib/widget-state";
 
 export type CardActions = {
   say: (text: string) => void; // send a user message to the agent
-  command: (cmd: Record<string, unknown>) => Promise<{ ok: boolean; action?: any; error?: string }>;
+  command: (cmd: Record<string, unknown>) => Promise<CommandResult>;
   openLink: (url: string) => void;
   playTrailer: (youtubeId: string, title?: string) => void;
+  selection?: (selection: { kind: "payment_method" | "food_quantity" | "offer_selection"; label: string; cardLast4?: string }) => void;
 };
 
 /** "G10, G11" → "G10–G11" when the seats run together in one row. */
@@ -23,22 +25,27 @@ export function seatRange(seats?: string) {
 
 export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActions }) {
   const items = ui.items ?? [];
+  const expired = ui.type === "order" && !!ui.meta?.expired;
+  const actions = expired ? ui.actions?.filter((action) => action.value === "recover:confirm" || action.value === "booking:restart") : ui.actions;
   const body = (() => {
     switch (ui.type) {
       case "movie":
       case "recommendation":
-        return <MovieRow items={items} lang={lang} act={act} />;
+        return <MovieRow items={items} lang={lang} act={act} recommended={ui.type === "recommendation"} />;
       case "showtimes":
         return <Showtimes items={items} lang={lang} act={act} film={ui.meta?.film} groupBy={ui.meta?.groupBy} />;
+      case "quantity":
+        return <TicketQuantity meta={ui.meta ?? {}} lang={lang} act={act} />;
       case "cinema":
         return items.map((c, i) => <CinemaCard key={i} c={c} lang={lang} act={act} />);
       case "offer":
         return items.map((o, i) => <OfferCard key={i} o={o} lang={lang} act={act} />);
       case "menu":
-        return <Menu items={items} lang={lang} act={act} />;
+        return <Menu items={items} lang={lang} act={act} hasSkip={!!ui.actions?.some((a) => a.value.startsWith("fnb_skip"))} />;
       case "booking":
         return items.map((b, i) => <BookingCard key={i} b={b} lang={lang} act={act} confirmationId={ui.meta?.confirmationId} />);
       case "order":
+        if (expired) return <div className="order expired-choices"><p className="muted">{lang === "ar" ? "احتفظنا باختياراتك. سنتحقق من التوفر قبل حجز المقاعد مجدداً." : "Your choices are kept. We'll check availability before holding seats again."}</p>{items[0] ? <><p>{decisionSummary(ui, lang)}</p>{items[0].concessions?.length ? <p>{items[0].concessions.map((food: any) => `${food.quantity}× ${lang === "ar" ? food.descriptionAlt || food.description : food.description}`).join(" · ")}</p> : null}{Number.isFinite(Number(items[0].totalCents)) ? <div className="line"><span>{lang === "ar" ? "الإجمالي السابق" : "Previous total"}</span><b>{money(Number(items[0].totalCents), lang)}</b></div> : null}</> : null}</div>;
         return items[0] && "tickets" in items[0] ? <OrderSummary o={items[0]} lang={lang} act={act} hideActions={!!ui.actions?.length} /> : <TicketTypes items={items} lang={lang} act={act} sessionKey={ui.meta?.sessionKey} />;
       case "seatmap":
         return <SeatMap rows={items} meta={ui.meta ?? {}} lang={lang} act={act} />;
@@ -67,18 +74,18 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
       case "feedback":
         return <Feedback lang={lang} act={act} />;
       default:
-        return <pre style={{ fontSize: 11, overflow: "auto" }}>{JSON.stringify(items, null, 1)}</pre>;
+        return <p className="muted">{lang === "ar" ? "يمكننا المتابعة هنا. أخبرني بما تود فعله." : "We can keep going here. Tell me what you'd like to do."}</p>;
     }
   })();
   return (
     <div className="cards" data-type={ui.type}>
-      {ui.title && !(ui.type === "showtimes" && ui.meta?.film?.posterUrl) && <h4>{ui.title}</h4>}
+      {expired ? <h4>{lang === "ar" ? "انتهى الحجز المؤقت" : "Seat hold expired"}</h4> : ui.title && ui.type !== "showtimes" && <h4>{ui.title}</h4>}
       {body}
-      {ui.actions?.length ? (
+      {ui.type !== "quantity" && actions?.length ? (
         <div className="actionsrow">
-          {ui.actions.map((a, i) => (
+          {actions.map((a, i) => (
             <button key={i} className={`btn ${a.style === "primary" ? "primary" : a.style === "danger" ? "danger" : "ghost"}`} onClick={() => routeAction(a.value, a.label, act, lang)}>
-              {a.label}
+              {uiActionLabel(a.value, a.label, lang)}
             </button>
           ))}
         </div>
@@ -103,7 +110,11 @@ export function routeAction(value: string, label: string, act: CardActions, lang
     case "sessions":
       return act.say(ar ? `ما هي العروض في ${label}؟` : `What's showing at ${label}?`);
     case "booking":
+      if (arg === "restart") return act.say(ar ? "أريد بدء حجز جديد" : "I'd like to start a new booking");
       return act.say(ar ? `أريد إدارة الحجز ${arg}` : `Let's manage booking ${arg}`);
+    case "recover":
+      if (arg === "confirm") return void act.command({ type: "order.recover", confirmed: true, idempotencyKey: crypto.randomUUID() });
+      return;
     case "cancel":
       return act.say(ar ? `أريد إلغاء الحجز ${arg} واسترداد المبلغ` : `I'd like to cancel booking ${arg} and get a refund`);
     case "swap":
@@ -119,11 +130,14 @@ export function routeAction(value: string, label: string, act: CardActions, lang
     case "add_item":
       return act.say(ar ? `أضف ${label.replace(/^أضف /, "")} إلى طلبي` : `Add ${label.replace(/^Add /, "")} to my order`);
     case "seatmap":
+    case "seats":
       return act.say(ar ? "أريد اختيار المقاعد من الخريطة" : "I want to choose my seats on the map");
     case "menu":
       return act.say(ar ? "أرني قائمة المأكولات والمشروبات" : "Show me the food and drinks menu");
+    case "fnb":
+      return act.say(ar ? "ماذا تقترح من الوجبات الخفيفة؟" : "What snacks would you suggest?");
     case "pay":
-      return act.say(ar ? "أريد الدفع الآن بالبطاقة" : "I'd like to pay now by card");
+      return act.say(ar ? "أريد مراجعة الطلب والانتقال للدفع" : "I'm ready to review my order and check out");
     case "usual":
       return act.say(arg === "yes" ? (ar ? `نعم، ${label}` : `Yes — ${label.replace(/ as usual$/, "")}, as usual`) : ar ? "سينما أخرى من فضلك" : "Another cinema, please");
     case "fnb_usual":
@@ -135,20 +149,22 @@ export function routeAction(value: string, label: string, act: CardActions, lang
   }
 }
 
-function MovieRow({ items, lang, act }: { items: any[]; lang: Lang; act: CardActions }) {
+function MovieRow({ items, lang, act, recommended }: { items: any[]; lang: Lang; act: CardActions; recommended?: boolean }) {
+  const [all, setAll] = useState(false);
+  const films = items.filter((m) => m.hoCode);
+  const limit = recommended ? 1 : 3;
   return (
-    <div className="hscroll">
-      {items
-        .filter((m) => m.hoCode)
+    <div className="movie-list">
+      {films.slice(0, all ? films.length : limit)
         .map((m) => (
           <div className="movie" key={m.hoCode}>
-            <div className="p" style={{ backgroundImage: m.posterUrl ? `url(${m.posterUrl})` : undefined }} />
+            {m.posterUrl ? <img className="p" src={m.posterUrl} alt="" loading="lazy" /> : <div className="p poster-placeholder" aria-hidden="true">VOX</div>}
             <div className="t">
               <b>{m.title}</b>
               <small>
                 {m.rating} · {m.runTime ? `${m.runTime}m` : ""} · {m.language}
               </small>
-              {m.why?.length ? <div style={{ marginTop: 4, fontSize: 11, color: "#6b6b76" }}>{m.why.join(", ")}</div> : null}
+              {m.why?.length ? <p className="movie-reason">{Array.isArray(m.why) ? m.why[0] : m.why}</p> : null}
               {m.suggestedSession ? (
                 <div style={{ marginTop: 4, fontSize: 11 }}>
                   {m.suggestedSession.dateLabel} {m.suggestedSession.time} · {m.suggestedSession.experience}
@@ -159,7 +175,7 @@ function MovieRow({ items, lang, act }: { items: any[]; lang: Lang; act: CardAct
                   {t(lang, "showtimes")}
                 </button>
                 {m.youtubeId ? (
-                  <button className="btn ghost" onClick={() => act.playTrailer(m.youtubeId, m.title)}>
+                  <button className="btn ghost" onClick={() => act.playTrailer(m.youtubeId, m.title)} aria-label={`${t(lang, "trailer")} — ${m.title}`}>
                     ▶
                   </button>
                 ) : null}
@@ -167,12 +183,15 @@ function MovieRow({ items, lang, act }: { items: any[]; lang: Lang; act: CardAct
             </div>
           </div>
         ))}
+      {films.length > limit ? <button className="btn ghost more-options" type="button" aria-expanded={all} onClick={() => setAll(!all)}>{all ? lang === "ar" ? "عرض أقل" : "Show less" : lang === "ar" ? "خيارات أخرى" : "Other options"}</button> : null}
     </div>
   );
 }
 
 function Showtimes({ items, lang, act, film, groupBy }: { items: any[]; lang: Lang; act: CardActions; film?: any; groupBy?: string }) {
   const ar = lang === "ar";
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const days = [...new Set(items.map((s) => s.date))].sort();
   const [day, setDay] = useState<string>(days[0] ?? "");
   const activeDay = days.includes(day) ? day : (days[0] ?? "");
@@ -181,24 +200,22 @@ function Showtimes({ items, lang, act, film, groupBy }: { items: any[]; lang: La
   const byFilm = groupBy === "film" || !film;
   const groups = new Map<string, any[]>();
   for (const s of visible) {
-    const k = byFilm ? s.filmTitle : (s.cinemaName ?? s.cinemaId);
+    const k = byFilm ? `${s.filmTitle} · ${s.cinemaName ?? s.cinemaId}` : (s.cinemaName ?? s.cinemaId);
     groups.set(k, [...(groups.get(k) ?? []), s]);
   }
-  const book = (s: any) => act.say(ar ? `احجز ${s.filmTitle} في ${s.cinemaName} ${s.dateLabel} الساعة ${s.time} (${s.experience})` : `Book ${s.filmTitle} at ${s.cinemaName} ${s.dateLabel} at ${s.time} (${s.experience})`);
+  const book = async (s: any) => {
+    setBusy(s.sessionKey);
+    setError(null);
+    try {
+      const result = await act.command({ type: "booking.select", sessionKey: s.sessionKey });
+      if (!result.ok) setError(result.error ?? (ar ? "هذا الموعد لم يعد متاحاً. جرّب موعداً آخر." : "That show isn't available now. Try another time."));
+    } catch { setError(ar ? "تعذر الاتصال. حاول مرة أخرى." : "Couldn't connect. Try again."); }
+    finally { setBusy(null); }
+  };
   return (
     <div className="showtimes">
-      {film?.posterUrl ? (
-        <div className="filmhead" style={{ backgroundImage: film.heroUrl ? `linear-gradient(90deg, rgba(31,36,40,0.92) 30%, rgba(31,36,40,0.55)), url(${film.heroUrl})` : undefined }}>
-          <div className="p" style={{ backgroundImage: `url(${film.posterUrl})` }} />
-          <div className="fh">
-            <b>{film.title}</b>
-            <span>{[film.rating, film.runTime ? `${film.runTime} min` : null, film.language].filter(Boolean).join(" · ")}</span>
-            {film.youtubeId ? (
-              <button className="btn ghost small light" onClick={() => act.playTrailer(film.youtubeId, film.title)}>▶ {t(lang, "trailer")}</button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
+      {film?.title ? <h4 className="showtime-title">{film.title}</h4> : null}
+      {days.length === 1 ? <p className="showtime-date">{dayLabel(activeDay)}</p> : null}
       {days.length > 1 ? (
         <div className="daytabs" role="tablist">
           {days.map((d) => (
@@ -212,11 +229,10 @@ function Showtimes({ items, lang, act, film, groupBy }: { items: any[]; lang: La
         <div className="showgroup" key={k}>
           {byFilm ? (
             <div className="sg-film">
-              {ss[0]?.posterUrl ? <span className="mini" style={{ backgroundImage: `url(${ss[0].posterUrl})` }} /> : null}
               <div>
-                <b>{k}</b>
+                <b>{ss[0]?.filmTitle}</b>
                 <small>
-                  {[ss[0]?.rating, ss[0]?.filmLanguage, ss[0]?.cinemaName].filter(Boolean).join(" · ")}
+                  {ss[0]?.cinemaName}
                   {ss[0]?.distanceKm != null ? <span className="dist"> · {ss[0].distanceKm} km</span> : null}
                   {ss[0]?.mapUrl ? <a href={ss[0].mapUrl} className="maplink" onClick={(e) => { e.preventDefault(); act.openLink(ss[0].mapUrl); }}>{ar ? "الخريطة" : "Map"}</a> : null}
                 </small>
@@ -224,7 +240,7 @@ function Showtimes({ items, lang, act, film, groupBy }: { items: any[]; lang: La
             </div>
           ) : (
             <div className="sg-cinema">
-              <b>📍 {k}</b>
+              <b>{k}</b>
               {ss[0]?.distanceKm != null ? <span className="dist">{ss[0].distanceKm} km</span> : null}
               {ss[0]?.mapUrl ? (
                 <a href={ss[0].mapUrl} target="_blank" rel="noreferrer" className="maplink" onClick={(e) => { e.preventDefault(); act.openLink(ss[0].mapUrl); }}>
@@ -235,17 +251,41 @@ function Showtimes({ items, lang, act, film, groupBy }: { items: any[]; lang: La
           )}
           <div className="times">
             {ss.map((s) => (
-              <button key={s.sessionKey} type="button" className={`time ${s.soldOut ? "soldout" : ""} ${s.seatsAvailable > 0 && s.seatsAvailable <= 10 ? "few" : ""}`} disabled={s.soldOut} title={`${s.screenName ?? ""} · ${s.seatsAvailable} ${ar ? "مقعد" : "seats"}`} onClick={() => book(s)}>
-                <span>{s.time}</span>
-                <small>{s.experience}{byFilm && !film ? "" : ""}</small>
+              <button key={s.sessionKey} type="button" className={`time ${s.soldOut ? "soldout" : ""} ${s.seatsAvailable > 0 && s.seatsAvailable <= 10 ? "few" : ""}`} disabled={s.soldOut || !!busy} title={`${s.screenName ?? ""} · ${s.seatsAvailable} ${ar ? "مقعد" : "seats"}`} onClick={() => { void book(s); }}>
+                <span>{busy === s.sessionKey ? "…" : s.time}</span>
+                <small>{s.experience}</small>
                 {s.seatsAvailable > 0 && s.seatsAvailable <= 10 ? <em>{ar ? "مقاعد قليلة" : "few left"}</em> : null}
               </button>
             ))}
           </div>
         </div>
       ))}
+      {error ? <p className="err" role="alert">{error}</p> : null}
     </div>
   );
+}
+
+function TicketQuantity({ meta, lang, act }: { meta: Record<string, any>; lang: Lang; act: CardActions }) {
+  const ar = lang === "ar";
+  const [quantity, setQuantity] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return <div className="quantity-picker">
+    {meta.filmTitle ? <b>{meta.filmTitle}</b> : null}
+    <p>{ar ? "كم شخصاً سيحضر؟" : "How many are going?"}</p>
+    <div className="quantity-options" role="group" aria-label={ar ? "عدد التذاكر" : "Number of tickets"}>
+      {[1, 2, 3, 4, 5, 6].map((n) => <button className={quantity === n ? "on" : ""} key={n} type="button" aria-pressed={quantity === n} onClick={() => setQuantity(n)}>{n}</button>)}
+      <select aria-label={ar ? "المزيد من التذاكر" : "More tickets"} value={quantity && quantity > 6 ? quantity : ""} onChange={(e) => setQuantity(e.target.value ? Number(e.target.value) : null)}><option value="">{ar ? "المزيد" : "More"}</option>{[7, 8, 9, 10].map((n) => <option key={n} value={n}>{n}</option>)}</select>
+    </div>
+    {error ? <p className="err" role="alert">{error}</p> : null}
+    <button className="btn cta" disabled={!quantity || busy} type="button" onClick={async () => {
+      if (!quantity) return;
+      setBusy(true); setError(null);
+      try { const result = await act.command({ type: "booking.select", sessionKey: meta.sessionKey, tickets: quantity }); if (!result.ok) setError(result.error ?? (ar ? "جرّب مرة أخرى." : "Try again.")); }
+      catch { setError(ar ? "تعذر الاتصال. حاول مرة أخرى." : "Couldn't connect. Try again."); }
+      finally { setBusy(false); }
+    }}>{busy ? t(lang, "processing") : ar ? "اختر المقاعد" : "Find seats"}</button>
+  </div>;
 }
 
 function CinemaCard({ c, lang, act }: { c: any; lang: Lang; act: CardActions }) {
@@ -305,13 +345,15 @@ function OfferCard({ o, lang, act }: { o: any; lang: Lang; act: CardActions }) {
 }
 
 /** Food & drinks — sticky category tabs and square image tiles, as on the real "Food & Drinks" step. */
-function Menu({ items, lang, act }: { items: any[]; lang: Lang; act: CardActions }) {
+function Menu({ items, lang, act, hasSkip }: { items: any[]; lang: Lang; act: CardActions; hasSkip?: boolean }) {
   const tabs = [...new Set(items.map((m) => String(m.tab ?? "")))].filter(Boolean);
   const [tab, setTab] = useState<string>("ALL");
-  const shown = tab === "ALL" ? items : items.filter((m) => m.tab === tab);
+  const [browse, setBrowse] = useState(false);
+  const ranked = [...items].sort((a, b) => Number(!!b.tag || !!b.isBestSeller) - Number(!!a.tag || !!a.isBestSeller));
+  const shown = browse ? tab === "ALL" ? items : items.filter((m) => m.tab === tab) : ranked.slice(0, 4);
   return (
     <div className="fnb">
-      {tabs.length > 1 ? (
+      {browse && tabs.length > 1 ? (
         <div className="cattabs">
           <button className={tab === "ALL" ? "on" : ""} onClick={() => setTab("ALL")}>
             {lang === "ar" ? "الكل" : "ALL"}
@@ -328,16 +370,21 @@ function Menu({ items, lang, act }: { items: any[]; lang: Lang; act: CardActions
           <MenuItem key={m.itemId ?? i} m={m} lang={lang} act={act} />
         ))}
       </div>
+      <div className="snack-actions">
+        {items.length > 4 ? <button className="btn ghost" type="button" aria-expanded={browse} onClick={() => setBrowse(!browse)}>{browse ? lang === "ar" ? "عرض أقل" : "Show less" : lang === "ar" ? "تصفح القائمة" : "Browse menu"}</button> : null}
+        {!hasSkip ? <button className="btn primary" type="button" onClick={() => act.say(lang === "ar" ? "متابعة إلى الدفع بدون إضافة مأكولات أخرى" : "Continue to checkout without adding more snacks")}>{lang === "ar" ? "متابعة إلى الدفع" : "Continue to checkout"}</button> : null}
+      </div>
     </div>
   );
 }
 
 function MenuItem({ m, lang, act }: { m: any; lang: Lang; act: CardActions }) {
+  const [quantity, setQuantity] = useState(1);
   const sizes = (m.modifiers ?? []).find((g: any) => /size/i.test(g.name));
   const from = sizes?.options?.length ? Math.min(...sizes.options.map((o: any) => (m.priceCents ?? 0) + (o.priceCents ?? 0))) : null;
   return (
     <div className="fnbcard">
-      <div className="img" style={{ backgroundImage: `url(${m.imageUrl})` }}>
+      <div className="img" style={{ backgroundImage: m.imageUrl ? `url(${m.imageUrl})` : undefined }}>
         {m.tag ? <span className="best usual">{m.tag}</span> : m.isBestSeller ? <span className="best">{lang === "ar" ? "الأكثر مبيعاً" : "BEST SELLER"}</span> : null}
       </div>
       <div className="b">
@@ -354,10 +401,8 @@ function MenuItem({ m, lang, act }: { m: any; lang: Lang; act: CardActions }) {
             {from !== null && from < (m.priceCents ?? 0) ? <small>{lang === "ar" ? "من " : "FROM "}</small> : null}
             {from !== null && from < (m.priceCents ?? 0) ? money(from, lang) : m.price}
           </span>
-          <button className="plus" aria-label="add" onClick={() => routeAction(`add_item:${m.itemId}`, `Add ${m.nameEn ?? m.name}`, act, lang)}>
-            +
-          </button>
         </div>
+        <div className="snack-add"><select aria-label={`${lang === "ar" ? "الكمية" : "Quantity"} — ${m.name}`} value={quantity} onChange={(e) => { setQuantity(Number(e.target.value)); act.selection?.({ kind: "food_quantity", label: `${e.target.value} × ${m.name}` }); }}>{[1, 2, 3, 4, 5, 6].map((n) => <option value={n} key={n}>{n}</option>)}</select><button className="btn ghost" type="button" onClick={() => act.say(lang === "ar" ? `أضف ${quantity} من ${m.name} إلى الطلب` : `Add ${quantity} ${m.nameEn ?? m.name} to my order`)}>{lang === "ar" ? "إضافة" : "Add"}</button></div>
       </div>
     </div>
   );
@@ -457,19 +502,15 @@ function TicketTypes({ items, lang, act }: { items: any[]; lang: Lang; act: Card
 }
 
 export function OrderSummary({ o, lang, act, hideActions }: { o: any; lang: Lang; act: CardActions; hideActions?: boolean }) {
+  const tickets = o.tickets ?? [];
+  const seats = seatRange(tickets.map((ticket: any) => ticket.seat).filter(Boolean).join(", "));
+  const ticketTotal = tickets.reduce((sum: number, ticket: any) => sum + Number(ticket.finalCents ?? ticket.priceCents ?? 0), 0);
   return (
     <div className="order">
       <div style={{ marginBottom: 6 }}>
         <b>{o.filmTitle}</b> · {o.experience} · {o.showtimeLabel} · {o.cinemaName}
       </div>
-      {(o.tickets ?? []).map((tk: any) => (
-        <div className="line" key={tk.id}>
-          <span>
-            {tk.description} {tk.seat ? <span className="badge soft">{tk.seat}</span> : null}
-          </span>
-          <span>{tk.discountCents ? <s style={{ color: "#999", marginInlineEnd: 4 }}>{money(tk.priceCents, lang)}</s> : null}{money(tk.finalCents, lang)}</span>
-        </div>
-      ))}
+      {tickets.length ? <div className="line"><span>{lang === "ar" ? `${tickets.length} تذاكر` : `${tickets.length} ticket${tickets.length === 1 ? "" : "s"}`}{seats ? <span className="badge soft">{seats}</span> : null}</span><span>{money(ticketTotal, lang)}</span></div> : null}
       {(o.concessions ?? []).map((c: any) => (
         <div className="line" key={`c${c.id}`}>
           <span>
@@ -520,7 +561,7 @@ function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const held = rows.flatMap((r) => r.seats.filter((s: any) => s.status === 2).map(() => 1)).length;
-  const need = held || Number(meta.ticketCount ?? 0) || picked.length || 1;
+  const need = Number(meta.ticketCount ?? 0) || held || picked.length;
   const cols = Number(meta.columnCount ?? Math.max(...rows.map((r) => Math.max(...r.seats.map((s: any) => s.col)) + 1)));
   const tiers: { area: string; label: string; priceCents: number | null; price: string | null }[] = meta.tiers ?? [];
   const tierOf = (code: string) => (code === "0000000001" ? "premium" : code === "0000000003" ? "preferred" : "regular");
@@ -537,10 +578,11 @@ function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, 
   };
   const confirm = async () => {
     setBusy(true);
-    const r = await act.command({ type: "seat.select", userSessionId: meta.userSessionId, seats: picked.map((p) => ({ row: p.row, number: p.number })) });
-    setBusy(false);
-    if (!r.ok) setErr(r.action?.error?.message ?? r.error ?? "Could not hold those seats");
-    else act.say(lang === "ar" ? `اخترت المقاعد ${picked.map((p) => p.row + p.number).join("، ")}` : `I've picked seats ${picked.map((p) => p.row + p.number).join(", ")} on the map`);
+    try {
+      const r = await act.command({ type: "seat.select", userSessionId: meta.userSessionId, seats: picked.map((p) => ({ row: p.row, number: p.number })) });
+      if (!r.ok) setErr(r.action?.error?.message ?? r.error ?? (lang === "ar" ? "هذه المقاعد لم تعد متاحة. اختر مقاعد أخرى." : "Those seats are no longer available. Try another pair."));
+    } catch { setErr(lang === "ar" ? "تعذر الاتصال. حاول مرة أخرى." : "Couldn't connect. Try again."); }
+    finally { setBusy(false); }
   };
   const groups = picked.reduce<Record<string, number>>((m, p) => ({ ...m, [p.area]: (m[p.area] ?? 0) + 1 }), {});
   const subtotal = picked.reduce((n, p) => n + (priceOf(p.area) ?? 0), 0);
@@ -556,7 +598,7 @@ function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, 
         </div>
       ) : null}
       <div className="screen">{t(lang, "screen")}</div>
-      <div className="rows" style={{ gridTemplateColumns: "1fr" }}>
+      <div className="seat-scroll" tabIndex={0} role="region" aria-label={lang === "ar" ? "خريطة المقاعد، مرر لرؤية جميع المقاعد" : "Seat map. Scroll to view all seats"}><div className="rows" style={{ gridTemplateColumns: "1fr" }}>
         {ordered.map((r) => {
           const byCol = new Map<number, any>(r.seats.map((s: any) => [s.col, s]));
           return (
@@ -565,15 +607,15 @@ function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, 
               {Array.from({ length: cols }, (_, c) => {
                 const s = byCol.get(c);
                 if (!s) return <span key={c} className="seat gap" />;
-                const mine = picked.some((p) => p.row === r.row && p.number === s.id);
+                const mine = picked.some((p) => p.row === r.row && p.number === String(s.id));
                 const cls = ["seat", tierOf(r.areaCategoryCode), s.style === 1 ? "wheelchair" : "", s.status === 1 ? "sold" : s.status === 3 ? "held" : s.status === 2 ? "mine" : "", mine ? "picked" : ""].join(" ");
-                return <button key={c} className={cls} title={`${r.row}-${s.id} · ${tierName(r.areaCategoryCode)}`} disabled={s.status === 1 || s.status === 3} onClick={() => toggle(r.row, s.id, r.areaCategoryCode)} />;
+                return <button key={c} type="button" className={cls} aria-label={`${r.row}${s.id} · ${tierName(r.areaCategoryCode)}${s.status === 1 || s.status === 3 ? lang === "ar" ? " · غير متاح" : " · unavailable" : ""}`} aria-pressed={mine} title={`${r.row}-${s.id} · ${tierName(r.areaCategoryCode)}`} disabled={s.status === 1 || s.status === 3 || busy} onClick={() => toggle(r.row, String(s.id), r.areaCategoryCode)}><span>{s.id}</span></button>;
               })}
               <span className="rl">{r.row}</span>
             </div>
           );
         })}
-      </div>
+      </div></div>
       <div className="legend">
         <span>
           <i className="seat sold" />
@@ -619,7 +661,7 @@ function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, 
       </div>
       {err ? <div className="sheet err" style={{ marginTop: 6 }}>{err}</div> : null}
       <div className="actionsrow">
-        <button className="btn cta" disabled={!picked.length || busy} onClick={confirm}>
+        <button className="btn cta" disabled={!need || picked.length !== need || busy} onClick={() => { void confirm(); }}>
           {busy ? t(lang, "processing") : `${t(lang, "confirmSeats")} (${picked.length}/${need})`}
         </button>
         <button className="btn ghost" onClick={() => act.say(lang === "ar" ? "اختر أفضل المقاعد المتاحة" : "Pick the best available seats for me")}>
@@ -649,8 +691,12 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
   const guest = !!meta.guest;
   const preferred = saved.find((c) => c.token === meta.preferredToken) ?? saved.find((c) => c.default) ?? saved[0];
   const [method, setMethod] = useState<string>(
-    meta.method === "APPLE_PAY" ? "applepay" : meta.method === "SAMSUNG_PAY" ? "samsungpay" : meta.method === "SAVED_CARD" && preferred ? `saved:${preferred.token}` : meta.method === "CARD" && !saved.length ? "new" : "",
+    meta.method === "APPLE_PAY" ? "applepay" : meta.method === "SAMSUNG_PAY" ? "samsungpay" : preferred ? `saved:${preferred.token}` : meta.method === "CARD" ? "new" : "",
   );
+  const chooseMethod = (value: string, label: string, cardLast4?: string) => {
+    setMethod(value);
+    act.selection?.({ kind: "payment_method", label, ...(cardLast4 ? { cardLast4 } : {}) });
+  };
   const hint = meta.offerHint as { offerId: string; title: string; benefit: string; cardLabel: string; cardToken: string; cardLast4: string } | undefined;
   const [hintDone, setHintDone] = useState(false);
   const [guestName, setGuestName] = useState(meta.customer?.name ?? "");
@@ -664,10 +710,9 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
     const iv = setInterval(tick, 1000);
     return () => clearInterval(iv);
   }, [meta.expiresAtUtc]);
-  const [pan, setPan] = useState("4111 1111 1111 1111");
-  const [exp, setExp] = useState("12/29");
-  const [cvv, setCvv] = useState("123");
-  const [store, setStore] = useState(true);
+  const [pan, setPan] = useState("");
+  const [exp, setExp] = useState("");
+  const [cvv, setCvv] = useState("");
   const [offerId, setOfferId] = useState<string>("");
   const [digits, setDigits] = useState({ first: "", last: "" });
   const [promo, setPromo] = useState("");
@@ -675,24 +720,30 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [pending, setPending] = useState(false);
   const [showVat, setShowVat] = useState(false);
   const [showItems, setShowItems] = useState(false);
-  if (!meta.requiresSheet) return <OrderSummary o={o} lang={lang} act={act} />;
+  if (!meta.requiresSheet) return <OrderSummary o={o} lang={lang} act={act} hideActions />;
   const amount = Number(meta.amountCents ?? o.totalCents ?? 0);
   const vat = meta.vat as { beforeVatCents: number; vatCents: number; rate: number } | undefined;
   const saveable = wallet ? Math.min(wallet.sharePointsValueCents, amount) : 0;
   const pay = async () => {
     setBusy(true);
     setErr(null);
+    if (left === 0 && !meta.fnbOnly) {
+      setBusy(false);
+      setErr(ar ? "انتهى حجز المقاعد. تحقق من توفرها مجدداً قبل الدفع." : "Your seat hold has ended. Check availability again before paying.");
+      return;
+    }
     let token: string;
     if (!method) {
       setBusy(false);
-      setErr(ar ? "اختر طريقة الدفع أولاً." : "Please choose a payment method first.");
+      setErr(ar ? "اختر طريقة الدفع أولاً." : "Choose a payment method first.");
       return;
     }
     if (guest && (!guestName.trim() || !/\S+@\S+\.\S+/.test(guestEmail) || guestPhone.replace(/\D/g, "").length < 7)) {
       setBusy(false);
-      setErr(ar ? "أدخل الاسم والبريد الإلكتروني ورقم الجوال للتذاكر." : "Please enter a name, email and mobile number for the tickets.");
+      setErr(ar ? "أدخل الاسم والبريد الإلكتروني ورقم الجوال للتذاكر." : "Add your name, email and mobile number for the tickets.");
       return;
     }
     if (method.startsWith("saved:")) token = method.slice(6);
@@ -703,34 +754,30 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
       // Simulated Checkout tokenisation: the PAN never leaves the browser; only a token (brand + BIN + last 4) is sent,
       // so bank offers can still be checked against the card actually used.
       const d = pan.replace(/\D/g, "");
+      if (d.length < 13 || d.length > 19 || !/^\d{2}\/\d{2,4}$/.test(exp.trim()) || !/^\d{3,4}$/.test(cvv)) {
+        setBusy(false); setErr(ar ? "تحقق من بيانات البطاقة." : "Check the card details."); return;
+      }
       token = d.endsWith("0002") ? `tok_declined_${Date.now()}` : `tok_${d.startsWith("4") ? "visa" : d.startsWith("3") ? "amex" : "mc"}_${d.slice(0, 6)}_${d.slice(-4)}_${Date.now()}`;
     }
-    const r = await act.command({ type: "payment.token", userSessionId: meta.userSessionId, confirmationId: meta.confirmationId, token, ...(guest ? { customer: { name: guestName.trim(), email: guestEmail.trim(), phone: guestPhone.trim() } } : {}) });
-    setBusy(false);
-    if (r.ok) {
-      setDone(true);
-      const ref = r.action?.result?.bookingId as string | undefined;
-      act.say(
-        ar
-          ? `أكملت الدفع في نافذة الدفع${ref ? ` — رقم الحجز ${ref}` : ""}.`
-          : `I've completed the payment in the payment sheet${ref ? ` — my booking reference is ${ref}` : ""}.`,
-      );
-    } else setErr(r.action?.error?.message ?? r.error ?? "Payment failed");
+    try {
+      const r = await act.command({ type: "payment.token", userSessionId: meta.userSessionId, confirmationId: meta.confirmationId, token, ...(guest ? { customer: { name: guestName.trim(), email: guestEmail.trim(), phone: guestPhone.trim() } } : {}) });
+      if (r.ok && r.action?.status === "succeeded") setDone(true);
+      else if (r.ok) setPending(true);
+      else setErr(r.action?.error?.message ?? r.error ?? (ar ? "لم يكتمل الدفع. حاول مرة أخرى." : "Payment didn't go through. Try again."));
+    } catch { setErr(ar ? "لم تصل نتيجة الدفع. تحقق من الحجز قبل المحاولة مجدداً." : "We haven't received a payment result. Check your booking before retrying."); }
+    finally { setBusy(false); }
   };
   if (done) return <div className="sheet">✅ {ar ? "تم الدفع" : "Payment received"}</div>;
+  if (pending) return <div className="sheet" role="status">{ar ? "جارٍ تأكيد حجزك…" : "Confirming your booking…"}</div>;
   const chosenOffer = bankOffers.find((b) => b.offerId === offerId);
   return (
     <div className="sheet reviewpay">
-      <div className="steps">
-        <span className="done">{ar ? "المقاعد" : "Seats"}</span>
-        <span className="done">{ar ? "المأكولات" : "Food & Drinks"}</span>
-        <span className="done">{ar ? "بياناتك" : "Your Details"}</span>
-        <span className="cur">{ar ? "المراجعة والدفع" : "Review & Pay"}</span>
-      </div>
       {!meta.fnbOnly ? (
         <div className="bookline">
           <b>{o.filmTitle}</b>
-          <span>{[o.cinemaName, o.showtimeLabel, o.seats ? (ar ? `المقاعد ${seatRange(o.seats)}` : `Seats ${seatRange(o.seats)}`) : null, `${(o.tickets ?? []).length} ${ar ? "تذكرة" : (o.tickets ?? []).length === 1 ? "ticket" : "tickets"}`].filter(Boolean).join(" · ")}</span>
+          <span>{o.showtimeLabel} · {o.cinemaName}</span>
+          <span>{(o.tickets ?? []).length} {ar ? "تذاكر" : (o.tickets ?? []).length === 1 ? "ticket" : "tickets"}{o.seats ? ` · ${seatRange(o.seats)}` : ""}</span>
+          {(o.concessions ?? []).length ? <span>{o.concessions.map((c: any) => `${c.quantity}× ${c.description}`).join(" · ")}</span> : null}
           {left != null ? <em className={`hold ${left <= 45 ? "urgent" : left <= 120 ? "warn" : ""}`}>{ar ? "محجوزة" : "Held"} {`${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}</em> : null}
         </div>
       ) : null}
@@ -755,22 +802,23 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
       {guest && !meta.customer?.email ? (
         <div className="guestdetails">
           <h5>{ar ? "بياناتك للتذاكر" : "Your details for the tickets"}</h5>
-          <input placeholder={ar ? "الاسم الكامل" : "Full name"} value={guestName} onChange={(e) => setGuestName(e.target.value)} autoComplete="name" />
-          <input placeholder={ar ? "البريد الإلكتروني" : "Email"} value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} autoComplete="email" inputMode="email" />
-          <input placeholder={ar ? "رقم الجوال" : "Mobile number"} value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} autoComplete="tel" inputMode="tel" />
+          <input aria-label={ar ? "الاسم الكامل" : "Full name"} placeholder={ar ? "الاسم الكامل" : "Full name"} value={guestName} onChange={(e) => setGuestName(e.target.value)} autoComplete="name" />
+          <input aria-label={ar ? "البريد الإلكتروني" : "Email"} placeholder={ar ? "البريد الإلكتروني" : "Email"} value={guestEmail} onChange={(e) => setGuestEmail(e.target.value)} autoComplete="email" inputMode="email" />
+          <input aria-label={ar ? "رقم الجوال" : "Mobile number"} placeholder={ar ? "رقم الجوال" : "Mobile number"} value={guestPhone} onChange={(e) => setGuestPhone(e.target.value)} autoComplete="tel" inputMode="tel" />
         </div>
       ) : null}
       {guest ? (
         <div className="loginnudge">
-          <b>{ar ? "سجّل الدخول أو أنشئ حساباً" : "Log in or create an account"}</b>
+          <b>{ar ? "سجّل الدخول" : "Sign in"}</b>
           <span>{ar ? "لعرض العروض المؤهلة وكسب نقاط شير على هذا الحجز." : "to view eligible offers and earn SHARE points on this booking."}</span>
-          <button className="btn ghost" onClick={() => act.say(ar ? "أريد تسجيل الدخول إلى حسابي" : "I'd like to log in to my account")}>
+          <button className="btn ghost" onClick={() => window.dispatchEvent(new CustomEvent("voxi:login"))}>
             {ar ? "تسجيل الدخول" : "Log in"}
           </button>
         </div>
       ) : null}
       {!guest && bankOffers.length ? (
-        <>
+        <details className="payment-extras">
+          <summary>{ar ? "عروض البنوك والرموز الترويجية" : "Bank offers & promo codes"}</summary>
           <div className="tabs2">
             <button className={tab === "bank" ? "on" : ""} onClick={() => setTab("bank")}>
               {ar ? "عروض البنوك" : "BANK OFFERS"}
@@ -782,7 +830,7 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
           {tab === "bank" ? (
             <div className="bankoffers">
               {bankOffers.map((b) => (
-                <button key={b.offerId} className={`bank ${offerId === b.offerId ? "on" : ""}`} onClick={() => setOfferId(offerId === b.offerId ? "" : b.offerId)} title={b.title}>
+                <button key={b.offerId} className={`bank ${offerId === b.offerId ? "on" : ""}`} onClick={() => { setOfferId(offerId === b.offerId ? "" : b.offerId); act.selection?.({ kind: "offer_selection", label: offerId === b.offerId ? "No offer selected" : b.title }); }} title={b.title}>
                   {b.imageUrl ? <img src={b.imageUrl} alt="" onError={(e) => { e.currentTarget.hidden = true; }} /> : null}
                   <b>{b.bankName}</b>
                   <small>{b.benefit}</small>
@@ -819,7 +867,7 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
               </button>
             </div>
           )}
-        </>
+        </details>
       ) : null}
 
       {wallet && saveable > 0 ? (
@@ -843,7 +891,7 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
 
       <div className="summary">
         <button className="disc" onClick={() => setShowItems(!showItems)}>
-          {ar ? "معلومات الفيلم" : "Movie info"} <i className={showItems ? "up" : ""} />
+          {ar ? "تفاصيل الحجز" : "Booking details"} <i className={showItems ? "up" : ""} />
         </button>
         {showItems ? (
           <div className="items">
@@ -903,11 +951,12 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
         ) : null}
       </div>
 
-      <h5>{ar ? "اختر طريقة الدفع" : "Choose your payment method"}{!method ? <small className="muted"> — {ar ? "لم يتم الاختيار بعد" : "nothing selected yet"}</small> : null}</h5>
+      <h5>{ar ? "الدفع باستخدام" : "Pay with"}</h5>
+      {!guest && wallet && wallet.voxCreditCents >= amount && amount > 0 ? <button className="btn ghost" type="button" onClick={() => act.say(ar ? "أريد مراجعة الدفع باستخدام رصيد فوكس" : "I'd like to review payment using my VOX Credit")}>{ar ? "استخدام رصيد فوكس" : "Use VOX Credit"} · {money(wallet.voxCreditCents, lang)}</button> : null}
       <div className="methods">
         {saved.map((c) => (
           <label key={c.token} className={`method ${method === `saved:${c.token}` ? "on" : ""}`}>
-            <input type="radio" name="pm" checked={method === `saved:${c.token}`} onChange={() => setMethod(`saved:${c.token}`)} />
+            <input type="radio" name="pm" checked={method === `saved:${c.token}`} onChange={() => chooseMethod(`saved:${c.token}`, `${c.brand ?? "Saved card"} ${c.masked ?? ""}`, c.last4)} />
             <CardBrand brand={c.brand} />
             <span className="mono">
               {c.masked} <small>({c.expiry})</small>
@@ -915,12 +964,12 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
           </label>
         ))}
         <label className={`method ${method === "touchpoints" ? "on" : ""}`}>
-          <input type="radio" name="pm" checked={method === "touchpoints"} onChange={() => setMethod("touchpoints")} />
+          <input type="radio" name="pm" checked={method === "touchpoints"} onChange={() => chooseMethod("touchpoints", "ADCB TouchPoints")} />
           <span className="cardbrand adcb">ADCB</span>
           <span>ADCB TouchPoints</span>
         </label>
         <label className={`method ${method === "new" ? "on" : ""}`}>
-          <input type="radio" name="pm" checked={method === "new"} onChange={() => setMethod("new")} />
+          <input type="radio" name="pm" checked={method === "new"} onChange={() => chooseMethod("new", "New credit or debit card")} />
           <span className="cardbrand generic">💳</span>
           <span>{ar ? "بطاقات الائتمان والخصم" : "Credit and Debit Cards"}</span>
         </label>
@@ -928,31 +977,27 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
           <div className="newcard">
             <div className="field">
               <label>{t(lang, "cardNumber")}</label>
-              <input value={pan} onChange={(e) => setPan(e.target.value)} inputMode="numeric" autoComplete="cc-number" />
+              <input aria-label={t(lang, "cardNumber")} value={pan} onChange={(e) => setPan(e.target.value)} inputMode="numeric" autoComplete="cc-number" />
             </div>
             <div className="row2">
               <div className="field">
                 <label>{t(lang, "expiry")}</label>
-                <input value={exp} onChange={(e) => setExp(e.target.value)} autoComplete="cc-exp" />
+                <input aria-label={t(lang, "expiry")} placeholder="MM/YY" value={exp} onChange={(e) => setExp(e.target.value)} autoComplete="cc-exp" />
               </div>
               <div className="field">
                 <label>{t(lang, "cvv")}</label>
-                <input value={cvv} onChange={(e) => setCvv(e.target.value)} autoComplete="cc-csc" type="password" />
+                <input aria-label={t(lang, "cvv")} value={cvv} onChange={(e) => setCvv(e.target.value)} autoComplete="cc-csc" type="password" />
               </div>
             </div>
-            <label className="check">
-              <input type="checkbox" checked={store} onChange={(e) => setStore(e.target.checked)} /> {ar ? "حفظ البطاقة للاستخدام لاحقاً؟" : "Store card for future use?"}
-            </label>
-            <small className="muted">{ar ? "بيئة تجريبية: بطاقة تنتهي بـ 0002 تُرفض." : "Sandbox: a card ending 0002 is declined; any other test card is approved."}</small>
           </div>
         ) : null}
         <label className={`method ${method === "applepay" ? "on" : ""}`}>
-          <input type="radio" name="pm" checked={method === "applepay"} onChange={() => setMethod("applepay")} />
+          <input type="radio" name="pm" checked={method === "applepay"} onChange={() => chooseMethod("applepay", "Apple Pay")} />
           <span className="cardbrand apple"> Pay</span>
           <span>Apple Pay</span>
         </label>
         <label className={`method ${method === "samsungpay" ? "on" : ""}`}>
-          <input type="radio" name="pm" checked={method === "samsungpay"} onChange={() => setMethod("samsungpay")} />
+          <input type="radio" name="pm" checked={method === "samsungpay"} onChange={() => chooseMethod("samsungpay", "Samsung Pay")} />
           <span className="cardbrand samsung">Pay</span>
           <span>Samsung Pay</span>
         </label>
@@ -960,7 +1005,7 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
       {meta.customer?.email ? <small className="muted">{ar ? `سيتم الحجز باسم ${meta.customer.name} (${meta.customer.email}${meta.customer.phone ? ` · ${meta.customer.phone}` : ""})` : `Your booking will be made as ${meta.customer.name} (${meta.customer.email}${meta.customer.phone ? ` · ${meta.customer.phone}` : ""})`}{guest ? (ar ? " — كضيف" : " — as a guest") : ""}</small> : null}
       {err ? <div className="err" style={{ marginTop: 6 }}>{err}</div> : null}
       <div className="actionsrow">
-        <button className={`btn ${method === "applepay" ? "apple" : method === "samsungpay" ? "samsung" : "cta"}`} disabled={busy || !method} onClick={pay}>
+        <button className={`btn ${method === "applepay" ? "apple" : method === "samsungpay" ? "samsung" : "cta"}`} disabled={busy || !method || (left === 0 && !meta.fnbOnly)} onClick={() => { void pay(); }}>
           {busy ? t(lang, "processing") : method === "applepay" ? ` Pay ${money(amount, lang)}` : method === "samsungpay" ? `Samsung Pay ${money(amount, lang)}` : `${t(lang, "payButton")} ${money(amount, lang)}`}
         </button>
         <button className="btn ghost" onClick={() => act.say(ar ? "ألغِ الدفع" : "Cancel the payment")}>
@@ -968,8 +1013,7 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
         </button>
       </div>
       <div className="secure">
-        <span>🔒 {ar ? "تتم معالجة المدفوعات عبر checkout.com" : "Payments are processed by checkout.com"}</span>
-        <span className="pci">PCI DSS</span>
+        <span>{ar ? "دفع تجريبي · لن يتم خصم أي مبلغ" : "Demo checkout · No payment is taken"}</span>
       </div>
     </div>
   );

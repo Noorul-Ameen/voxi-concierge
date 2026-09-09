@@ -13,6 +13,7 @@ import { schema as S, prefixedId } from "@voxi/db";
  */
 import { and, eq, sql } from "drizzle-orm";
 import { type EventBus, appendEvent } from "../events.js";
+import { resolveLinkedConversation } from "../services/relink.js";
 
 export type ActionRow = typeof S.actions.$inferSelect;
 
@@ -49,22 +50,29 @@ export async function enqueue(
   if (existing) return { action: existing, created: false };
   const id = prefixedId("act", 12);
   try {
-    const [row] = await db
-      .insert(S.actions)
-      .values({
-        id,
-        conversationId: input.conversationId,
-        idempotencyKey: input.idempotencyKey,
-        type: input.type,
-        resourceKey: input.resourceKey,
-        input: input.payload,
-        status: "queued",
-        requestedBy: input.requestedBy ?? "agent",
-        toolCallId: input.toolCallId ?? null,
-        correlationId: input.correlationId ?? null,
-        maxAttempts: input.maxAttempts ?? 3,
-      })
-      .returning();
+    const row = await db.transaction(async (tx) => {
+      const current = await resolveLinkedConversation(tx, input.conversationId, true);
+      const [inserted] = await tx
+        .insert(S.actions)
+        .values({
+          id,
+          conversationId: current?.id ?? input.conversationId,
+          idempotencyKey: input.idempotencyKey,
+          type: input.type,
+          resourceKey: input.resourceKey,
+          input: {
+            ...input.payload,
+            _widgetAuthGeneration: Number(current?.metadata?.widgetAuthGeneration ?? 0),
+          },
+          status: "queued",
+          requestedBy: input.requestedBy ?? "agent",
+          toolCallId: input.toolCallId ?? null,
+          correlationId: input.correlationId ?? null,
+          maxAttempts: input.maxAttempts ?? 3,
+        })
+        .returning();
+      return inserted!;
+    });
     await appendEvent(
       db,
       bus,
@@ -72,6 +80,7 @@ export async function enqueue(
       "action.queued",
       { action: toRef(row!) },
       input.requestedBy === "widget" ? "user" : (input.requestedBy ?? "agent"),
+      Number(row.input._widgetAuthGeneration ?? 0),
     );
     return { action: row!, created: true };
   } catch (e) {
@@ -146,6 +155,26 @@ export async function claimNext(db: Db, workerId: string, leaseSeconds = 120): P
   });
 }
 
+/** A claimed attempt is the fencing token; an expired owner must not extend or finish newer work. */
+function ownedAttempt(action: ActionRow) {
+  return and(
+    eq(S.actions.id, action.id),
+    eq(S.actions.status, "running"),
+    eq(S.actions.attempts, action.attempts),
+    action.lockedBy ? eq(S.actions.lockedBy, action.lockedBy) : sql`false`,
+    sql`${S.actions.leaseUntil} > now()`,
+  );
+}
+
+export async function renewLease(db: Db, action: ActionRow, leaseSeconds = 120): Promise<boolean> {
+  const rows = await db
+    .update(S.actions)
+    .set({ leaseUntil: new Date(Date.now() + leaseSeconds * 1000) })
+    .where(ownedAttempt(action))
+    .returning({ id: S.actions.id });
+  return rows.length === 1;
+}
+
 export async function complete(
   db: Db,
   bus: EventBus | null,
@@ -158,21 +187,23 @@ export async function complete(
     .update(S.actions)
     .set({
       status: "succeeded",
-      result,
+      result: { ...result, ...(ui ? { ui } : {}) },
       finishedAt: new Date(),
       lockedBy: null,
       leaseUntil: null,
       ...(steps ? { steps } : {}),
     })
-    .where(eq(S.actions.id, action.id))
+    .where(ownedAttempt(action))
     .returning();
+  if (!row) return null;
   await appendEvent(
     db,
     bus,
-    action.conversationId,
+    row.conversationId,
     "action.completed",
     { action: toRef(row!), ui },
     "system",
+    Number(action.input._widgetAuthGeneration ?? 0),
   );
   return row!;
 }
@@ -196,10 +227,19 @@ export async function fail(
       leaseUntil: null,
       ...(opts.steps ? { steps: opts.steps } : {}),
     })
-    .where(eq(S.actions.id, action.id))
+    .where(ownedAttempt(action))
     .returning();
+  if (!row) return null;
   if (!willRetry)
-    await appendEvent(db, bus, action.conversationId, "action.completed", { action: toRef(row!) }, "system");
+    await appendEvent(
+      db,
+      bus,
+      row.conversationId,
+      "action.completed",
+      { action: toRef(row!) },
+      "system",
+      Number(action.input._widgetAuthGeneration ?? 0),
+    );
   return row!;
 }
 
@@ -207,7 +247,17 @@ export async function fail(
 export async function reclaimExpiredLeases(db: Db): Promise<number> {
   const rows = await db
     .update(S.actions)
-    .set({ status: "queued", lockedBy: null, leaseUntil: null })
+    .set({
+      status: sql`case when ${S.actions.attempts} >= ${S.actions.maxAttempts} then 'failed' else 'queued' end`,
+      lockedBy: null,
+      leaseUntil: null,
+      finishedAt: sql`case when ${S.actions.attempts} >= ${S.actions.maxAttempts} then now() else null end`,
+      error: {
+        code: "LEASE_EXPIRED",
+        message: "The action did not finish before its worker lease expired.",
+        retryable: false,
+      },
+    })
     .where(and(eq(S.actions.status, "running"), sql`${S.actions.leaseUntil} < now()`))
     .returning({ id: S.actions.id });
   return rows.length;

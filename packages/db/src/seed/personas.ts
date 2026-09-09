@@ -78,16 +78,15 @@ export const PERSONAS: Persona[] = [
     homeCinemaId: "0002",
     preferences: {
       genres: ["Family", "Animation", "Comedy", "Drama"],
-      languages: ["Arabic", "English"],
+      languages: ["Arabic"],
       experiences: ["KIDS", "Standard", "MAX"],
-      cinemas: ["0002", "0005", "0049"],
+      cinemas: ["0002"],
       timeOfDay: ["afternoon", "evening"],
       days: ["weekend"],
       dietary: ["vegetarian"],
       seatPreference: "middle",
     },
-    persona:
-      "UAE family member — Arabic & English films, children's films in history, SHARE Gold, Mall of the Emirates / Mirdif",
+    persona: "UAE family member — Arabic films, SHARE Gold, Mall of the Emirates",
     pin: "1234",
     bookings: [
       {
@@ -172,14 +171,14 @@ export const PERSONAS: Persona[] = [
     homeCinemaId: "0013",
     preferences: {
       genres: ["Action", "Drama", "Thriller"],
-      languages: ["Tamil", "Hindi"],
+      languages: ["Tamil"],
       experiences: ["Standard", "MAX"],
-      cinemas: ["0013", "0001", "0017"],
+      cinemas: ["0013"],
       timeOfDay: ["late", "evening"],
       days: ["weekday", "weekend"],
       seatPreference: "back",
     },
-    persona: "Indian customer — Tamil & Hindi films, late shows, SHARE Silver, Burjuman / Deira / Shindagha",
+    persona: "Indian customer — Tamil films, late shows, SHARE Silver, Burjuman",
     pin: "2468",
     bookings: [
       {
@@ -282,13 +281,12 @@ export const PERSONAS: Persona[] = [
       genres: ["Drama", "Sci-fi", "Thriller", "Action"],
       languages: ["English"],
       experiences: ["GOLD", "IMAX", "THEATRE", "Standard"],
-      cinemas: ["0002", "0012", "0046", "0049"],
+      cinemas: ["0002"],
       timeOfDay: ["evening"],
       days: ["weekday"],
       seatPreference: "back",
     },
-    persona:
-      "UK customer — English films only, GOLD / IMAX / THEATRE regular, SHARE Platinum, Mall of the Emirates / Yas Mall",
+    persona: "UK customer — English films, premium experiences, SHARE Platinum, Mall of the Emirates",
     pin: "9876",
     bookings: [
       {

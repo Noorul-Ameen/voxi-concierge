@@ -8,7 +8,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "pnpm -r --filter './packages/**' --filter './apps/**' build",
+    "build": "pnpm -r --filter \"./packages/**\" --filter \"./apps/**\" build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm build:packages && pnpm -r --workspace-concurrency=1 test",
     "lint": "biome check .",
@@ -21,8 +21,8 @@
     "dev:worker": "pnpm --filter @voxi/worker dev",
     "dev:web": "pnpm --filter @voxi/web dev",
     "scrape": "pnpm --filter @voxi/scraper scrape",
-    "build:packages": "pnpm -r --filter './packages/**' build",
-    "dev:packages": "pnpm -r --parallel --filter './packages/**' exec tsc -p tsconfig.json --watch --preserveWatchOutput"
+    "build:packages": "pnpm -r --filter \"./packages/**\" build",
+    "dev:packages": "pnpm -r --parallel --filter \"./packages/**\" exec tsc -p tsconfig.json --watch --preserveWatchOutput"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",

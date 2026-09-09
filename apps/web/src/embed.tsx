@@ -1,5 +1,5 @@
 /**
- * Embeddable Voxi widget. Built as a single self-contained script (`dist/embed/voxi.js`) that any page can load:
+ * Embeddable VOX Cinemas Virtual Assistant. The legacy script URL and API remain compatible.
  *
  *   <script src="https://voxi-demo.up.railway.app/embed/voxi.js" charset="utf-8" defer></script>
  *
@@ -12,8 +12,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { Concierge } from "./components/Concierge";
-import type { Lang } from "./lib/api";
+import { configureApiBase, type Customer, type Lang } from "./lib/api";
 import css from "./styles.css?inline";
+import stateCss from "./concierge-state.css?inline";
 
 const script = document.currentScript as HTMLScriptElement | null;
 const scriptOrigin = (() => {
@@ -29,7 +30,9 @@ window.VoxiConfig = {
   open: window.VoxiConfig?.open ?? script?.dataset.open === "true",
   theme: window.VoxiConfig?.theme ?? script?.dataset.theme ?? "navy",
   vars: window.VoxiConfig?.vars,
+  hostLoginSelector: window.VoxiConfig?.hostLoginSelector,
 };
+configureApiBase(window.VoxiConfig.apiBase!);
 
 const FONTS = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;600;700&display=swap";
 if (!document.querySelector(`link[href="${FONTS}"]`)) {
@@ -47,21 +50,54 @@ function mount() {
   const shadow = host.attachShadow({ mode: "open" });
   const style = document.createElement("style");
   // The app stylesheet scopes its variables on :root; inside a shadow tree the equivalent scope is :host.
-  style.textContent = `${css.replace(/:root/g, ":host")}\n:host { all: initial; font-family: var(--font); color: var(--ink); }`;
+  style.textContent = `${css.replace(/:root/g, ":host")}\n${stateCss}\n:host { all: initial; font-family: var(--font); color: var(--ink); }`;
   shadow.appendChild(style);
   const root = document.createElement("div");
+  root.className = "vox-assistant-root";
   root.dir = window.VoxiConfig?.lang === "ar" ? "rtl" : "ltr";
   // Theme: a named preset from styles.css ("navy", …) and/or individual CSS variables (e.g. { "--accent": "#19c4d3" }).
   if (window.VoxiConfig?.theme) root.dataset.voxiTheme = window.VoxiConfig.theme;
   for (const [k, v] of Object.entries(window.VoxiConfig?.vars ?? {})) if (k.startsWith("--")) root.style.setProperty(k, v);
   shadow.appendChild(root);
   const app = ReactDOM.createRoot(root);
-  app.render(React.createElement(Concierge, { initialLang: window.VoxiConfig?.lang ?? "en", initialOpen: window.VoxiConfig?.open ?? false }));
+  const knownHost = location.hostname === "voxi.kris-pradip.workers.dev";
+  const loginSelector = window.VoxiConfig?.hostLoginSelector ?? (knownHost ? "#loginBtn" : undefined);
+  const closeHostLogin = () => { if (knownHost) document.querySelector<HTMLButtonElement>("#loginClose")?.click(); };
+  const openAccount = (event: Event) => {
+    if (!loginSelector) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    let matches = false;
+    try { matches = !!target.closest(loginSelector) || (knownHost && event.type === "submit" && target.id === "siteLoginForm"); } catch { return; }
+    if (!matches) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeHostLogin();
+    window.dispatchEvent(new CustomEvent("voxi:login"));
+  };
+  const onAuth = (customer: Customer | null) => {
+    if (!loginSelector) return;
+    let button: Element | null = null;
+    try { button = document.querySelector(loginSelector); } catch { return; }
+    if (button) {
+      const ar = window.VoxiConfig?.lang === "ar";
+      button.textContent = customer ? customer.firstName : ar ? "تسجيل الدخول" : "Sign in";
+      button.setAttribute("aria-label", customer ? ar ? "حسابك في فوكس" : "Your VOX profile" : ar ? "تسجيل الدخول" : "Sign in");
+    }
+  };
+  if (loginSelector) {
+    document.addEventListener("click", openAccount, true);
+    document.addEventListener("submit", openAccount, true);
+  }
+  app.render(React.createElement(Concierge, { initialLang: window.VoxiConfig?.lang ?? "en", initialOpen: window.VoxiConfig?.open ?? false, onAuth }));
   window.Voxi = {
     open: () => window.dispatchEvent(new CustomEvent("voxi:open")),
     login: () => window.dispatchEvent(new CustomEvent("voxi:login")),
     logout: () => window.dispatchEvent(new CustomEvent("voxi:logout")),
+    profile: () => window.dispatchEvent(new CustomEvent("voxi:profile")),
     unmount: () => {
+      document.removeEventListener("click", openAccount, true);
+      document.removeEventListener("submit", openAccount, true);
       app.unmount();
       host.remove();
     },
@@ -70,7 +106,7 @@ function mount() {
 
 declare global {
   interface Window {
-    Voxi?: { open: () => void; login: () => void; logout: () => void; unmount: () => void };
+    Voxi?: { open: () => void; login: () => void; logout: () => void; profile: () => void; unmount: () => void };
   }
 }
 

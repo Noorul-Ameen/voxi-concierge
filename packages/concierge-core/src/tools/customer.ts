@@ -2,24 +2,29 @@ import { ErrorCodes } from "@voxi/contracts";
 import { schema as S } from "@voxi/db";
 import {
   buildTasteProfile,
+  clockMinutes,
+  inferCustomerProfile,
   normaliseFilmLanguage,
+  preferenceCalendar,
   recommendConcessions,
-  recommendFilms,
   resolveSpokenDate,
+  scoreFilm,
+  scorePreferredTime,
   scoreSession,
   similarity,
 } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 import { eq } from "drizzle-orm";
 import { enqueue, idem, toRef, waitFor } from "../actions/ledger.js";
-import { addTopic, markJourney, updateConversation } from "../services/conversation.js";
-import { fmtDateTime, joinList, money, t } from "../services/format.js";
+import { addTopic, markJourney } from "../services/conversation.js";
+import { fmtDateTime, money, t } from "../services/format.js";
+import { buildBookingState, orderSummary } from "../services/order-state.js";
 import { actionSpeech } from "./bookings.js";
 import { filmCard, sessionCard } from "./movies.js";
 import { type ToolCtx, type ToolHandlers, err, ok } from "./types.js";
 
 export async function loadCustomer(ctx: ToolCtx) {
-  if (!ctx.conversation.customerId) return null;
+  if (!ctx.conversation.isLoggedIn || !ctx.conversation.customerId) return null;
   try {
     return await ctx.vista.customer(ctx.conversation.customerId);
   } catch (e) {
@@ -44,6 +49,20 @@ export const customerTools: Pick<
     const c = await loadCustomer(ctx);
     const active = (ctx.conversation.metadata as { activeOrder?: string; activeSessionKey?: string })
       ?.activeOrder;
+    const activeResult = active ? await ctx.vista.getOrder(active).catch(() => null) : null;
+    const activeOrder = activeResult?.Order;
+    const ended = !activeOrder || ["paid", "cancelled"].includes(String(activeOrder.State));
+    const cinema = activeOrder && !ended ? await ctx.catalog.cinema(activeOrder.CinemaId) : null;
+    const summary =
+      activeOrder && !ended
+        ? orderSummary(
+            activeOrder,
+            ctx.lang,
+            ctx.nowLocal,
+            cinema ? (ctx.lang === "ar" ? cinema.nameAlt || cinema.name : cinema.name) : activeOrder.CinemaId,
+          )
+        : null;
+    const bookingState = summary ? buildBookingState(summary) : null;
     const data = {
       conversationId: ctx.conversation.id,
       language: ctx.lang,
@@ -62,16 +81,25 @@ export const customerTools: Pick<
             sharePoints: c.sharePoints,
             voxCreditCents: c.voxRewardsCents,
             preferences: c.preferences,
+            profile: c.profile,
           }
         : null,
       hasLocation: !!ctx.conversation.geo,
       location: ctx.conversation.geo?.label ?? (ctx.conversation.geo ? "shared GPS position" : null),
-      activeOrder: active
-        ? {
-            userSessionId: active,
-            sessionKey: (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey,
-          }
-        : null,
+      activeOrder:
+        active && !ended
+          ? {
+              userSessionId: active,
+              sessionKey: summary?.sessionId
+                ? `${summary.cinemaId}-${summary.sessionId}`
+                : (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey,
+              state: activeOrder.State,
+              expiresAtUtc: activeOrder.ExpiresAtUtc ?? activeOrder.ExpiryDateUtc ?? null,
+              requiresFreshHold: bookingState?.requiresFreshHold ?? false,
+              summary,
+              bookingState,
+            }
+          : null,
       mode: ctx.conversation.mode,
       localTime: ctx.nowLocal,
       market: ctx.cfg.market,
@@ -90,86 +118,22 @@ export const customerTools: Pick<
     return ok(data, speech);
   },
 
-  async login_customer(ctx, input) {
-    if (!input.email && !input.phone && !input.memberId)
-      return err(
-        ErrorCodes.VALIDATION,
-        t(
-          ctx.lang,
-          "Please give me the email, mobile number or SHARE member id on the account.",
-          "يرجى إعطائي البريد الإلكتروني أو رقم الجوال أو رقم عضوية شير.",
-        ),
-      );
-    try {
-      const r = await ctx.vista.validateMember({
-        MemberId: input.memberId,
-        Email: input.email,
-        Phone: input.phone,
-        Pin: input.pin,
-      });
-      const m = r.Member;
-      await updateConversation(ctx.db, ctx.conversation.id, {
-        customerId: m.CustomerId,
-        memberId: m.MemberId,
-        isLoggedIn: true,
-        language: ctx.conversation.language,
-      });
-      ctx.conversation.customerId = m.CustomerId;
-      ctx.conversation.memberId = m.MemberId;
-      ctx.conversation.isLoggedIn = true;
-      const c = await ctx.vista.customer(m.CustomerId);
-      return ok(
-        {
-          customer: {
-            id: c.id,
-            firstName: c.firstName,
-            lastName: c.lastName,
-            memberId: c.memberId,
-            tier: c.tier,
-            sharePoints: c.sharePoints,
-            voxCreditCents: c.voxRewardsCents,
-            preferredLanguage: c.preferredLanguage,
-          },
-        },
-        t(
-          ctx.lang,
-          `Thanks ${c.firstName}, you're logged in. You have ${c.sharePoints} Share Points and ${money(c.voxRewardsCents, ctx.lang)} VOX credit.`,
-          `شكراً ${c.firstName}، تم تسجيل دخولك. لديك ${c.sharePoints} نقطة شير و${money(c.voxRewardsCents, "ar")} رصيد فوكس.`,
-        ),
-        {
-          type: "loyalty",
-          items: [
-            {
-              firstName: c.firstName,
-              tier: c.tier,
-              sharePoints: c.sharePoints,
-              voxCreditCents: c.voxRewardsCents,
-            },
-          ],
-        },
-        { name: "login", status: "completed" },
-      );
-    } catch (e) {
-      if (e instanceof VistaClientError && e.kind === "result") {
-        const pinIssue = e.extendedResultCode === 401;
-        return err(
-          pinIssue ? "INVALID_PIN" : ErrorCodes.NOT_FOUND,
-          pinIssue
-            ? t(ctx.lang, "That PIN doesn't match. Please try again.", "رمز PIN غير صحيح. حاول مرة أخرى.")
-            : t(
-                ctx.lang,
-                "I couldn't find a SHARE account with those details.",
-                "لم أجد حساب شير بهذه البيانات.",
-              ),
-        );
-      }
-      throw e;
-    }
+  async login_customer(ctx) {
+    return err(
+      ErrorCodes.LOGIN_REQUIRED,
+      t(
+        ctx.lang,
+        "Use Sign in above to enter your email and password securely.",
+        "سجّل الدخول من الزر بالأعلى باستخدام بريدك وكلمة المرور بأمان.",
+      ),
+      false,
+      { action: "open_sign_in" },
+    );
   },
 
   async get_loyalty_balance(ctx, input) {
-    const memberId = input.memberId ?? ctx.conversation.memberId;
-    if (!memberId)
+    const memberId = ctx.conversation.memberId;
+    if (!ctx.conversation.isLoggedIn || !memberId || (input.memberId && input.memberId !== memberId))
       return err(
         ErrorCodes.LOGIN_REQUIRED,
         t(
@@ -209,11 +173,19 @@ export const customerTools: Pick<
   },
 
   async get_recommendations(ctx, input) {
-    const customerId = input.customerId ?? ctx.conversation.customerId;
-    const c = customerId ? await ctx.vista.customer(customerId).catch(() => null) : null;
-    const history = customerId
-      ? (await ctx.vista.customerHistory(customerId).catch(() => ({ history: [] }))).history
-      : [];
+    const c = await loadCustomer(ctx);
+    const history = c ? (await ctx.vista.customerHistory(c.id).catch(() => ({ history: [] }))).history : [];
+    const calendar = preferenceCalendar(process.env);
+    const inferred = inferCustomerProfile(
+      history.map((h) => ({
+        cinemaId: h.cinemaId,
+        language: h.language,
+        showtime: h.showtime,
+        seatPreference: h.seatPreference,
+      })),
+      calendar,
+      ctx.nowLocal,
+    );
     const profile = buildTasteProfile(
       c?.preferences ?? {},
       history.map((h) => ({
@@ -225,186 +197,216 @@ export const customerTools: Pick<
         showtime: h.showtime,
         concessionItemIds: h.concessionItemIds ?? [],
       })),
+      calendar,
     );
     const FAMILY = new Set(["Family", "Animation", "Kids"]);
     const isFamilyFilm = (genres: string[], rating?: string | null) =>
       genres.some((g) => FAMILY.has(g)) || rating === "G";
-    // Children's films in the history → ask before suggesting family options (never assume kids are joining)
-    const familyHistory = history.some(
-      (h) => isFamilyFilm(h.genres ?? [], h.rating) || h.experience === "KIDS" || (h.childTickets ?? 0) > 0,
-    );
-    const name = c?.firstName;
-    const historyLine = c
-      ? t(
-          ctx.lang,
-          `${[
-            profile.summary.languages.length ? `${joinList(profile.summary.languages)} films` : "",
-            profile.summary.genres.length
-              ? joinList(profile.summary.genres.slice(0, 2).map((g) => g.toLowerCase()))
-              : "",
-          ]
-            .filter(Boolean)
-            .join(", ")}`,
-          `${profile.summary.languages.length ? `أفلام ${joinList(profile.summary.languages, "ar")}` : ""}`,
-        )
-      : "";
-    if (c && familyHistory && input.withChildren === undefined && input.kind !== "fnb") {
-      return ok(
-        { movies: [], fnb: [], profile: profile.summary, personalised: true, askChildren: true },
-        t(
-          ctx.lang,
-          `${name ? `${name}, based` : "Based"} on your previous bookings${historyLine ? ` — ${historyLine}` : ""} — I can suggest a few. I also see family films in your history: will children be joining this time, or is it just adults?`,
-          `${name ? `${name}، بناءً` : "بناءً"} على حجوزاتك السابقة يمكنني اقتراح بعض الأفلام. لاحظت أفلاماً عائلية في سجلك: هل سيرافقك أطفال هذه المرة، أم الكبار فقط؟`,
-        ),
-        undefined,
-        { name: "personalisation", status: "started" },
-      );
-    }
+    // History informs ranking; it never forces an extra "are children joining?" question.
     const wantLang = normaliseFilmLanguage(input.language);
     let films = (await ctx.catalog.films()).filter((f) => f.status === "now_showing");
-    if (wantLang) {
-      const inLang = films.filter((f) => similarity(f.language, wantLang) >= 0.7);
-      if (inLang.length) films = inLang;
-    }
+    if (wantLang) films = films.filter((f) => similarity(f.language, wantLang) >= 0.7);
     if (input.withChildren === true) films = films.filter((f) => !/^(15|18|21)\+?$/.test(f.rating ?? ""));
     else if (input.withChildren === false) films = films.filter((f) => !isFamilyFilm(f.genres, f.rating));
-    const recsRaw = recommendFilms(
-      films.map((f) => ({
-        hoCode: f.hoCode,
-        title: f.title,
-        genreNames: f.genres,
-        language: f.language,
-        rating: f.rating,
-        status: f.status,
-      })),
-      profile,
-      input.limit + 4,
-    );
-    // family first when children are coming
-    const recs = (
-      input.withChildren === true
-        ? [...recsRaw].sort(
-            (a, b) =>
-              Number(isFamilyFilm(b.film.genreNames, b.film.rating)) -
-              Number(isFamilyFilm(a.film.genreNames, a.film.rating)),
-          )
-        : recsRaw
-    ).slice(0, input.limit);
-    // where: the guest's shared/selected location wins over history; then the requested cinema; then their usual cinemas
-    let cinemaIds: string[];
-    let nearLabel = "";
-    if (input.cinemaId) cinemaIds = [input.cinemaId];
-    else if (ctx.conversation.geo) {
-      const near = await ctx.catalog.nearestCinemas(ctx.conversation.geo.lat, ctx.conversation.geo.lng, 3);
-      cinemaIds = near.map((x) => x.id);
-      nearLabel = ctx.conversation.geo.label ?? "";
-    } else
-      cinemaIds = profile.summary.cinemas.length
-        ? profile.summary.cinemas
-        : c?.homeCinemaId
-          ? [c.homeCinemaId]
-          : ["0002"];
+
+    let requestedCinema = input.cinemaId;
+    if (input.cinemaName && !requestedCinema) {
+      const resolved = await ctx.catalog.resolveCinema(input.cinemaName);
+      if (!resolved || resolved.score < 0.65)
+        return err(
+          ErrorCodes.NOT_FOUND,
+          t(ctx.lang, "I couldn't match that cinema. Which VOX did you mean?", "أي سينما فوكس تقصد؟"),
+        );
+      requestedCinema = resolved.cinema.id;
+    }
+    const cinemas = await ctx.catalog.cinemas();
+    const preferredCinema = inferred.cinemaId ?? c?.homeCinemaId;
+    const cinemaIds = requestedCinema
+      ? [requestedCinema]
+      : [
+          ...(preferredCinema ? [preferredCinema] : []),
+          ...cinemas.map((cinema) => cinema.id).filter((id) => id !== preferredCinema),
+        ];
     const date = resolveSpokenDate(input.date, ctx.nowLocal);
+    const eligibleFilmIds = new Set(films.map((film) => film.hoCode));
     const sessions = (await Promise.all(cinemaIds.map((id) => ctx.catalog.sessions(id))))
       .flat()
-      .filter((s) => s.showtime >= ctx.nowLocal && s.showtime.slice(0, 10) >= date);
-    const movieItems = await Promise.all(
-      recs.map(async (r) => {
-        const f = films.find((x) => x.hoCode === r.film.hoCode)!;
-        const best = sessions
-          .filter((s) => s.hoCode === f.hoCode)
-          .map((s) => ({
-            s,
-            score: scoreSession(
-              {
-                cinemaId: s.cinemaId,
-                hoCode: s.hoCode,
-                experience: s.experience,
-                showtime: s.showtime,
-                seatsAvailable: s.seatsAvailable,
-              },
-              profile,
-            ),
-          }))
-          .sort((a, b) => b.score - a.score)[0]?.s;
-        const cn = best ? await ctx.catalog.cinema(best.cinemaId) : null;
+      .filter(
+        (s) =>
+          s.showtime > ctx.nowLocal &&
+          s.showtime.slice(0, 10) === date &&
+          !s.soldOut &&
+          s.allowTicketSales &&
+          s.seatsAvailable > 0 &&
+          eligibleFilmIds.has(s.hoCode),
+      );
+    const withinWindow = (showtime: string) => {
+      const time = showtime.slice(11, 16);
+      return (!input.timeFrom || time >= input.timeFrom) && (!input.timeTo || time <= input.timeTo);
+    };
+    const targetMinutes = input.time ? clockMinutes(input.time) : null;
+    const windowed = sessions.filter((s) => withinWindow(s.showtime));
+    const outsideWindow = !windowed.length && sessions.length > 0 && !!(input.timeFrom || input.timeTo);
+    const windowDistance = (showtime: string) => {
+      const minute = clockMinutes(showtime.slice(11, 16));
+      if (input.timeFrom && minute < clockMinutes(input.timeFrom))
+        return clockMinutes(input.timeFrom) - minute;
+      if (input.timeTo && minute > clockMinutes(input.timeTo)) return minute - clockMinutes(input.timeTo);
+      return 0;
+    };
+    const nearestWindowDistance = Math.min(...sessions.map((session) => windowDistance(session.showtime)));
+    const candidateSessions = outsideWindow
+      ? sessions.filter((session) => windowDistance(session.showtime) === nearestWindowDistance)
+      : windowed;
+    const distance = (showtime: string) =>
+      targetMinutes == null ? 0 : Math.abs(clockMinutes(showtime.slice(11, 16)) - targetMinutes);
+    const closest =
+      targetMinutes == null ? 0 : Math.min(...candidateSessions.map((s) => distance(s.showtime)));
+    const timed =
+      targetMinutes == null
+        ? candidateSessions
+        : candidateSessions.filter((s) => distance(s.showtime) <= Math.max(30, closest));
+    const isAlternative = outsideWindow || (targetMinutes != null && closest > 0 && Number.isFinite(closest));
+    const availableFilms = films.filter((f) => timed.some((s) => s.hoCode === f.hoCode));
+    const ranking = availableFilms
+      .map((film) => {
+        const base = scoreFilm(
+          {
+            hoCode: film.hoCode,
+            title: film.title,
+            genreNames: film.genres,
+            language: film.language,
+            rating: film.rating,
+            status: film.status,
+          },
+          profile,
+        );
+        const candidates = timed
+          .filter((s) => s.hoCode === film.hoCode)
+          .map((s) => {
+            const explicitTimeScore =
+              targetMinutes == null
+                ? 0
+                : -Math.abs(clockMinutes(s.showtime.slice(11, 16)) - targetMinutes) / 15;
+            return {
+              s,
+              score:
+                explicitTimeScore +
+                (targetMinutes == null ? scorePreferredTime(s.showtime, inferred) : 0) +
+                (s.cinemaId === preferredCinema ? 5 : 0) +
+                scoreSession(s, profile) / 4,
+            };
+          })
+          .sort((a, b) => b.score - a.score || a.s.showtime.localeCompare(b.s.showtime));
+        const best = candidates[0]!;
+        const preferredLanguageScore = !wantLang && inferred.movieLanguage === film.language ? 20 : 0;
+        const familyScore = input.withChildren === true && isFamilyFilm(film.genres, film.rating) ? 10 : 0;
         return {
-          ...filmCard(f, ctx.lang),
-          why: r.why,
-          family: isFamilyFilm(f.genres, f.rating),
-          suggestedSession: best
-            ? sessionCard(
-                best,
+          film,
+          best: best.s,
+          score: base.score + best.score + preferredLanguageScore + familyScore,
+          why: base.why,
+        };
+      })
+      .sort((a, b) => b.score - a.score || a.best.showtime.localeCompare(b.best.showtime));
+    const movieItems =
+      input.kind === "fnb"
+        ? []
+        : ranking.slice(0, isAlternative ? 1 : input.limit).map((r) => {
+            const cinema = cinemas.find((cn) => cn.id === r.best.cinemaId);
+            return {
+              ...filmCard(r.film, ctx.lang),
+              why: r.why,
+              family: isFamilyFilm(r.film.genres, r.film.rating),
+              isAlternative,
+              alternativeReason: isAlternative
+                ? outsideWindow
+                  ? "outside_requested_time_window"
+                  : "different_requested_time"
+                : undefined,
+              suggestedSession: sessionCard(
+                r.best,
                 ctx.lang,
                 ctx.nowLocal,
-                cn ? (ctx.lang === "ar" ? cn.nameAlt || cn.name : cn.name) : undefined,
-              )
-            : undefined,
-        };
-      }),
-    );
+                cinema ? (ctx.lang === "ar" ? cinema.nameAlt || cinema.name : cinema.name) : undefined,
+              ),
+            };
+          });
     let fnbItems: Record<string, unknown>[] = [];
     if (input.kind !== "movies") {
-      const cinemaId = input.cinemaId ?? cinemaIds[0]!;
-      const { ConcessionTabs } = await ctx.vista.concessions(cinemaId);
-      const items = ConcessionTabs.flatMap((tab) =>
-        tab.Items.map((i) => ({
-          id: i.Id,
-          name: i.Description,
-          nameAlt: i.DescriptionAlt,
-          priceCents: i.PriceInCents,
-          imageUrl: i.ImageUrl,
-          dietaryTags: i.DietaryTags ?? [],
-          isBestSeller: !!i.IsBestSeller,
-          experiences: i.Experiences ?? [],
-          tab: tab.Name,
-        })),
-      );
-      fnbItems = recommendConcessions(
-        items,
-        profile,
-        c?.preferences ?? {},
-        profile.summary.experiences[0],
-        3,
-      ).map((x) => ({
-        itemId: x.item.id,
-        name: ctx.lang === "ar" ? x.item.nameAlt || x.item.name : x.item.name,
-        priceCents: x.item.priceCents,
-        price: money(x.item.priceCents, ctx.lang),
-        imageUrl: x.item.imageUrl,
-        tab: x.item.tab,
-        why: profile.items.get(x.item.id)
-          ? t(ctx.lang, "you've ordered this before", "طلبته من قبل")
-          : x.item.isBestSeller
-            ? t(ctx.lang, "best seller", "الأكثر مبيعاً")
-            : "",
-      }));
-    }
-    const speech = c
-      ? t(
-          ctx.lang,
-          `${name ? `${name}, based` : "Based"} on your previous bookings${wantLang ? ` — you asked for ${wantLang} films, so I've kept to those` : historyLine ? ` — ${historyLine}` : ""}${input.withChildren === true ? ", and with the children coming" : ""} — here are some you may enjoy: ${joinList(movieItems.slice(0, 3).map((m) => m.titleEn))}${movieItems[0]?.suggestedSession ? `. ${movieItems[0].titleEn} has a ${movieItems[0].suggestedSession.experience} show ${movieItems[0].suggestedSession.dateLabel} at ${movieItems[0].suggestedSession.time} at ${movieItems[0].suggestedSession.cinemaName}${nearLabel ? ` near ${nearLabel}` : ""}` : ""}.${fnbItems.length ? ` Your usual ${fnbItems[0]!.name as string} is on the menu too.` : ""} Which one appeals, or would you like a different kind of film?`,
-          `${name ? `${name}، بناءً` : "بناءً"} على حجوزاتك السابقة، إليك بعض الأفلام التي قد تعجبك: ${joinList(
-            movieItems.slice(0, 3).map((m) => m.title),
-            "ar",
-          )}.${fnbItems.length ? ` وطلبك المعتاد ${fnbItems[0]!.name as string} متوفر.` : ""} أيها يناسبك، أم تفضل نوعاً آخر؟`,
-        )
-      : t(
-          ctx.lang,
-          `Popular right now${wantLang ? ` in ${wantLang}` : ""}: ${joinList(movieItems.slice(0, 3).map((m) => m.titleEn))}. Tell me what you like — action, family, Bollywood — and I'll narrow it down.`,
-          `الأكثر رواجاً الآن: ${joinList(
-            movieItems.slice(0, 3).map((m) => m.title),
-            "ar",
-          )}. أخبرني بما تحب وسأقترح لك.`,
+      const cinemaId = requestedCinema ?? preferredCinema ?? cinemaIds[0];
+      if (cinemaId) {
+        const { ConcessionTabs } = await ctx.vista.concessions(cinemaId);
+        const items = ConcessionTabs.flatMap((tab) =>
+          tab.Items.map((i) => ({
+            id: i.Id,
+            name: i.Description,
+            nameAlt: i.DescriptionAlt,
+            priceCents: i.PriceInCents,
+            imageUrl: i.ImageUrl,
+            dietaryTags: i.DietaryTags ?? [],
+            isBestSeller: !!i.IsBestSeller,
+            experiences: i.Experiences ?? [],
+            tab: tab.Name,
+          })),
         );
+        fnbItems = recommendConcessions(
+          items,
+          profile,
+          c?.preferences ?? {},
+          profile.summary.experiences[0],
+          3,
+        ).map((x) => ({
+          itemId: x.item.id,
+          name: ctx.lang === "ar" ? x.item.nameAlt || x.item.name : x.item.name,
+          priceCents: x.item.priceCents,
+          price: money(x.item.priceCents, ctx.lang),
+          imageUrl: x.item.imageUrl,
+          tab: x.item.tab,
+          why: profile.items.get(x.item.id) ? t(ctx.lang, "your usual", "طلبك المعتاد") : "",
+        }));
+      }
+    }
+    const first = movieItems[0];
+    const speech =
+      input.kind === "fnb"
+        ? t(ctx.lang, "Snacks? Here are a few easy picks.", "سناكس؟ هذه بعض الخيارات.")
+        : first
+          ? isAlternative
+            ? t(
+                ctx.lang,
+                `There isn't an available show ${outsideWindow ? "in that time window" : "at that exact time"}. The nearest option is ${first.titleEn} at ${first.suggestedSession.cinemaName}, ${first.suggestedSession.time}. Would that work?`,
+                `لا يوجد عرض متاح ${outsideWindow ? "ضمن الفترة المطلوبة" : "في الوقت المطلوب تماماً"}. أقرب خيار هو ${first.title} في ${first.suggestedSession.cinemaName} الساعة ${first.suggestedSession.time}. هل يناسبك؟`,
+              )
+            : t(
+                ctx.lang,
+                `${first.titleEn} at ${first.suggestedSession.cinemaName} has a ${first.suggestedSession.time} that works.`,
+                `${first.title} في ${first.suggestedSession.cinemaName} الساعة ${first.suggestedSession.time} يناسبك.`,
+              )
+          : t(
+              ctx.lang,
+              `I couldn't find an available${wantLang ? ` ${wantLang}` : ""} show${input.timeFrom || input.timeTo ? " in that time window" : ""} on ${date}. Want another time or cinema?`,
+              "ما لقيت عرضاً متاحاً بهذه الخيارات. نجرّب وقتاً أو سينما ثانية؟",
+            );
     return ok(
-      { movies: movieItems, fnb: fnbItems, profile: profile.summary, personalised: !!c },
-      speech,
       {
-        type: "recommendation",
-        title: t(ctx.lang, name ? `For you, ${name}` : "Recommended", name ? `لك يا ${name}` : "مقترحات"),
-        items: [...movieItems, ...fnbItems],
+        movies: movieItems,
+        fnb: fnbItems,
+        profile: { ...profile.summary, inferred },
+        personalised: !!c,
+        date,
+        isAlternative,
+        alternativeReason: isAlternative
+          ? outsideWindow
+            ? "outside_requested_time_window"
+            : "different_requested_time"
+          : undefined,
+        requestedTime: input.time,
+        requestedTimeFrom: input.timeFrom,
+        requestedTimeTo: input.timeTo,
       },
+      speech,
+      { type: "recommendation", title: t(ctx.lang, "For you", "لك"), items: [...movieItems, ...fnbItems] },
       { name: "personalisation", status: "completed" },
     );
   },

@@ -5,7 +5,7 @@
  *  /webhooks/*            ElevenLabs post-call, Genesys outbound
  *  /reporting/*           dashboard data
  */
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   type AppContext,
   Catalog,
@@ -16,6 +16,8 @@ import {
   ensureConversation,
   eventsSince,
   ledger,
+  relinkConversationWork,
+  resolveLinkedConversation,
   runTool,
   updateConversation,
 } from "@voxi/concierge-core";
@@ -29,7 +31,7 @@ import {
 } from "@voxi/contracts";
 import { schema as S, nowLocalIso, prefixedId } from "@voxi/db";
 import { VistaClientError } from "@voxi/vista-client";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
@@ -46,11 +48,11 @@ export function greetings(firstName?: string | null) {
   const name = (firstName ?? "").trim();
   return {
     greetingEn: name
-      ? `Hi ${name}, welcome back. How can I help you today?`
-      : "Hi there, welcome to VOX Cinemas. How can I help you today?",
+      ? `Hi ${name}, what are you in the mood to watch?`
+      : "Hi, welcome to VOX Cinemas. What are you in the mood to watch?",
     greetingAr: name
-      ? `أهلاً ${name}، سعيد بعودتك. كيف أساعدك اليوم؟`
-      : "أهلاً بك في فوكس سينما. كيف أساعدك اليوم؟",
+      ? `أهلاً ${name}، ما نوع الأفلام التي تود مشاهدتها اليوم؟`
+      : "أهلاً بك في فوكس سينما. ما نوع الأفلام التي تود مشاهدتها اليوم؟",
     firstName: name,
   };
 }
@@ -59,6 +61,21 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
   const api = new Hono();
   const catalog = new Catalog(app.vista);
   const writeWaitMs = opts.writeWaitMs ?? 4000;
+  const ownsOrder = async (conversation: typeof S.conversations.$inferSelect, userSessionId: string) => {
+    const metadata = conversation.metadata ?? {};
+    if (metadata.activeOrder === userSessionId || metadata.fnbOrder === userSessionId) return true;
+    if (!conversation.isLoggedIn || !conversation.customerId) return false;
+    const order = await app.vista.getOrder(userSessionId).catch(() => null);
+    return order?.Order?.Customer?.ID === conversation.customerId;
+  };
+  const actionReply = (row: typeof S.actions.$inferSelect) => ({
+    ok: ["succeeded", "queued", "running"].includes(row.status),
+    action: ledger.toRef(row),
+    speech: typeof row.result?.speech === "string" ? row.result.speech : undefined,
+    ui: row.status === "succeeded" ? row.result?.ui : undefined,
+    data: row.status === "succeeded" ? row.result : undefined,
+    error: row.error?.message,
+  });
   if (opts.logging) api.use("*", logger());
   api.use(
     "*",
@@ -151,7 +168,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         },
         400,
       );
-    const { conversationId, language, channel, modality, customerId, memberId, lat, lng } = ctxParsed.data;
+    const { conversationId, language, channel, modality, lat, lng } = ctxParsed.data;
     const input =
       (body.input as Record<string, unknown> | undefined) ??
       Object.fromEntries(
@@ -169,14 +186,28 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       );
     const conversation = await ensureConversation(app.db, {
       conversationId,
-      language,
-      channel,
-      modality,
-      customerId,
-      memberId,
+      // Schema defaults apply only when creating a conversation. Omitted tool
+      // context must not replace the widget's saved language or voice modality.
+      language: isLang(body.language) ? language : undefined,
+      channel: str(body.channel) ? channel : undefined,
+      modality: str(body.modality) ? modality : undefined,
       lat,
       lng,
     });
+    // Identity belongs to the authenticated widget session, never model-supplied IDs.
+    if ("customerId" in input) input.customerId = conversation.customerId ?? undefined;
+    if ("memberId" in input) input.memberId = conversation.memberId ?? undefined;
+    input.password = undefined;
+    input.pin = undefined;
+    if (
+      typeof input.userSessionId === "string" &&
+      input.userSessionId &&
+      !(await ownsOrder(conversation, input.userSessionId))
+    )
+      return c.json({
+        ok: false,
+        error: { code: "UNAUTHORIZED", message: "That order isn't available in this session." },
+      });
     const lang = isLang(input.language) ? input.language : (conversation.language as "en" | "ar");
     const toolCtx: ToolCtx = {
       ...app,
@@ -207,6 +238,20 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         },
       };
     });
+    if (
+      name === "login_customer" &&
+      result.error?.code === "LOGIN_REQUIRED" &&
+      result.data?.action === "open_sign_in"
+    )
+      await appendEvent(
+        app.db,
+        app.events,
+        conversationId,
+        "ui.render",
+        { ui: { type: "login", items: [] }, tool: name },
+        "agent",
+        Number(conversation.metadata?.widgetAuthGeneration ?? 0),
+      );
     // write tools: wait briefly for the worker so the agent usually gets the outcome in one call
     const actionRef = (result.data as { action?: { actionId: string; status: string } } | undefined)?.action;
     if (result.ok && actionRef && TOOL_REGISTRY[name].kind === "write" && writeWaitMs > 0) {
@@ -237,6 +282,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         "ui.render",
         { ui: result.ui, tool: name },
         "agent",
+        Number(conversation.metadata?.widgetAuthGeneration ?? 0),
       );
     if (result.journey)
       await appendEvent(app.db, null, conversationId, "journey", { ...result.journey, tool: name }, "system");
@@ -275,23 +321,50 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
   });
 
   // ---------- widget ----------
-  const widgetToken = async (payload: {
-    conversationId: string;
-    customerId?: string;
-    memberId?: string;
-    language?: string;
-  }) =>
-    new SignJWT(payload)
+  const widgetToken = async (
+    payload: {
+      conversationId: string;
+      customerId?: string;
+      memberId?: string;
+      language?: string;
+    },
+    authenticatedKey?: string,
+  ) => {
+    const [row] = await app.db
+      .select()
+      .from(S.conversations)
+      .where(eq(S.conversations.id, payload.conversationId));
+    if (!row) throw new Error("Session not found");
+    let sessionKey = authenticatedKey ?? (row.metadata?.widgetSessionKey as string | undefined);
+    if (!sessionKey) {
+      const generated = randomUUID();
+      const [updated] = await app.db
+        .update(S.conversations)
+        .set({
+          metadata: sql`coalesce(${S.conversations.metadata}, '{}'::jsonb) || jsonb_build_object('widgetSessionKey', coalesce(${S.conversations.metadata}->>'widgetSessionKey', ${generated}))`,
+        })
+        .where(eq(S.conversations.id, row.id))
+        .returning();
+      sessionKey = updated!.metadata!.widgetSessionKey as string;
+    }
+    return new SignJWT({ ...payload, sessionKey })
       .setProtectedHeader({ alg: "HS256" })
       .setIssuedAt()
       .setExpirationTime("6h")
       .sign(new TextEncoder().encode(app.cfg.widgetJwtSecret));
-  const verifyWidget = async (c: Context): Promise<{ conversationId: string } | null> => {
+  };
+  const verifyWidget = async (c: Context): Promise<{ conversationId: string; sessionKey: string } | null> => {
     const tok = c.req.header("authorization")?.replace(/^Bearer\s+/i, "") ?? c.req.query("token");
     if (!tok) return null;
     try {
       const { payload } = await jwtVerify(tok, new TextEncoder().encode(app.cfg.widgetJwtSecret));
-      return payload as { conversationId: string };
+      if (typeof payload.conversationId !== "string" || typeof payload.sessionKey !== "string") return null;
+      const [row] = await app.db
+        .select()
+        .from(S.conversations)
+        .where(eq(S.conversations.id, payload.conversationId));
+      if (!row || row.metadata?.widgetSessionKey !== payload.sessionKey) return null;
+      return { conversationId: payload.conversationId, sessionKey: payload.sessionKey };
     } catch {
       return null;
     }
@@ -308,23 +381,33 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       lat?: number;
       lng?: number;
     };
+    if (body.customerId || body.memberId)
+      return c.json({ ok: false, error: "Sign in to attach an account." }, 400);
+    let authenticatedKey: string | undefined;
+    if (body.conversationId) {
+      const existing = await verifyWidget(c);
+      if (!existing || existing.conversationId !== body.conversationId)
+        return c.json({ ok: false, error: "This conversation cannot be resumed. Start a new one." }, 401);
+      authenticatedKey = existing.sessionKey;
+    }
     const conversationId = body.conversationId ?? prefixedId("conv", 12);
     const conversation = await ensureConversation(app.db, {
       conversationId,
-      language: body.language ?? "en",
-      channel: body.channel ?? "web",
-      modality: body.modality ?? "text",
-      customerId: body.customerId,
-      memberId: body.memberId,
+      language: body.language,
+      channel: body.channel,
+      modality: body.modality,
       lat: body.lat,
       lng: body.lng,
     });
-    const token = await widgetToken({
-      conversationId,
-      customerId: conversation.customerId ?? undefined,
-      memberId: conversation.memberId ?? undefined,
-      language: conversation.language,
-    });
+    const token = await widgetToken(
+      {
+        conversationId,
+        customerId: conversation.customerId ?? undefined,
+        memberId: conversation.memberId ?? undefined,
+        language: conversation.language,
+      },
+      authenticatedKey,
+    );
     return c.json({
       conversationId,
       token,
@@ -349,40 +432,82 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
     });
   });
 
-  /** Page / widget sign-in (member id, email or phone + PIN) — same check as the agent's login_customer tool. */
+  /** Credentials are handled only by this authenticated form endpoint, never by the conversational agent. */
   api.post("/widget/login", async (c) => {
     const w = await verifyWidget(c);
     if (!w) return c.json({ error: "unauthorized" }, 401);
-    const body = (await c.req.json().catch(() => ({}))) as { identifier?: string; pin?: string };
-    const id = String(body.identifier ?? "").trim();
-    if (!id || !body.pin)
-      return c.json(
-        { ok: false, error: "Enter your email, mobile number or SHARE member id and your PIN." },
-        400,
-      );
-    const req = id.includes("@")
-      ? { Email: id }
-      : /^SHR/i.test(id)
-        ? { MemberId: id.toUpperCase() }
-        : { Phone: id };
+    const body = (await c.req.json().catch(() => ({}))) as { email?: string; password?: string };
+    const email = String(body.email ?? "")
+      .trim()
+      .toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !body.password || body.password.length > 256)
+      return c.json({ ok: false, error: "Enter your email and password." }, 400);
     try {
-      const r = await app.vista.validateMember({ ...req, Pin: String(body.pin) });
+      const r = await app.vista.validateMember({ Email: email, Password: String(body.password) });
+      // Legacy mock versions accept an email without checking Password. During a
+      // rolling deployment, never treat that response as password authentication.
+      if (
+        r.Authentication?.Method !== "password" ||
+        r.Authentication.Verified !== true ||
+        r.Authentication.Version !== 1
+      )
+        return c.json({ ok: false, error: "Sign-in is unavailable right now. Please try again." }, 503);
       const m = r.Member;
-      await updateConversation(app.db, w.conversationId, {
-        customerId: m.CustomerId,
-        memberId: m.MemberId,
-        isLoggedIn: true,
-      });
       const cust = await app.vista.customer(m.CustomerId);
-      const conv = (
-        await app.db.select().from(S.conversations).where(eq(S.conversations.id, w.conversationId))
-      )[0];
-      const token = await widgetToken({
-        conversationId: w.conversationId,
-        customerId: m.CustomerId,
-        memberId: m.MemberId,
-        language: conv?.language,
+      const conv = await app.db.transaction(async (tx) => {
+        const [previous] = await tx
+          .select()
+          .from(S.conversations)
+          .where(eq(S.conversations.id, w.conversationId))
+          .for("update");
+        if (!previous || previous.metadata?.widgetSessionKey !== w.sessionKey) return null;
+        const metadata: Record<string, unknown> = {
+          ...(previous.metadata ?? {}),
+          widgetSessionKey: randomUUID(),
+        };
+        const accountChanged = !!previous.customerId && previous.customerId !== m.CustomerId;
+        if (accountChanged) {
+          clearBookingMetadata(metadata);
+          metadata.widgetAuthGeneration = Number(previous.metadata?.widgetAuthGeneration ?? 0) + 1;
+          const [last] = await tx
+            .select({ seq: sql<number>`coalesce(max(${S.conversationEvents.seq}), 0)` })
+            .from(S.conversationEvents)
+            .where(eq(S.conversationEvents.conversationId, w.conversationId));
+          metadata.widgetEventAfterSeq = Number(last?.seq ?? 0);
+          await tx
+            .update(S.transfers)
+            .set({ status: "ended", endedAt: new Date() })
+            .where(
+              and(
+                eq(S.transfers.conversationId, w.conversationId),
+                inArray(S.transfers.status, ["requested", "queued", "connected"]),
+              ),
+            );
+        }
+        const [updated] = await tx
+          .update(S.conversations)
+          .set({
+            customerId: m.CustomerId,
+            memberId: m.MemberId,
+            isLoggedIn: true,
+            metadata,
+            ...(accountChanged ? { mode: "bot", status: "active", outcome: null } : {}),
+          })
+          .where(eq(S.conversations.id, w.conversationId))
+          .returning();
+        return updated!;
       });
+      if (!conv)
+        return c.json({ ok: false, error: "Your session changed. Please try signing in again." }, 401);
+      const token = await widgetToken(
+        {
+          conversationId: w.conversationId,
+          customerId: m.CustomerId,
+          memberId: m.MemberId ?? undefined,
+          language: conv?.language,
+        },
+        conv.metadata!.widgetSessionKey as string,
+      );
       return c.json({
         ok: true,
         token,
@@ -390,10 +515,13 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
           id: cust.id,
           firstName: cust.firstName,
           lastName: cust.lastName,
+          email: cust.email,
           memberId: cust.memberId,
           tier: cust.tier,
           sharePoints: cust.sharePoints,
           voxCreditCents: cust.voxRewardsCents,
+          profile: cust.profile,
+          savedCards: publicSavedCards(cust.savedCards),
         },
         dynamicVariables: {
           conversationId: w.conversationId,
@@ -410,28 +538,92 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         {
           ok: false,
           error:
-            code === 401
-              ? "That PIN doesn't match. Please try again."
-              : code === 404
-                ? "We couldn't find an account with those details."
-                : "Sign-in is unavailable right now. Please try again.",
+            code === 401 || code === 404
+              ? "That email and password don't match. Try again."
+              : "Sign-in is unavailable right now. Please try again.",
         },
-        code === 404 ? 404 : 401,
+        401,
       );
     }
+  });
+  api.get("/widget/profile", async (c) => {
+    const w = await verifyWidget(c);
+    if (!w) return c.json({ error: "unauthorized" }, 401);
+    const [conv] = await app.db
+      .select()
+      .from(S.conversations)
+      .where(eq(S.conversations.id, w.conversationId));
+    if (!conv?.isLoggedIn || !conv.customerId) return c.json({ error: "Sign in to view your profile." }, 401);
+    const [cust, history] = await Promise.all([
+      app.vista.customer(conv.customerId),
+      app.vista.customerHistory(conv.customerId),
+    ]);
+    return c.json({
+      customer: {
+        id: cust.id,
+        firstName: cust.firstName,
+        lastName: cust.lastName,
+        email: cust.email,
+        memberId: cust.memberId,
+        tier: cust.tier,
+        sharePoints: cust.sharePoints,
+        voxCreditCents: cust.voxRewardsCents,
+        savedCards: publicSavedCards(cust.savedCards),
+      },
+      profile: cust.profile,
+      history: history.history,
+    });
   });
   api.post("/widget/logout", async (c) => {
     const w = await verifyWidget(c);
     if (!w) return c.json({ error: "unauthorized" }, 401);
-    await updateConversation(app.db, w.conversationId, {
-      customerId: null,
-      memberId: null,
-      isLoggedIn: false,
+    const conv = await app.db.transaction(async (tx) => {
+      const [previous] = await tx
+        .select()
+        .from(S.conversations)
+        .where(eq(S.conversations.id, w.conversationId))
+        .for("update");
+      if (!previous || previous.metadata?.widgetSessionKey !== w.sessionKey) return null;
+      const metadata: Record<string, unknown> = {
+        ...(previous.metadata ?? {}),
+        widgetSessionKey: randomUUID(),
+      };
+      clearBookingMetadata(metadata);
+      metadata.widgetAuthGeneration = Number(previous.metadata?.widgetAuthGeneration ?? 0) + 1;
+      const [last] = await tx
+        .select({ seq: sql<number>`coalesce(max(${S.conversationEvents.seq}), 0)` })
+        .from(S.conversationEvents)
+        .where(eq(S.conversationEvents.conversationId, w.conversationId));
+      metadata.widgetEventAfterSeq = Number(last?.seq ?? 0);
+      await tx
+        .update(S.transfers)
+        .set({ status: "ended", endedAt: new Date() })
+        .where(
+          and(
+            eq(S.transfers.conversationId, w.conversationId),
+            inArray(S.transfers.status, ["requested", "queued", "connected"]),
+          ),
+        );
+      const [updated] = await tx
+        .update(S.conversations)
+        .set({
+          customerId: null,
+          memberId: null,
+          isLoggedIn: false,
+          metadata,
+          mode: "bot",
+          status: "active",
+          outcome: null,
+        })
+        .where(eq(S.conversations.id, w.conversationId))
+        .returning();
+      return updated!;
     });
-    const conv = (
-      await app.db.select().from(S.conversations).where(eq(S.conversations.id, w.conversationId))
-    )[0];
-    const token = await widgetToken({ conversationId: w.conversationId, language: conv?.language });
+    if (!conv) return c.json({ ok: false, error: "Your session changed. Please try again." }, 401);
+    const token = await widgetToken(
+      { conversationId: w.conversationId, language: conv.language },
+      conv.metadata!.widgetSessionKey as string,
+    );
     return c.json({
       ok: true,
       token,
@@ -450,67 +642,154 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
   api.post("/widget/link", async (c) => {
     const w = await verifyWidget(c);
     if (!w) return c.json({ error: "unauthorized" }, 401);
-    const { elevenLabsConversationId } = (await c.req.json()) as { elevenLabsConversationId: string };
-    if (!elevenLabsConversationId || elevenLabsConversationId === w.conversationId)
-      return c.json({ ok: true });
-    // Move state to the ElevenLabs id: create the target conversation and re-point events/actions
-    const src = (
-      await app.db.select().from(S.conversations).where(eq(S.conversations.id, w.conversationId))
-    )[0];
-    await ensureConversation(app.db, {
-      conversationId: elevenLabsConversationId,
-      language: (src?.language as "en" | "ar") ?? "en",
-      channel: src?.channel ?? "web",
-      modality: src?.modality as "voice" | "text" | "mixed",
-      customerId: src?.customerId ?? undefined,
-      memberId: src?.memberId ?? undefined,
-      lat: src?.geo?.lat,
-      lng: src?.geo?.lng,
-    });
-    await app.db
-      .update(S.conversations)
-      .set({
-        metadata: { ...(src?.metadata ?? {}), widgetConversationId: w.conversationId },
-        geo: src?.geo ?? null,
-        customerId: src?.customerId ?? null,
-        memberId: src?.memberId ?? null,
-        isLoggedIn: src?.isLoggedIn ?? false,
+    const { elevenLabsConversationId } = (await c.req.json().catch(() => ({}))) as {
+      elevenLabsConversationId?: string;
+    };
+    if (
+      typeof elevenLabsConversationId !== "string" ||
+      !/^[A-Za-z0-9_-]{6,64}$/.test(elevenLabsConversationId)
+    )
+      return c.json({ ok: false, error: "Invalid conversation reference." }, 400);
+    if (elevenLabsConversationId === w.conversationId) return c.json({ ok: true });
+    const src = await app.db
+      .transaction(async (tx) => {
+        const [source] = await tx
+          .select()
+          .from(S.conversations)
+          .where(eq(S.conversations.id, w.conversationId))
+          .for("update");
+        if (!source || source.metadata?.widgetSessionKey !== w.sessionKey) return null;
+        await tx
+          .insert(S.conversations)
+          .values({
+            id: elevenLabsConversationId,
+            language: source.language,
+            channel: source.channel,
+            modality: source.modality,
+          })
+          .onConflictDoNothing();
+        const [target] = await tx
+          .select()
+          .from(S.conversations)
+          .where(eq(S.conversations.id, elevenLabsConversationId))
+          .for("update");
+        const targetKey = target?.metadata?.widgetSessionKey;
+        if (
+          !target ||
+          (targetKey && targetKey !== source.metadata?.widgetSessionKey) ||
+          (target.customerId && target.customerId !== source.customerId)
+        )
+          return null;
+        await relinkConversationWork(tx, source.id, elevenLabsConversationId);
+        await tx
+          .update(S.conversations)
+          .set({
+            metadata: {
+              ...(target.metadata ?? {}),
+              ...(source.metadata ?? {}),
+              widgetConversationId: w.conversationId,
+              widgetEventAfterSeq: Number(target.metadata?.widgetEventAfterSeq ?? 0),
+              linkedConversationId: undefined,
+            },
+            geo: source.geo,
+            customerId: source.customerId,
+            memberId: source.memberId,
+            isLoggedIn: source.isLoggedIn,
+            mode: source.mode === "human" ? source.mode : target.mode,
+            status:
+              source.mode === "human"
+                ? source.status
+                : target.mode === "human"
+                  ? target.status
+                  : source.status,
+            outcome: source.outcome ?? target.outcome,
+            topics: [...new Set([...(target.topics ?? []), ...(source.topics ?? [])])],
+            journeys: [...(target.journeys ?? []), ...(source.journeys ?? [])],
+          })
+          .where(eq(S.conversations.id, elevenLabsConversationId));
+        // The prior token must not retain access to a stale authenticated copy after linking.
+        await tx
+          .update(S.conversations)
+          .set({
+            metadata: {
+              ...(source.metadata ?? {}),
+              widgetSessionKey: randomUUID(),
+              linkedConversationId: elevenLabsConversationId,
+            },
+          })
+          .where(eq(S.conversations.id, source.id));
+        return source;
       })
-      .where(eq(S.conversations.id, elevenLabsConversationId));
-    const token = await widgetToken({
-      conversationId: elevenLabsConversationId,
-      customerId: src?.customerId ?? undefined,
-      memberId: src?.memberId ?? undefined,
-      language: src?.language,
-    });
+      .catch((error) => {
+        app.log.warn(
+          { error: error instanceof Error ? error.message : "Link failed", conversationId: w.conversationId },
+          "conversation relink refused",
+        );
+        return null;
+      });
+    if (!src) return c.json({ ok: false, error: "That conversation belongs to another session." }, 409);
+    const token = await widgetToken(
+      {
+        conversationId: elevenLabsConversationId,
+        customerId: src.customerId ?? undefined,
+        memberId: src.memberId ?? undefined,
+        language: src.language,
+      },
+      w.sessionKey,
+    );
     return c.json({ ok: true, conversationId: elevenLabsConversationId, token });
   });
 
   api.get("/widget/events", async (c) => {
     const w = await verifyWidget(c);
     if (!w) return c.json({ error: "unauthorized" }, 401);
-    const after = Number(c.req.query("after") ?? 0);
+    const [owner] = await app.db
+      .select()
+      .from(S.conversations)
+      .where(eq(S.conversations.id, w.conversationId));
+    if (owner?.metadata?.widgetSessionKey !== w.sessionKey) return c.json({ error: "unauthorized" }, 401);
+    const requestedAfter = Number(c.req.query("after") ?? 0);
+    const after = Math.max(
+      Number.isFinite(requestedAfter) ? requestedAfter : 0,
+      Number(owner.metadata.widgetEventAfterSeq ?? 0),
+    );
     return streamSSE(c, async (stream) => {
       let last = after;
-      const backlog = await eventsSince(app.db, w.conversationId, after);
-      for (const e of backlog) {
-        const ev = (await import("@voxi/concierge-core")).toWidgetEvent(e.type, e.seq, e.payload);
-        if (ev) {
-          await stream.writeSSE({ id: String(e.seq), event: ev.type, data: JSON.stringify(ev) });
-          last = e.seq;
-        }
-      }
       let open = true;
-      const unsub = app.events.subscribe(w.conversationId, (ev) => {
+      let unsub = () => {};
+      const close = async () => {
+        open = false;
+        unsub();
+        await stream.close();
+      };
+      const deliver = async (ev: { seq: number; type: string }) => {
         if (!open || ev.seq <= last) return;
+        if (!(await verifyWidget(c))) {
+          await close();
+          return;
+        }
         last = ev.seq;
-        void stream.writeSSE({ id: String(ev.seq), event: ev.type, data: JSON.stringify(ev) });
-      });
+        await stream.writeSSE({ id: String(ev.seq), event: ev.type, data: JSON.stringify(ev) });
+      };
       stream.onAbort(() => {
         open = false;
         unsub();
       });
+      const backlog = await eventsSince(app.db, w.conversationId, after);
+      for (const e of backlog) {
+        const ev = (await import("@voxi/concierge-core")).toWidgetEvent(e.type, e.seq, e.payload, e.id);
+        if (ev) await deliver(ev);
+      }
+      let delivery = Promise.resolve();
+      if (!open) return;
+      unsub = app.events.subscribe(w.conversationId, (ev) => {
+        delivery = delivery.then(() => deliver(ev)).catch(close);
+      });
       while (open) {
+        if (!(await verifyWidget(c))) {
+          await close();
+          break;
+        }
         await stream.writeSSE({
           event: "heartbeat",
           data: JSON.stringify({ type: "heartbeat", seq: last, at: new Date().toISOString() }),
@@ -534,22 +813,82 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         .orderBy(desc(S.transfers.createdAt))
         .limit(1)
     )[0];
-    return c.json({ conversation: conv, transfer });
+    return c.json({
+      conversation: conv
+        ? {
+            id: conv.id,
+            language: conv.language,
+            mode: conv.mode,
+            isLoggedIn: conv.isLoggedIn,
+            customerId: conv.customerId,
+            memberId: conv.memberId,
+            metadata: safeBookingMetadata(conv.metadata),
+          }
+        : null,
+      transfer: transfer
+        ? { id: transfer.id, status: transfer.status, agentName: transfer.agentName }
+        : undefined,
+    });
   });
 
   api.post("/widget/command", async (c) => {
     const w = await verifyWidget(c);
     if (!w) return c.json({ error: "unauthorized" }, 401);
-    const parsed = WidgetCommand.safeParse(await c.req.json());
+    const parsed = WidgetCommand.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: "invalid command", issues: parsed.error.issues }, 400);
     const cmd = parsed.data;
-    const conv = await ensureConversation(app.db, {
-      conversationId: w.conversationId,
-      language: "en",
-      channel: "web",
-      modality: "text",
-    });
+    const [conv] = await app.db
+      .select()
+      .from(S.conversations)
+      .where(eq(S.conversations.id, w.conversationId));
+    if (!conv || conv.metadata?.widgetSessionKey !== w.sessionKey)
+      return c.json({ ok: false, error: "Session not found." }, 401);
+    if ("userSessionId" in cmd && cmd.userSessionId && !(await ownsOrder(conv, cmd.userSessionId)))
+      return c.json({ ok: false, error: "That order isn't available in this session." }, 403);
+    const widgetTool = async (name: ToolName, input: Record<string, unknown>) => {
+      const toolCtx: ToolCtx = {
+        ...app,
+        catalog,
+        conversation: conv,
+        lang: conv.language as "en" | "ar",
+        nowLocal: nowLocalIso(app.cfg.timeZone),
+        toolCallId: prefixedId("tc", 8),
+        correlationId: prefixedId("corr", 8),
+      };
+      const result = await runTool(name, toolCtx, input);
+      if (result.ui)
+        await appendEvent(
+          app.db,
+          app.events,
+          conv.id,
+          "ui.render",
+          { ui: result.ui, tool: name },
+          "user",
+          Number(conv.metadata?.widgetAuthGeneration ?? 0),
+        );
+      if (result.journey)
+        await appendEvent(app.db, null, conv.id, "journey", { ...result.journey, tool: name }, "user");
+      return {
+        ok: result.ok,
+        speech: result.speech,
+        data: result.data,
+        ui: result.ui,
+        error: result.ok ? undefined : result.error?.message,
+      };
+    };
     switch (cmd.type) {
+      case "language": {
+        await updateConversation(app.db, conv.id, { language: cmd.language });
+        await appendEvent(
+          app.db,
+          app.events,
+          conv.id,
+          "language.changed",
+          { language: cmd.language },
+          "user",
+        );
+        return c.json({ ok: true, data: { language: cmd.language } });
+      }
       case "location": {
         await updateConversation(app.db, conv.id, {
           geo: { lat: cmd.lat, lng: cmd.lng, accuracyM: cmd.accuracyM, label: cmd.label, source: cmd.source },
@@ -559,6 +898,15 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       case "location.clear": {
         await updateConversation(app.db, conv.id, { geo: null });
         return c.json({ ok: true });
+      }
+      case "booking.select": {
+        return c.json(
+          await widgetTool("quick_book", {
+            sessionKey: cmd.sessionKey,
+            tickets: cmd.tickets,
+            idempotencyKey: cmd.idempotencyKey,
+          }),
+        );
       }
       case "seat.select": {
         const { action } = await ledger.enqueue(app.db, app.events, {
@@ -573,10 +921,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
           requestedBy: "widget",
         });
         const row = await ledger.waitFor(app.db, action.id, writeWaitMs);
-        return c.json({
-          ok: row?.status === "succeeded",
-          action: row ? ledger.toRef(row) : ledger.toRef(action),
-        });
+        return c.json(actionReply(row ?? action));
       }
       case "payment.token": {
         const { consumeConfirmation } = await import("@voxi/concierge-core");
@@ -594,22 +939,27 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
             idempotencyKey: ledger.idem(conv.id, `pay:${cmd.confirmationId}`),
             payload: {
               ...conf.summary,
-              ...(cmd.customer?.email ? { customer: cmd.customer } : {}),
+              ...(!conv.isLoggedIn && !conf.summary.customerId && cmd.customer?.email
+                ? { customer: cmd.customer }
+                : {}),
               paymentToken: cmd.token,
               confirmationId: conf.id,
             },
             requestedBy: "widget",
           });
           const row = await ledger.waitFor(app.db, action.id, writeWaitMs + 2000);
-          return c.json({
-            ok: row?.status === "succeeded",
-            action: row ? ledger.toRef(row) : ledger.toRef(action),
-          });
+          return c.json(actionReply(row ?? action));
         } catch (e) {
           // already consumed → either the agent path ran it, or an earlier attempt failed (declined card,
           // wrong bank card for an offer). A failed attempt may be retried with a different card.
           const existing = await ledger.findByKey(app.db, ledger.idem(conv.id, `pay:${cmd.confirmationId}`));
-          if (existing && existing.status === "failed" && cmd.token) {
+          if (
+            existing &&
+            existing.resourceKey === `order:${cmd.userSessionId}` &&
+            existing.status === "failed" &&
+            cmd.token &&
+            existing.input.paymentToken !== cmd.token
+          ) {
             const { action } = await ledger.enqueue(app.db, app.events, {
               conversationId: conv.id,
               type: "pay_order",
@@ -619,13 +969,10 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
               requestedBy: "widget",
             });
             const row = await ledger.waitFor(app.db, action.id, writeWaitMs + 2000);
-            return c.json({
-              ok: row?.status === "succeeded",
-              action: row ? ledger.toRef(row) : ledger.toRef(action),
-            });
+            return c.json(actionReply(row ?? action));
           }
-          if (existing)
-            return c.json({ ok: existing.status === "succeeded", action: ledger.toRef(existing) });
+          if (existing && existing.resourceKey === `order:${cmd.userSessionId}`)
+            return c.json(actionReply(existing));
           return c.json({ ok: false, error: (e as Error).message }, 409);
         }
       }
@@ -669,25 +1016,14 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       }
       case "order.recover":
       case "order.state": {
-        const toolCtx: ToolCtx = {
-          ...app,
-          catalog,
-          conversation: conv,
-          lang: conv.language as "en" | "ar",
-          nowLocal: nowLocalIso(app.cfg.timeZone),
-          toolCallId: prefixedId("tc", 8),
-          correlationId: prefixedId("corr", 8),
-        };
-        const r = await runTool(cmd.type === "order.recover" ? "recover_order" : "resume_order", toolCtx, {
-          userSessionId: cmd.userSessionId,
-        });
-        if (r.ui) await appendEvent(app.db, app.events, conv.id, "ui.render", { ui: r.ui });
-        return c.json({
-          ok: r.ok,
-          speech: r.speech,
-          data: r.data,
-          error: r.ok ? undefined : r.error?.message,
-        });
+        return c.json(
+          await widgetTool(cmd.type === "order.recover" ? "recover_order" : "resume_order", {
+            userSessionId: cmd.userSessionId,
+            ...(cmd.type === "order.recover"
+              ? { confirmed: cmd.confirmed, idempotencyKey: cmd.idempotencyKey }
+              : {}),
+          }),
+        );
       }
       case "seat.plan": {
         // run the read tool in-process so the widget can draw the map without a round-trip through the agent
@@ -742,18 +1078,24 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       events?: { eventType: string }[];
     };
     const extId = body.channel?.to?.id ?? body.channel?.from?.id;
+    const liveConversation = extId ? await resolveLinkedConversation(app.db, extId) : null;
     // Outbound messages from the agent desk carry the customer id we set (= conversationId)
     const tr = extId
       ? (
           await app.db
             .select()
             .from(S.transfers)
-            .where(eq(S.transfers.conversationId, extId))
+            .where(
+              or(
+                eq(S.transfers.externalConversationId, extId),
+                eq(S.transfers.conversationId, liveConversation?.id ?? extId),
+              ),
+            )
             .orderBy(desc(S.transfers.createdAt))
             .limit(1)
         )[0]
       : undefined;
-    if (!tr) return c.json({ ok: true, ignored: true });
+    if (!tr || ["ended", "failed"].includes(tr.status)) return c.json({ ok: true, ignored: true });
     if (body.type === "Text" && body.text) {
       const agentName = body.channel?.from?.nickname ?? tr.agentName ?? "Agent";
       if (tr.status !== "connected")
@@ -836,7 +1178,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
     const res = await api.request(`/tools/${name}`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-voxi-key": app.cfg.toolHmacSecret },
-      body: JSON.stringify({ conversationId: w.conversationId, ...input }),
+      body: JSON.stringify({ ...input, conversationId: w.conversationId }),
     });
     return new Response(await res.text(), {
       status: res.status,
@@ -881,9 +1223,63 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
   return root;
 }
 
-function redact(input: Record<string, unknown>) {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(input))
-    out[k] = /email|phone|pin|token|card/i.test(k) && typeof v === "string" ? `${v.slice(0, 2)}…` : v;
-  return out;
+export function redact(input: unknown): unknown {
+  if (Array.isArray(input)) return input.map(redact);
+  if (!input || typeof input !== "object") return input;
+  return Object.fromEntries(
+    Object.entries(input).map(([key, value]) => [
+      key,
+      /password|passwd|pin|token|secret|authorization|cvv|card.?number|^pan$/i.test(key)
+        ? "[redacted]"
+        : /email|phone|card.?bin|first6/i.test(key) && typeof value === "string"
+          ? `${value.slice(0, 2)}…`
+          : redact(value),
+    ]),
+  );
+}
+
+function clearBookingMetadata(metadata: Record<string, unknown>) {
+  for (const key of [
+    "activeOrder",
+    "activeOrderId",
+    "fnbOrder",
+    "activeSessionKey",
+    "lastBookingId",
+    "bookingDraft",
+    "pendingBooking",
+    "bookingState",
+    "holdRequest",
+    "usualFnb",
+    "lastCinemaId",
+    "verifiedBookings",
+  ])
+    delete metadata[key];
+}
+
+function safeBookingMetadata(metadata: Record<string, unknown> | null) {
+  const allowed = [
+    "activeOrder",
+    "activeSessionKey",
+    "lastBookingId",
+    "bookingDraft",
+    "pendingBooking",
+    "bookingState",
+    "fnbOrder",
+  ];
+  return Object.fromEntries(
+    allowed.filter((key) => metadata?.[key] !== undefined).map((key) => [key, redact(metadata![key])]),
+  );
+}
+
+function publicSavedCards(cards: unknown) {
+  if (!Array.isArray(cards)) return [];
+  return cards
+    .filter((card) => card && typeof card === "object")
+    .map((card) => ({
+      brand: card.brand,
+      masked: card.masked ?? (card.last4 ? `•••• ${card.last4}` : undefined),
+      last4: card.last4,
+      expiry: card.expiry,
+      default: !!card.default,
+    }));
 }

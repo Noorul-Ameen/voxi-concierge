@@ -3,12 +3,13 @@
  *
  * quick_book   everything the guest said → best showtime → order → seats held → Review & Pay (one call)
  * recover_order after the hold expired → same showtime, same or closest seats, F&B + offers re-added
- * resume_order  continue an earlier booking (still held → Review & Pay; expired → recover)
- * suggest_fnb   "your usual" + popular items (after the tickets are paid)
- * order_fnb     separate F&B order for a paid booking (Vista cannot amend a paid order)
+ * resume_order  inspect an earlier booking; expired holds require a new, explicit choice
+ * suggest_fnb   "your usual" + popular items before checkout or after tickets are paid
+ * order_fnb     add to the unpaid basket, or a separate F&B order after ticket payment
  */
+import { createHash } from "node:crypto";
 import { ErrorCodes } from "@voxi/contracts";
-import { prefixedId } from "@voxi/db";
+import { schema as S, prefixedId } from "@voxi/db";
 import {
   asEmirate,
   describeBenefit,
@@ -16,12 +17,15 @@ import {
   normaliseFilmLanguage,
   resolveSpokenDate,
   similarity,
+  visitDayType,
 } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
+import { eq, sql } from "drizzle-orm";
 import { appendEvent } from "../events.js";
 import type { Cinema, Film, Session } from "../services/catalog.js";
 import { updateConversation } from "../services/conversation.js";
 import { fmtDate, fmtTime, joinList, money, t } from "../services/format.js";
+import { buildBookingState } from "../services/order-state.js";
 import { loadCustomer } from "./customer.js";
 import { filmCard, sessionCard } from "./movies.js";
 import {
@@ -40,6 +44,9 @@ type Meta = {
   lastBookingId?: string;
   fnbOrder?: string | null;
   usualCinemaId?: string;
+  pendingBooking?: Record<string, unknown>;
+  bookingState?: Record<string, unknown>;
+  holdRequest?: string;
   [k: string]: unknown;
 };
 const meta = (ctx: ToolCtx) => (ctx.conversation.metadata ?? {}) as Meta;
@@ -61,18 +68,108 @@ function cinemaName(c: Cinema | undefined | null, lang: "en" | "ar") {
 
 /** The member's usual cinema: the one they book most, else the profile's home cinema. */
 export async function usualCinema(ctx: ToolCtx, customerId: string, homeCinemaId?: string | null) {
-  // the profile's home cinema wins; the booking history decides only when none is set
-  if (homeCinemaId) {
-    const home = await ctx.catalog.cinema(homeCinemaId);
-    if (home) return home;
-  }
   const hist = await ctx.vista
     .customerHistory(customerId)
     .catch(() => ({ history: [] as Record<string, any>[] }));
   const counts = new Map<string, number>();
   for (const h of hist.history) counts.set(h.cinemaId, (counts.get(h.cinemaId) ?? 0) + 1);
   const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-  return top ? await ctx.catalog.cinema(top) : null;
+  return top ? await ctx.catalog.cinema(top) : homeCinemaId ? await ctx.catalog.cinema(homeCinemaId) : null;
+}
+
+/** Booking availability is independent of cancellation's 30-minute refund cutoff. */
+export function sessionUnavailableReason(s: Session, nowLocal: string) {
+  if (s.showtime <= nowLocal) return "show_started";
+  if (!s.allowTicketSales) return "sales_closed";
+  if (s.soldOut) return "sold_out";
+  return null;
+}
+
+function holdExpired(o: VistaOrder, now = Date.now()) {
+  return o.State === "expired" || (!!o.ExpiryDateUtc && new Date(o.ExpiryDateUtc).getTime() <= now);
+}
+
+async function expiredChoice(
+  ctx: ToolCtx,
+  userSessionId: string,
+  canRecover = true,
+  order?: VistaOrder,
+): Promise<ToolResult> {
+  const current = order ?? (await ctx.vista.getOrder(userSessionId).catch(() => null))?.Order;
+  const cinema = current ? await ctx.catalog.cinema(current.CinemaId) : null;
+  const summary = current
+    ? orderSummary(current, ctx.lang, ctx.nowLocal, cinemaName(cinema, ctx.lang))
+    : null;
+  const bookingState = summary
+    ? { ...buildBookingState(summary), currentJourneyStage: "expired", requiresFreshHold: true }
+    : null;
+  return ok(
+    {
+      active: false,
+      expired: true,
+      userSessionId,
+      needs: "recovery_confirmation",
+      canRecover,
+      summary,
+      bookingState,
+    },
+    t(
+      ctx.lang,
+      "That hold has expired. Shall I check and hold available seats again?",
+      "انتهى الحجز المؤقت. هل أتحقق وأحجز المقاعد المتاحة مجدداً؟",
+    ),
+    {
+      type: "order",
+      items: summary ? [summary] : [],
+      meta: { userSessionId, expired: true, canRecover, stage: "expired" },
+      actions: [
+        ...(canRecover
+          ? [
+              {
+                label: t(ctx.lang, "Check and hold seats again", "تحقق واحجز المقاعد مجدداً"),
+                value: "recover:confirm",
+              },
+            ]
+          : []),
+        { label: t(ctx.lang, "Another show", "عرض آخر"), value: "booking:restart" },
+      ],
+    },
+  );
+}
+
+async function bookingReview(
+  ctx: ToolCtx,
+  o: VistaOrder,
+  speech: string,
+  extra: Record<string, unknown> = {},
+) {
+  const cinema = await ctx.catalog.cinema(o.CinemaId);
+  const summary = orderSummary(o, ctx.lang, ctx.nowLocal, cinemaName(cinema, ctx.lang));
+  const sessionKey = `${summary.cinemaId}-${summary.sessionId}`;
+  const bookingState = buildBookingState(summary);
+  await setMeta(ctx, { bookingState });
+  return ok(
+    { userSessionId: o.UserSessionId, sessionKey, order: summary, bookingState, ...extra },
+    speech,
+    {
+      type: "order",
+      title: t(ctx.lang, "Your booking", "حجزك"),
+      items: [summary],
+      meta: {
+        userSessionId: o.UserSessionId,
+        sessionKey,
+        expiresAtUtc: summary.expiresAtUtc,
+        stage: "seats",
+        ...extra,
+      },
+      actions: [
+        { label: t(ctx.lang, "Change seats", "تغيير المقاعد"), value: "seats:open" },
+        { label: t(ctx.lang, "Add snacks", "إضافة وجبات خفيفة"), value: "fnb:suggest" },
+        { label: t(ctx.lang, "Continue to payment", "متابعة الدفع"), value: "pay:start", style: "primary" },
+      ],
+    },
+    { name: "guided_booking", status: "started" },
+  );
 }
 
 type Resolved =
@@ -109,9 +206,28 @@ export async function holdSeats(
   exactSeats?: { Row: string; Number: string }[],
 ): Promise<{ userSessionId: string; order: VistaOrder; sameSeats: boolean }> {
   const previous = meta(ctx).activeOrder;
-  const userSessionId = `usid_${prefixedId("o", 12).slice(2)}`;
-  await setMeta(ctx, { activeOrder: userSessionId, activeSessionKey: s.key, lastCinemaId: s.cinemaId });
-  if (previous && previous !== userSessionId) await ctx.vista.cancelOrder(previous).catch(() => undefined);
+  const holdRequest = JSON.stringify({ sessionKey: s.key, tickets, preference, exactSeats });
+  if (previous && meta(ctx).holdRequest === holdRequest) {
+    const current = (await ctx.vista.getOrder(previous).catch(() => null))?.Order;
+    if (current && !["paid", "cancelled"].includes(current.State) && !holdExpired(current))
+      return { userSessionId: previous, order: current, sameSeats: true };
+  }
+  // A retry of the same tool call addresses the same downstream order, even after a partial response.
+  const userSessionId = `usid_${createHash("sha256").update(`${ctx.conversation.id}:${ctx.toolCallId}:${s.key}`).digest("hex").slice(0, 24)}`;
+  const existing = (await ctx.vista.getOrder(userSessionId).catch(() => null))?.Order;
+  if (
+    existing?.Sessions?.[0]?.Tickets?.length &&
+    !["paid", "cancelled"].includes(existing.State) &&
+    !holdExpired(existing)
+  ) {
+    await setMeta(ctx, {
+      activeOrder: userSessionId,
+      activeSessionKey: s.key,
+      lastCinemaId: s.cinemaId,
+      holdRequest,
+    });
+    return { userSessionId, order: existing, sameSeats: true };
+  }
   let order: VistaOrder;
   let sameSeats = false;
   if (exactSeats?.length) {
@@ -158,6 +274,13 @@ export async function holdSeats(
       })
     ).Order;
   }
+  await setMeta(ctx, {
+    activeOrder: userSessionId,
+    activeSessionKey: s.key,
+    lastCinemaId: s.cinemaId,
+    holdRequest,
+  });
+  if (previous && previous !== userSessionId) await ctx.vista.cancelOrder(previous).catch(() => undefined);
   ctx.catalog.invalidateSessions(s.cinemaId);
   return { userSessionId, order, sameSeats };
 }
@@ -209,6 +332,51 @@ async function resolveSession(
         kind: "result",
         result: err(ErrorCodes.NOT_FOUND, t(lang, "I couldn't find that showtime.", "لم أجد هذا الموعد.")),
       };
+    const reason = sessionUnavailableReason(session, ctx.nowLocal);
+    if (reason) {
+      const alternatives = (await ctx.catalog.sessions(session.cinemaId))
+        .filter((s) => s.hoCode === session.hoCode && !sessionUnavailableReason(s, ctx.nowLocal))
+        .sort((a, b) => a.showtime.localeCompare(b.showtime))
+        .slice(0, 3);
+      const items = alternatives.map((s) =>
+        sessionCard(
+          s,
+          lang,
+          ctx.nowLocal,
+          cinemaName(
+            cinemas.find((c) => c.id === s.cinemaId),
+            lang,
+          ),
+        ),
+      );
+      return {
+        kind: "result",
+        result: ok(
+          {
+            needs: "alternative",
+            reason,
+            requestedShowtime: session.showtime,
+            currentTime: ctx.nowLocal,
+            alternatives: items,
+          },
+          t(
+            lang,
+            reason === "show_started"
+              ? "That show has already started. Here are the next options."
+              : "That show is no longer on sale. Try one of these?",
+            reason === "show_started"
+              ? "بدأ ذلك العرض بالفعل. هذه المواعيد التالية."
+              : "لم يعد ذلك العرض متاحاً للحجز. هل يناسبك أحد هذه المواعيد؟",
+          ),
+          {
+            type: "showtimes",
+            items,
+            actions: items.map((s) => ({ label: `${s.dateLabel} ${s.time}`, value: `book:${s.sessionKey}` })),
+            meta: { reason },
+          },
+        ),
+      };
+    }
     return {
       kind: "session",
       session,
@@ -240,7 +408,7 @@ async function resolveSession(
           },
         ),
       };
-    film = cands[0]?.film ?? null;
+    film = cands[0] && cands[0].score >= 0.55 ? cands[0].film : null;
     if (!film)
       return {
         kind: "result",
@@ -265,7 +433,19 @@ async function resolveSession(
       )
       .map((f) => f.hoCode),
   );
-  if (!versions.size) versions.add(film.hoCode);
+  if (!versions.size && !wantLang) versions.add(film.hoCode);
+  if (!versions.size)
+    return {
+      kind: "result",
+      result: ok(
+        { needs: "alternative", reason: "language_unavailable", language: wantLang },
+        t(
+          lang,
+          `I couldn't find ${film.title} in ${wantLang}. Another movie?`,
+          `لم أجد ${film.title} باللغة ${wantLang}. هل تختار فيلماً آخر؟`,
+        ),
+      ),
+    };
 
   // ---- cinema ----
   let cinemaIds: string[] = [];
@@ -289,43 +469,8 @@ async function resolveSession(
       };
     cinemaIds = [r.cinema.id];
   } else {
-    const usual = customer ? await usualCinema(ctx, customer.id, customer.homeCinemaId) : null;
-    if (usual && !input.useUsualCinema) {
-      await setMeta(ctx, { usualCinemaId: usual.id });
-      const name = cinemaName(usual, lang);
-      return {
-        kind: "result",
-        result: ok(
-          {
-            needs: "cinema",
-            suggestedCinema: { id: usual.id, name: usual.name },
-            film: filmCard(film, lang),
-          },
-          t(lang, `${name} as usual?`, `${name} كالمعتاد؟`),
-          {
-            type: "cinema",
-            items: [
-              {
-                cinemaId: usual.id,
-                name,
-                address: usual.address,
-                mall: usual.mall,
-                distanceKm: undefined,
-                usual: true,
-              },
-            ],
-            actions: [
-              {
-                label: t(lang, `${name} as usual`, `${name} كالمعتاد`),
-                value: "usual:yes",
-                style: "primary",
-              },
-              { label: t(lang, "Another cinema", "سينما أخرى"), value: "usual:no" },
-            ],
-          },
-        ),
-      };
-    }
+    const inferred = customer?.profile?.cinemaId ? await ctx.catalog.cinema(customer.profile.cinemaId) : null;
+    const usual = inferred ?? (customer ? await usualCinema(ctx, customer.id, customer.homeCinemaId) : null);
     if (usual) cinemaIds = [usual.id];
     else if (ctx.conversation.geo)
       cinemaIds = (
@@ -350,10 +495,14 @@ async function resolveSession(
   const date = resolveSpokenDate(input.date, ctx.nowLocal);
   const from = input.time ? clock(minutes(input.time) - 30) : input.timeFrom;
   const to = input.time ? clock(minutes(input.time) + 30) : input.timeTo;
-  const target = input.time ? minutes(input.time) : null;
+  const profileTime =
+    customer?.profile && !input.time && !input.timeFrom && !input.timeTo
+      ? customer.profile[visitDayType(`${date}T12:00:00`, customer.profile)]?.around
+      : undefined;
+  const target = input.time ? minutes(input.time) : profileTime ? minutes(profileTime) : null;
   const all = (await Promise.all(cinemaIds.map((id) => ctx.catalog.sessions(id))))
     .flat()
-    .filter((s) => versions.has(s.hoCode) && s.showtime >= ctx.nowLocal && !s.soldOut && s.allowTicketSales);
+    .filter((s) => versions.has(s.hoCode) && !sessionUnavailableReason(s, ctx.nowLocal));
   const onDate = (d: string) => all.filter((s) => s.showtime.slice(0, 10) === d);
   const inWindow = (rows: Session[]) =>
     rows.filter((s) => (!from || hm(s.showtime) >= from) && (!to || hm(s.showtime) <= to));
@@ -372,7 +521,8 @@ async function resolveSession(
       (a, b) => closeness(a) - closeness(b) || cinemaIds.indexOf(a.cinemaId) - cinemaIds.indexOf(b.cinemaId),
     );
   const primary = rank(byExperience(inWindow(onDate(date))));
-  if (primary.length)
+  const requestedPast = !!input.time && `${date}T${input.time}:00` <= ctx.nowLocal;
+  if (primary.length && !requestedPast)
     return {
       kind: "session",
       session: primary[0]!,
@@ -405,8 +555,7 @@ async function resolveSession(
       .filter(
         (s) =>
           versions.has(s.hoCode) &&
-          s.showtime >= ctx.nowLocal &&
-          !s.soldOut &&
+          !sessionUnavailableReason(s, ctx.nowLocal) &&
           s.showtime.slice(0, 10) === date,
       );
     add(byExperience(inWindow(nearRows)), "nearby", 2);
@@ -432,8 +581,7 @@ async function resolveSession(
     const similar = (await ctx.catalog.sessions(requested.id)).filter(
       (s) =>
         s.showtime.slice(0, 10) === date &&
-        s.showtime >= ctx.nowLocal &&
-        !s.soldOut &&
+        !sessionUnavailableReason(s, ctx.nowLocal) &&
         !versions.has(s.hoCode),
     );
     const films = await ctx.catalog.films();
@@ -479,6 +627,9 @@ async function resolveSession(
     result: ok(
       {
         needs: "alternative",
+        reason: requestedPast ? "requested_time_passed" : "unavailable",
+        requestedTime: input.time,
+        currentTime: ctx.nowLocal,
         film: filmCard(film, lang),
         alternatives: items.map((i) => ({
           sessionKey: i.sessionKey,
@@ -492,8 +643,8 @@ async function resolveSession(
       },
       t(
         lang,
-        `${askedTime ? `${askedTime} isn't available` : `That isn't available`}${reqName ? ` at ${reqName}` : ""}. I can do ${joinList(alts.map(describe), "en").replace(/, and /, " or ")} — which one?`,
-        `${askedTime ? `${askedTime} غير متاح` : "هذا غير متاح"}${reqName ? ` في ${reqName}` : ""}. يمكنني ${joinList(alts.map(describe), "ar")} — أيها تفضل؟`,
+        `${requestedPast ? `${askedTime} has already passed` : askedTime ? `${askedTime} isn't available` : "That isn't available"}. ${joinList(alts.map(describe), "en").replace(/, and /, " or ")} — which works?`,
+        `${requestedPast ? `مضى موعد ${askedTime}` : askedTime ? `${askedTime} غير متاح` : "هذا غير متاح"}. ${joinList(alts.map(describe), "ar")} — أيها يناسبك؟`,
       ),
       {
         type: "showtimes",
@@ -524,22 +675,65 @@ export function seatRange(seats: string): string {
   return contiguous ? `${row}${nums[0]}–${row}${nums[nums.length - 1]}` : parts.join(", ");
 }
 
-export const quickTools: Pick<
+const quickHandlers: Pick<
   ToolHandlers,
   "quick_book" | "recover_order" | "resume_order" | "suggest_fnb" | "order_fnb"
 > = {
-  async quick_book(ctx, input) {
+  async quick_book(ctx, incoming) {
     const lang = ctx.lang;
+    const previous = meta(ctx).pendingBooking ?? {};
+    const provided = Object.fromEntries(Object.entries(incoming).filter(([, value]) => value !== undefined));
+    const pending = { ...previous, ...provided };
+    // A newly stated movie/cinema/date/time replaces a previous exact showtime selection.
+    if (
+      !incoming.sessionKey &&
+      [
+        "title",
+        "hoCode",
+        "cinemaId",
+        "cinemaName",
+        "date",
+        "time",
+        "timeFrom",
+        "timeTo",
+        "language",
+        "experience",
+      ].some((key) => key in provided)
+    )
+      pending.sessionKey = undefined;
+    if (incoming.title && !incoming.hoCode) pending.hoCode = undefined;
+    if (incoming.cinemaName && !incoming.cinemaId) pending.cinemaId = undefined;
+    if (incoming.time) {
+      pending.timeFrom = undefined;
+      pending.timeTo = undefined;
+    }
+    if (incoming.timeFrom || incoming.timeTo) pending.time = undefined;
+    const input = pending as typeof incoming;
+    await setMeta(ctx, { pendingBooking: pending });
     const customer = ctx.conversation.customerId ? await loadCustomer(ctx) : null;
     const resolved = await resolveSession(ctx, input, customer);
     if (resolved.kind === "result") return resolved.result;
     const { session: s, cinema } = resolved;
-    const { tickets, noKids, rating } = await ticketTypesFor(
-      ctx,
-      s,
-      input.tickets ?? 1,
-      input.childTickets ?? 0,
-    );
+    await setMeta(ctx, { pendingBooking: { ...pending, sessionKey: s.key } });
+    if (input.tickets == null) {
+      const selection = {
+        sessionKey: s.key,
+        filmTitle: s.filmTitle,
+        cinemaName: cinemaName(cinema, lang),
+        showtime: s.showtime,
+      };
+      return ok(
+        { needs: "tickets", ...selection, bookingState: { ...selection, currentJourneyStage: "quantity" } },
+        t(lang, "How many are going?", "كم عدد التذاكر؟"),
+        {
+          type: "quantity",
+          items: [],
+          meta: selection,
+          actions: [1, 2, 3, 4].map((n) => ({ label: String(n), value: `tickets:${n}` })),
+        },
+      );
+    }
+    const { tickets, noKids, rating } = await ticketTypesFor(ctx, s, input.tickets, input.childTickets ?? 0);
     if ((input.childTickets ?? 0) > 0 && noKids)
       return err(
         ErrorCodes.VALIDATION,
@@ -555,9 +749,12 @@ export const quickTools: Pick<
         t(lang, "No tickets are on sale for that show.", "لا توجد تذاكر معروضة لهذا العرض."),
       );
     const pref =
-      input.seatPreference && input.seatPreference !== "any"
-        ? input.seatPreference
-        : ((customer?.preferences?.seatPreference as string | undefined) ?? "middle");
+      input.seatPreference === "any"
+        ? undefined
+        : (input.seatPreference ??
+          customer?.profile?.seatPreference ??
+          customer?.preferences?.seatPreference ??
+          "middle");
     let held: Awaited<ReturnType<typeof holdSeats>>;
     try {
       held = await holdSeats(ctx, s, tickets, pref);
@@ -583,45 +780,16 @@ export const quickTools: Pick<
       : null;
     const count = summary.tickets.length;
     const seats = seatRange(summary.seats);
-    const when = `${fmtDate(s.showtime, lang, ctx.nowLocal)} ${fmtTime(s.showtime, lang)}`;
-    const line = t(
-      lang,
-      `${count} seat${count === 1 ? "" : "s"} held — ${s.filmTitle}, ${cinemaName(cinema, "en")}, ${when}, ${seats}, ${summary.total}.`,
-      `تم حجز ${count} ${count === 1 ? "مقعد" : "مقاعد"} — ${s.filmTitle}، ${cinemaName(cinema, "ar")}، ${when}، ${seats}، ${summary.total}.`,
-    );
-    const isGuest = !customer;
-    const method = (customer?.savedCards?.length ? "SAVED_CARD" : "CARD") as "SAVED_CARD" | "CARD";
-    const sheet = await reviewAndPay(
+    return bookingReview(
       ctx,
-      { userSessionId: held.userSessionId, method },
-      { offerHint: hint ?? undefined },
+      held.order,
+      t(
+        lang,
+        `${count} seats held — ${seats}. Snacks before payment?`,
+        `حجزت ${count} مقاعد — ${seats}. هل تريد وجبات خفيفة قبل الدفع؟`,
+      ),
+      { offerHint: hint, holdMinutes: ctx.cfg.orderExpiryMinutes },
     );
-    if (!sheet.ok) return sheet;
-    const ask = hint
-      ? t(
-          lang,
-          ` Your ${hint.cardLabel} gets ${hint.benefit} on this — use it?`,
-          ` بطاقتك ${hint.cardLabel} تحصل على ${hint.benefit} — هل تستخدمها؟`,
-        )
-      : isGuest
-        ? t(
-            lang,
-            " Pop your name, email and mobile into the sheet and tap Pay — or change seats or add food first.",
-            " أدخل اسمك وبريدك ورقم جوالك في النافذة واضغط ادفع — أو غيّر المقاعد أو أضف طعاماً أولاً.",
-          )
-        : t(lang, " Change seats, add food, or pay?", " تغيير المقاعد، إضافة طعام، أم الدفع؟");
-    return {
-      ...sheet,
-      speech: `${line}${ask}`,
-      journey: { name: "guided_booking", status: "started" },
-      data: {
-        ...(sheet.data ?? {}),
-        sessionKey: s.key,
-        order: summary,
-        offerHint: hint,
-        holdMinutes: ctx.cfg.orderExpiryMinutes,
-      },
-    };
   },
 
   async recover_order(ctx, input) {
@@ -631,10 +799,9 @@ export const quickTools: Pick<
       return err(ErrorCodes.NOT_FOUND, t(lang, "There's no booking to recover.", "لا يوجد حجز لاستعادته."));
     const old = (await ctx.vista.getOrder(usid).catch(() => null))?.Order as VistaOrder | null;
     const sessionKey =
-      meta(ctx).activeSessionKey ??
-      (old?.CinemaId && old?.Sessions?.[0]?.SessionId
+      old?.CinemaId && old?.Sessions?.[0]?.SessionId
         ? `${old.CinemaId}-${old.Sessions[0].SessionId}`
-        : undefined);
+        : meta(ctx).activeSessionKey;
     const s = sessionKey ? await ctx.catalog.sessionByKey(sessionKey) : null;
     if (!s || !old)
       return err(
@@ -645,10 +812,20 @@ export const quickTools: Pick<
           "لم أجد الحجز السابق — لنبدأ من جديد.",
         ),
       );
-    if (old.State !== "expired" && old.State !== "cancelled") {
-      // still alive → nothing to recover, just show it
-      return quickTools.resume_order(ctx, {});
+    if (old.State === "paid")
+      return ok(
+        { active: false, paid: true, bookingId: old.CompletedBookingId },
+        t(lang, "That booking is already confirmed.", "هذا الحجز مؤكد بالفعل."),
+      );
+    if (sessionUnavailableReason(s, ctx.nowLocal)) {
+      const resolved = await resolveSession(ctx, { sessionKey: s.key }, null);
+      if (resolved.kind === "result") return resolved.result;
     }
+    if (!holdExpired(old) && old.State !== "cancelled") {
+      // still alive → nothing to recover, just show it
+      return quickHandlers.resume_order(ctx, {});
+    }
+    if (!input.confirmed) return expiredChoice(ctx, usid, true, old);
     const tickets = old.Sessions?.[0]?.Tickets ?? [];
     const counts = new Map<string, number>();
     for (const tk of tickets) counts.set(tk.TicketTypeCode, (counts.get(tk.TicketTypeCode) ?? 0) + 1);
@@ -727,30 +904,7 @@ export const quickTools: Pick<
               `Your hold expired and those seats were taken, so I've held the closest ones: ${seats}.`,
               `انتهى الحجز المؤقت وأُخذت المقاعد، فحجزت الأقرب: ${seats}.`,
             );
-    const customer = ctx.conversation.customerId ? await loadCustomer(ctx) : null;
-    if (!customer)
-      return ok(
-        { userSessionId: held.userSessionId, order: summary, seatsRecovered: where },
-        `${note} ${t(lang, "Ready to pay?", "جاهز للدفع؟")}`,
-        {
-          type: "order",
-          title: t(lang, "Your booking", "حجزك"),
-          items: [summary],
-          meta: { userSessionId: held.userSessionId, sessionKey: s.key, expiresAtUtc: summary.expiresAtUtc },
-          actions: [{ label: t(lang, "Pay", "ادفع"), value: "pay:start", style: "primary" }],
-        },
-      );
-    const sheet = await reviewAndPay(
-      ctx,
-      { userSessionId: held.userSessionId, method: customer.savedCards?.length ? "SAVED_CARD" : "CARD" },
-      {},
-    );
-    if (!sheet.ok) return sheet;
-    return {
-      ...sheet,
-      speech: `${note} ${t(lang, "Shall I proceed with payment?", "هل أتابع الدفع؟")}`,
-      data: { ...(sheet.data ?? {}), seatsRecovered: where, order: summary },
-    };
+    return bookingReview(ctx, held.order, note, { seatsRecovered: where, recovered: true });
   },
 
   async resume_order(ctx) {
@@ -783,7 +937,14 @@ export const quickTools: Pick<
         { active: false, paid: true, bookingId: o.CompletedBookingId },
         t(lang, "That booking is already paid and confirmed.", "ذلك الحجز مدفوع ومؤكد بالفعل."),
       );
-    if (o.State === "expired") return quickTools.recover_order(ctx, { userSessionId: usid });
+    if (holdExpired(o)) return expiredChoice(ctx, usid, true, o);
+    const sessionKey =
+      o.CinemaId && o.Sessions?.[0]?.SessionId ? `${o.CinemaId}-${o.Sessions[0].SessionId}` : null;
+    const session = sessionKey ? await ctx.catalog.sessionByKey(sessionKey) : null;
+    if (session && sessionUnavailableReason(session, ctx.nowLocal)) {
+      const resolved = await resolveSession(ctx, { sessionKey }, null);
+      if (resolved.kind === "result") return resolved.result;
+    }
     const cinema = await ctx.catalog.cinema(o.CinemaId);
     const summary = orderSummary(o, lang, ctx.nowLocal, cinemaName(cinema, lang));
     await appendEvent(ctx.db, ctx.events, ctx.conversation.id, "order.updated", {
@@ -798,44 +959,19 @@ export const quickTools: Pick<
       `You were booking ${summary.filmTitle} at ${summary.cinemaName}, ${summary.showtimeLabel}, seats ${seatRange(summary.seats)}${left != null ? ` — held for ${left} more minute${left === 1 ? "" : "s"}` : ""}.`,
       `كنت تحجز ${summary.filmTitle} في ${summary.cinemaName}، ${summary.showtimeLabel}، المقاعد ${seatRange(summary.seats)}${left != null ? ` — محجوزة لـ ${left} دقائق أخرى` : ""}.`,
     );
-    const customer = ctx.conversation.customerId ? await loadCustomer(ctx) : null;
-    if (!customer || !summary.seatsAllocated)
-      return ok(
-        { active: true, userSessionId: usid, order: summary },
-        `${line} ${t(lang, "Continue?", "هل نتابع؟")}`,
-        {
-          type: "order",
-          title: t(lang, "Your booking", "حجزك"),
-          items: [summary],
-          meta: {
-            userSessionId: usid,
-            sessionKey: meta(ctx).activeSessionKey,
-            expiresAtUtc: summary.expiresAtUtc,
-          },
-          actions: [
-            { label: t(lang, "Continue", "متابعة"), value: "pay:start", style: "primary" },
-            { label: t(lang, "Start over", "ابدأ من جديد"), value: "abort" },
-          ],
-        },
-      );
-    const sheet = await reviewAndPay(
-      ctx,
-      { userSessionId: usid, method: customer.savedCards?.length ? "SAVED_CARD" : "CARD" },
-      {},
-    );
-    if (!sheet.ok) return sheet;
-    return {
-      ...sheet,
-      speech: `${line} ${t(lang, "Shall I take the payment?", "هل أكمل الدفع؟")}`,
-      data: { ...(sheet.data ?? {}), active: true, order: summary },
-    };
+    return bookingReview(ctx, o, `${line} ${t(lang, "Pick it back up?", "هل نتابع؟")}`, { active: true });
   },
 
   async suggest_fnb(ctx, input) {
     const lang = ctx.lang;
     const bookingId = input.bookingId ?? meta(ctx).lastBookingId;
     const booking = bookingId ? (await ctx.vista.getBooking(bookingId).catch(() => null))?.Booking : null;
-    const cinemaId = input.cinemaId ?? booking?.CinemaId ?? meta(ctx).lastCinemaId ?? "0002";
+    const activeId = meta(ctx).activeOrder;
+    const active = activeId ? (await ctx.vista.getOrder(activeId).catch(() => null))?.Order : null;
+    const unpaid = active && !["paid", "cancelled"].includes(active.State) && !holdExpired(active);
+    const cinemaId =
+      input.cinemaId ?? (unpaid ? active.CinemaId : booking?.CinemaId) ?? meta(ctx).lastCinemaId;
+    if (!cinemaId) return ok({ needs: "cinema" }, t(lang, "Which cinema is this for?", "لأي سينما؟"));
     const { ConcessionTabs } = await ctx.vista.concessions(String(cinemaId));
     const items: Record<string, any>[] = ConcessionTabs.flatMap((tab) =>
       tab.Items.map((i) => ({ ...i, Tab: tab.Name })),
@@ -906,7 +1042,13 @@ export const quickTools: Pick<
         type: "menu",
         title: t(lang, "Food & drinks", "المأكولات والمشروبات"),
         items: picks,
-        meta: { quick: true, usual: usualIds, bookingId },
+        meta: {
+          quick: true,
+          usual: usualIds,
+          bookingId: unpaid ? undefined : bookingId,
+          userSessionId: unpaid ? activeId : undefined,
+          stage: "food",
+        },
         actions: [
           ...(usual.length
             ? [
@@ -927,31 +1069,65 @@ export const quickTools: Pick<
 
   async order_fnb(ctx, input) {
     const lang = ctx.lang;
-    const bookingId = input.bookingId ?? meta(ctx).lastBookingId;
-    const booking = bookingId ? (await ctx.vista.getBooking(bookingId).catch(() => null))?.Booking : null;
-    if (!booking)
-      return err(
-        ErrorCodes.NOT_FOUND,
-        t(
-          lang,
-          "I don't have a paid booking to add food to yet.",
-          "لا يوجد حجز مدفوع لإضافة الطعام إليه بعد.",
-        ),
-      );
     let items = input.items ?? [];
-    if (input.repeatUsual || !items.length) {
+    if (input.repeatUsual && !items.length) {
+      if (!(meta(ctx).usualFnb as unknown[] | undefined)?.length)
+        await quickHandlers.suggest_fnb(ctx, { bookingId: input.bookingId });
       const usual = (meta(ctx).usualFnb as { itemId: string; quantity: number }[] | undefined) ?? [];
       if (usual.length) items = usual;
     }
     if (!items.length)
       return err(ErrorCodes.VALIDATION, t(lang, "Which items would you like?", "ما الأصناف التي تريدها؟"));
+    // Before payment, food belongs to the same ticket basket and appears in the same final total.
+    const activeId = meta(ctx).activeOrder;
+    const active =
+      !input.bookingId && activeId ? (await ctx.vista.getOrder(activeId).catch(() => null))?.Order : null;
+    if (active && !["paid", "cancelled"].includes(active.State) && active.Sessions?.[0]?.Tickets?.length) {
+      if (holdExpired(active)) return expiredChoice(ctx, activeId!, true, active);
+      const requestedIds = new Set(items.map((i) => i.itemId));
+      const preserved = (active.Concessions ?? [])
+        .filter((c: any) => !requestedIds.has(c.ItemId))
+        .map((c: any) => ({ ItemId: c.ItemId, Quantity: c.Quantity, Modifiers: c.Modifiers }));
+      const r = await ctx.vista.addConcessions({
+        UserSessionId: activeId!,
+        CinemaId: active.CinemaId,
+        Replace: true,
+        Concessions: [
+          ...preserved,
+          ...items.map((i) => ({ ItemId: i.itemId, Quantity: i.quantity, Modifiers: i.modifierIds })),
+        ],
+      });
+      const result = await bookingReview(
+        ctx,
+        r.Order,
+        t(
+          lang,
+          "Snacks added. Your tickets and food are ready for one payment.",
+          "تمت إضافة الوجبات الخفيفة. التذاكر والطعام جاهزان للدفع معاً.",
+        ),
+        { combinedCheckout: true },
+      );
+      await appendEvent(ctx.db, ctx.events, ctx.conversation.id, "order.updated", {
+        userSessionId: activeId,
+        summary: result.data?.order,
+      });
+      return result;
+    }
+    const bookingId = input.bookingId ?? meta(ctx).lastBookingId;
+    const booking = bookingId ? (await ctx.vista.getBooking(bookingId).catch(() => null))?.Booking : null;
+    if (!booking)
+      return err(
+        ErrorCodes.NOT_FOUND,
+        t(lang, "Pick a show first, then we can add snacks.", "اختر عرضاً أولاً، ثم نضيف الوجبات الخفيفة."),
+      );
     const existing = meta(ctx).fnbOrder;
     if (existing) await ctx.vista.cancelOrder(existing).catch(() => undefined);
-    const userSessionId = `usid_${prefixedId("f", 12).slice(2)}`;
+    const userSessionId = `usid_${createHash("sha256").update(`${ctx.conversation.id}:${ctx.toolCallId}:food`).digest("hex").slice(0, 24)}`;
     const r = await ctx.vista.addConcessions({
       UserSessionId: userSessionId,
       CinemaId: booking.CinemaId,
       SessionId: booking.SessionId,
+      Replace: true,
       Concessions: items.map((i) => ({ ItemId: i.itemId, Quantity: i.quantity, Modifiers: i.modifierIds })),
     } as any);
     await setMeta(ctx, {
@@ -995,6 +1171,55 @@ export const quickTools: Pick<
       data: { ...(sheet.data ?? {}), fnbOrder: userSessionId, order: summary },
     };
   },
+};
+
+/** Serialize quick mutations across API replicas and replay the same request's completed result. */
+async function runQuick<N extends "quick_book" | "recover_order" | "order_fnb">(
+  name: N,
+  ctx: ToolCtx,
+  input: Parameters<ToolHandlers[N]>[1],
+): Promise<ToolResult> {
+  const requestKey = (input as { idempotencyKey?: string }).idempotencyKey ?? ctx.toolCallId;
+  const idempotencyKey = `quick:${createHash("sha256").update(`${ctx.conversation.id}:${name}:${requestKey}`).digest("hex")}`;
+  return ctx.db.transaction(async (tx) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`quick:${ctx.conversation.id}`}))`);
+    const existing = (
+      await tx.select().from(S.actions).where(eq(S.actions.idempotencyKey, idempotencyKey))
+    )[0];
+    if (existing?.result?.toolResult) return existing.result.toolResult as ToolResult;
+    const fresh = (
+      await tx.select().from(S.conversations).where(eq(S.conversations.id, ctx.conversation.id))
+    )[0];
+    if (fresh) ctx.conversation.metadata = fresh.metadata;
+    const handler = quickHandlers[name] as (
+      ctx: ToolCtx,
+      input: Parameters<ToolHandlers[N]>[1],
+    ) => Promise<ToolResult>;
+    const result = await handler(ctx, input);
+    await tx.insert(S.actions).values({
+      id: prefixedId("act", 12),
+      conversationId: ctx.conversation.id,
+      type: name,
+      resourceKey: `conversation:${ctx.conversation.id}`.slice(0, 96),
+      idempotencyKey,
+      input: input as Record<string, unknown>,
+      status: result.ok ? "succeeded" : "failed",
+      attempts: 1,
+      maxAttempts: 1,
+      result: { toolResult: result },
+      toolCallId: ctx.toolCallId,
+      startedAt: new Date(),
+      finishedAt: new Date(),
+    });
+    return result;
+  });
+}
+
+export const quickTools: typeof quickHandlers = {
+  ...quickHandlers,
+  quick_book: (ctx, input) => runQuick("quick_book", ctx, input),
+  recover_order: (ctx, input) => runQuick("recover_order", ctx, input),
+  order_fnb: (ctx, input) => runQuick("order_fnb", ctx, input),
 };
 
 export type { OfferHint };
