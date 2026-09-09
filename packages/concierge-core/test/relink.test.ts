@@ -93,7 +93,8 @@ it("moves only live work, preserves confirmations and sends stale-worker complet
   const queued = (
     await enqueue(db, null, {
       conversationId: source,
-      type: "select_seats",
+      // A later basket edit intentionally revokes this payment consent; unrelated work does not.
+      type: "transfer_to_agent",
       resourceKey: "order:held",
       idempotencyKey: randomUUID(),
       payload: {},

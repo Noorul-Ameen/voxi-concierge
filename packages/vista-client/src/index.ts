@@ -347,6 +347,8 @@ export class VistaClient {
   }
   completeOrder(req: {
     UserSessionId: string;
+    /** Simulator/adapter compare-and-pay guard for the reviewed order version. */
+    ExpectedVersion?: number;
     CustomerEmail: string;
     CustomerName: string;
     CustomerPhone: string;

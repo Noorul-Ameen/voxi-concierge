@@ -472,6 +472,7 @@ describe("authenticated widget boundaries", () => {
           ...row!.metadata,
           activeOrder: "private-order",
           fnbOrder: "private-food",
+          fnbForBookingId: "private-food-booking",
           pendingBooking: { sessionKey: "private-show" },
           bookingState: { selectedMovie: "private-film" },
           lastBookingId: "private-booking",
@@ -495,6 +496,11 @@ describe("authenticated widget boundaries", () => {
     expect(state.conversation.mode).toBe("bot");
     expect(state.transfer.status).toBe("ended");
     expect(state.conversation.metadata).toEqual({});
+    const [cleared] = await harness.db
+      .select()
+      .from(S.conversations)
+      .where(eq(S.conversations.id, session.conversationId));
+    expect(cleared!.metadata).not.toHaveProperty("fnbForBookingId");
     expect(JSON.stringify(state)).not.toContain("widgetSessionKey");
   });
 
@@ -530,6 +536,7 @@ describe("authenticated widget boundaries", () => {
         metadata: {
           ...row!.metadata,
           activeOrder: "saras-order",
+          fnbForBookingId: "saras-food-booking",
           pendingBooking: { sessionKey: "saras-show" },
         },
       })
@@ -543,6 +550,11 @@ describe("authenticated widget boundaries", () => {
     expect(james.customer.firstName).toBe("James");
     const state = await request("/widget/state", undefined, james.token).then((r) => r.json() as any);
     expect(state.conversation.metadata).toEqual({});
+    const [switched] = await harness.db
+      .select()
+      .from(S.conversations)
+      .where(eq(S.conversations.id, session.conversationId));
+    expect(switched!.metadata).not.toHaveProperty("fnbForBookingId");
     expect((await request("/widget/state", undefined, sara.token)).status).toBe(401);
   });
 

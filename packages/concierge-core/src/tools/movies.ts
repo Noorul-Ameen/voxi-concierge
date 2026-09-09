@@ -568,8 +568,8 @@ export const movieTools: Pick<
     }
     const speech = t(
       ctx.lang,
-      "You can book right here with me — just tell me the movie, cinema and time and I'll pick seats and take payment. Or I can open the booking page on the VOX website or app; you'll choose seats, add food, apply offers and pay by card, Apple Pay or VOX credit. Tickets arrive by email with a QR code.",
-      "يمكنك الحجز معي مباشرة — أخبرني بالفيلم والسينما والوقت وسأختار المقاعد وأكمل الدفع. أو أفتح لك صفحة الحجز على موقع فوكس أو التطبيق لاختيار المقاعد وإضافة الطعام والدفع. تصل التذاكر بالبريد الإلكتروني مع رمز QR.",
+      "You can choose a film and seats, add optional snacks and review payment here; your QR appears after payment. Or I can open the VOX website or app for you.",
+      "نقدر نختار الفيلم والمقاعد ونضيف سناكات إذا تحب، وبعدها تراجع الدفع هنا ويظهر لك رمز QR بعد الدفع. أو أفتح لك موقع فوكس أو التطبيق للحجز.",
     );
     return ok({ url, label, canBookInChat: true }, speech, {
       type: "movie",

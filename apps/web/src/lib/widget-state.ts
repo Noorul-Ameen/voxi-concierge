@@ -1,6 +1,17 @@
 import type { Lang, UiHint, WidgetEvent } from "./api";
 import { cinemaDate } from "./cinema-time";
 
+export type UserActivityClock = { lastUserAt: number; lastProviderPingAt: number };
+
+/** Every customer event refreshes inactivity; bursts need only one provider ping per second. */
+export function recordUserActivity(clock: UserActivityClock, notifyProvider?: () => void, now = Date.now()): void {
+  clock.lastUserAt = now;
+  if (notifyProvider && now - clock.lastProviderPingAt >= 1000) {
+    clock.lastProviderPingAt = now;
+    notifyProvider();
+  }
+}
+
 /** Consume transport positions even when a relink repeats an already displayed event. */
 export function acceptWidgetEvent(sequences: Map<string, number>, identities: Set<string>, conversationId: string, event: WidgetEvent): boolean {
   if (event.seq <= (sequences.get(conversationId) ?? 0)) return false;

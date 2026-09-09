@@ -16,7 +16,7 @@ import {
 import { VistaClientError } from "@voxi/vista-client";
 import { eq } from "drizzle-orm";
 import { enqueue, idem, toRef, waitFor } from "../actions/ledger.js";
-import { addTopic, markJourney } from "../services/conversation.js";
+import { addTopic, markAgentJourney } from "../services/conversation.js";
 import { fmtDateTime, money, t } from "../services/format.js";
 import { buildBookingState, orderSummary } from "../services/order-state.js";
 import { actionSpeech } from "./bookings.js";
@@ -500,9 +500,15 @@ export const customerTools: Pick<
   },
 
   async log_journey(ctx, input) {
-    await markJourney(ctx.db, ctx.conversation.id, input.journey, input.status);
-    await addTopic(ctx.db, ctx.conversation.id, input.journey);
-    return ok({ logged: true });
+    const result = await markAgentJourney(
+      ctx.db,
+      ctx.conversation.id,
+      input.journey,
+      input.status,
+      Number(ctx.conversation.metadata?.widgetAuthGeneration ?? 0),
+    );
+    if (result.logged) await addTopic(ctx.db, ctx.conversation.id, input.journey);
+    return ok(result);
   },
 
   async get_action_result(ctx, input) {

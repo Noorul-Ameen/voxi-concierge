@@ -17,10 +17,9 @@ describe("Postgres event bus", () => {
     const conv = `conv_bus_${Date.now()}`;
     const got: unknown[] = [];
     const off = busB.subscribe(conv, (e) => got.push(e));
-    await new Promise((r) => setTimeout(r, 300)); // LISTEN registration
+    await busB.ready();
     await appendEvent(a.db, busA, conv, "ui.render", { ui: { type: "movie", items: [] } }, "agent");
-    await new Promise((r) => setTimeout(r, 500));
-    expect(got).toHaveLength(1);
+    await expect.poll(() => got.length, { timeout: 3000 }).toBe(1);
     expect((got[0] as { type: string }).type).toBe("ui.render");
     off();
     await busA.close();

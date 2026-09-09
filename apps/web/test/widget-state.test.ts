@@ -1,7 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, holdSeconds, uiActionLabel, type TranscriptItem } from "../src/lib/widget-state";
+import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, holdSeconds, recordUserActivity, uiActionLabel, type TranscriptItem } from "../src/lib/widget-state";
 
 describe("authoritative widget state", () => {
+  it("keeps activity current during wheel/input bursts while throttling provider pings", () => {
+    const clock = { lastUserAt: 0, lastProviderPingAt: Number.NEGATIVE_INFINITY };
+    const pings: number[] = [];
+    // Pointer, focus, keyboard, wheel and input can overlap within the same second.
+    for (const now of [100, 100, 350, 999, 1100, 1400]) {
+      recordUserActivity(clock, () => pings.push(now), now);
+      expect(clock.lastUserAt).toBe(now);
+    }
+    expect(pings).toEqual([100, 1100]);
+    expect(181399 - clock.lastUserAt).toBeLessThan(180000);
+    expect(181400 - clock.lastUserAt).toBe(180000);
+  });
+
+  it("tracks disconnected customer activity without suppressing the first connected ping", () => {
+    const clock = { lastUserAt: 0, lastProviderPingAt: Number.NEGATIVE_INFINITY };
+    recordUserActivity(clock, undefined, 500);
+    expect(clock.lastUserAt).toBe(500);
+    let pings = 0;
+    recordUserActivity(clock, () => { pings++; }, 510);
+    expect(pings).toBe(1);
+    expect(clock.lastUserAt).toBe(510);
+  });
+
   it("does not replay old cards or hold updates across reconnects but accepts new target results", () => {
     const sequences = new Map<string, number>();
     const identities = new Set<string>();

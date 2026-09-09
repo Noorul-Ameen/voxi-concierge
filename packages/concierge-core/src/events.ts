@@ -23,39 +23,54 @@ export function createPgEventBus(
   sql: Sql,
   db: Db,
   channel = "voxi_events",
-): EventBus & { close: () => Promise<void> } {
+): EventBus & { ready: () => Promise<void>; close: () => Promise<void> } {
   const local = createEventBus();
   const subscribers = new Map<string, number>();
   let listener: { unlisten: () => Promise<void> } | null = null;
+  let listening: Promise<void> | null = null;
   const ensureListening = async () => {
     if (listener) return;
-    listener = await sql.listen(channel, async (payload) => {
-      try {
-        const { conversationId, seq } = JSON.parse(payload) as { conversationId: string; seq: number };
-        if (!subscribers.get(conversationId)) return;
-        const row = (
-          await db
-            .select()
-            .from(S.conversationEvents)
-            .where(
-              and(eq(S.conversationEvents.conversationId, conversationId), eq(S.conversationEvents.seq, seq)),
-            )
-        )[0];
-        if (!row) return;
-        const ev = toWidgetEvent(row.type, row.seq, row.payload, row.id);
-        if (ev) local.publish(conversationId, ev);
-      } catch {
-        /* ignore malformed notifications */
-      }
-    });
+    if (listening) return listening;
+    listening = sql
+      .listen(channel, async (payload) => {
+        try {
+          const { conversationId, seq } = JSON.parse(payload) as { conversationId: string; seq: number };
+          if (!subscribers.get(conversationId)) return;
+          const row = (
+            await db
+              .select()
+              .from(S.conversationEvents)
+              .where(
+                and(
+                  eq(S.conversationEvents.conversationId, conversationId),
+                  eq(S.conversationEvents.seq, seq),
+                ),
+              )
+          )[0];
+          if (!row) return;
+          const ev = toWidgetEvent(row.type, row.seq, row.payload, row.id);
+          if (ev) local.publish(conversationId, ev);
+        } catch {
+          /* ignore malformed notifications */
+        }
+      })
+      .then((registered) => {
+        listener = registered;
+      })
+      .catch((error) => {
+        listening = null;
+        throw error;
+      });
+    return listening;
   };
   return {
+    ready: ensureListening,
     publish: (conversationId, ev) => {
       void sql.notify(channel, JSON.stringify({ conversationId, seq: ev.seq })).catch(() => undefined);
     },
     subscribe: (conversationId, fn) => {
       subscribers.set(conversationId, (subscribers.get(conversationId) ?? 0) + 1);
-      void ensureListening();
+      void ensureListening().catch(() => undefined);
       const off = local.subscribe(conversationId, fn);
       return () => {
         off();
@@ -65,8 +80,10 @@ export function createPgEventBus(
       };
     },
     close: async () => {
+      await listening?.catch(() => undefined);
       await listener?.unlisten();
       listener = null;
+      listening = null;
     },
   };
 }

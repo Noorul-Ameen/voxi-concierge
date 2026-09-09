@@ -7,6 +7,7 @@ import { schema as S, prefixedId } from "@voxi/db";
  * cite its id within the TTL. A confirmation can be consumed once.
  */
 import { and, eq, gt, isNull } from "drizzle-orm";
+import { assertNoPendingBasketEdits } from "./checkout.js";
 import { resolveLinkedConversation } from "./relink.js";
 
 export async function createConfirmation(
@@ -18,11 +19,21 @@ export async function createConfirmation(
     summary: Record<string, unknown>;
     spokenSummary: string;
     ttlSeconds: number;
+    excludeBasketActionId?: string;
+    validateBeforeCreate?: () => Promise<void>;
   },
 ) {
   const id = prefixedId("cnf", 10);
   return db.transaction(async (tx) => {
     const current = await resolveLinkedConversation(tx, input.conversationId, true);
+    if (input.actionType === "pay_order")
+      await assertNoPendingBasketEdits(
+        tx,
+        input.resourceKey,
+        input.excludeBasketActionId,
+        current?.id ?? input.conversationId,
+      );
+    await input.validateBeforeCreate?.();
     const [row] = await tx
       .insert(S.pendingConfirmations)
       .values({

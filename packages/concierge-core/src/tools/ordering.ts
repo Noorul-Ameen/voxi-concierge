@@ -1,8 +1,9 @@
-import { ErrorCodes } from "@voxi/contracts";
+import { DomainError, ErrorCodes } from "@voxi/contracts";
 import { prefixedId } from "@voxi/db";
 import { type Offer, describeBenefit } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 import { enqueue, idem, toRef } from "../actions/ledger.js";
+import { assertCheckoutSnapshot, checkoutSnapshot, pendingBasketActions } from "../services/checkout.js";
 import { createConfirmation } from "../services/confirmations.js";
 import { updateConversation } from "../services/conversation.js";
 import { fmtDateTime, joinList, money, seatLabels, t } from "../services/format.js";
@@ -138,6 +139,23 @@ export async function reviewAndPay(
   input: { userSessionId: string; method: string; customer?: { name: string; email: string; phone: string } },
   extra: { offerHint?: OfferHint; fnbOnly?: boolean },
 ) {
+  const pending = await pendingBasketActions(
+    ctx.db,
+    `order:${input.userSessionId}`,
+    ctx.checkoutMutationActionId,
+    ctx.conversation.id,
+  );
+  if (pending.length)
+    return err(
+      ErrorCodes.ORDER_INVALID_STATE,
+      t(
+        ctx.lang,
+        "Your booking changes are still being applied. Check the pending action result, then review the completed basket before payment.",
+        "تغييرات الحجز قيد التنفيذ. تحقق من نتيجة الإجراء، ثم راجع الطلب المكتمل قبل الدفع.",
+      ),
+      false,
+      { needs: "pending_basket", pendingActions: pending.map(toRef) },
+    );
   const r = await ctx.vista.getOrder(input.userSessionId);
   if (!r.Order)
     return err(
@@ -309,6 +327,7 @@ export async function reviewAndPay(
     userSessionId: input.userSessionId,
     method,
     amountCents: s.totalCents,
+    checkoutSnapshot: checkoutSnapshot(r.Order),
     customer: customer ?? { name: "", email: "", phone: "" },
     memberId: ctx.conversation.memberId ?? undefined,
     customerId: ctx.conversation.customerId ?? undefined,
@@ -333,14 +352,34 @@ export async function reviewAndPay(
         `${s.total} — ${items}, paying with ${method === "VOX_CREDIT" ? "VOX credit" : "Share Points"}. Shall I proceed?`,
         `${s.total} — ${items}، الدفع بـ${method === "VOX_CREDIT" ? "رصيد فوكس" : "نقاط شير"}. هل أتابع؟`,
       );
-  const conf = await createConfirmation(ctx.db, {
-    conversationId: ctx.conversation.id,
-    actionType: "pay_order",
-    resourceKey: `order:${input.userSessionId}`,
-    summary,
-    spokenSummary: spoken,
-    ttlSeconds: ctx.cfg.confirmationTtlSeconds,
-  });
+  let conf: Awaited<ReturnType<typeof createConfirmation>>;
+  try {
+    conf = await createConfirmation(ctx.db, {
+      conversationId: ctx.conversation.id,
+      actionType: "pay_order",
+      resourceKey: `order:${input.userSessionId}`,
+      summary,
+      spokenSummary: spoken,
+      ttlSeconds: ctx.cfg.confirmationTtlSeconds,
+      excludeBasketActionId: ctx.checkoutMutationActionId,
+      validateBeforeCreate: async () => {
+        const latest = await ctx.vista.getOrder(input.userSessionId);
+        assertCheckoutSnapshot(latest.Order ?? {}, summary);
+      },
+    });
+  } catch (error) {
+    if (!(error instanceof DomainError)) throw error;
+    return err(
+      error.code,
+      t(
+        ctx.lang,
+        error.message,
+        "تغيّر الحجز أو أن تعديلاته ما زالت قيد التنفيذ. راجع الطلب المكتمل وأكّد الدفع مجدداً.",
+      ),
+      false,
+      { ...((error.detail as Record<string, unknown>) ?? {}), needs: "review_updated_basket" },
+    );
+  }
   return ok(
     {
       confirmationId: conf.id,

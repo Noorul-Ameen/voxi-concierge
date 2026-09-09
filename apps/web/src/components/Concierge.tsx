@@ -9,7 +9,7 @@ import { isRtl, t } from "../lib/i18n";
 import { type CardActions, Cards, Feedback, seatRange } from "./Cards";
 import { type Loc, LocationBar } from "./LocationBar";
 import { AccountPanel } from "./AccountPanel";
-import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, holdSeconds, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
+import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, holdSeconds, recordUserActivity, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
 
 
 const nid = () => crypto.randomUUID();
@@ -138,7 +138,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const [muted, setMuted] = useState(false);
   const [holdLeft, setHoldLeft] = useState<number | null>(null); // seconds
   const warnedRef = useRef<{ two?: string; short?: string; expired?: string }>({});
-  const lastUserAtRef = useRef<number>(Date.now());
+  const activityRef = useRef({ lastUserAt: Date.now(), lastProviderPingAt: Number.NEGATIVE_INFINITY });
   const idleEndedRef = useRef(false);
   const switchingRef = useRef(false);
   const eventSeqRef = useRef(new Map<string, number>());
@@ -286,7 +286,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     onMessage: (m: { source: string; message: string }) => {
       if (!m.message) return;
       if (m.source === "user" && m.message.startsWith("[widget]")) return; // hidden widget → agent notes
-      if (m.source === "user") lastUserAtRef.current = Date.now();
+      if (m.source === "user") activityRef.current.lastUserAt = Date.now();
       push({ kind: "msg", role: m.source === "user" ? "user" : "agent", text: m.message });
     },
   });
@@ -490,7 +490,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
 
   useEffect(() => {
     const timer = setInterval(() => {
-      if (statusRef.current === "connected" && !idleEndedRef.current && Date.now() - lastUserAtRef.current >= 180000) {
+      if (statusRef.current === "connected" && !idleEndedRef.current && Date.now() - activityRef.current.lastUserAt >= 180000) {
         idleEndedRef.current = true;
         void conversation.endSession();
       }
@@ -504,7 +504,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     const attempt = ++connectionAttemptRef.current;
     const valid = () => attempt === connectionAttemptRef.current;
     setMode(m);
-    lastUserAtRef.current = Date.now();
+    activityRef.current.lastUserAt = Date.now();
     idleEndedRef.current = false;
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -570,14 +570,14 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const say = useCallback(
     (text: string) => {
       if (!text.trim()) return;
-      lastUserAtRef.current = Date.now();
+      activityRef.current.lastUserAt = Date.now();
       if (humanMode && session) {
         push({ kind: "msg", role: "user", text });
         void sendCommand(session, { type: "human.message", transferId: humanMode.transferId, text });
         return;
       }
       if (statusRef.current === "connected") {
-        lastUserAtRef.current = Date.now();
+        activityRef.current.lastUserAt = Date.now();
         conversation.sendUserMessage(text);
         if (mode === "text") push({ kind: "msg", role: "user", text });
       } else push({ kind: "note", text: lang === "ar" ? "ابدأ المحادثة أولاً" : "Start the conversation first" });
@@ -600,7 +600,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     () => ({
       say: (text) => { if (statusRef.current === "connected" || humanMode) say(text); else void ask(text); },
       command: async (cmd) => {
-        lastUserAtRef.current = Date.now();
+        activityRef.current.lastUserAt = Date.now();
         const current = sessionRef.current;
         if (!current) return { ok: false, error: "no session" };
         const result = await sendCommand(current, { ...cmd, ...(["booking.select", "order.recover"].includes(String(cmd.type)) && !cmd.idempotencyKey ? { idempotencyKey: crypto.randomUUID() } : {}) })
@@ -618,7 +618,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         return result;
       },
       selection: (selection) => {
-        lastUserAtRef.current = Date.now();
+        activityRef.current.lastUserAt = Date.now();
         acknowledge(JSON.stringify({ draftSelection: { kind: selection.kind, label: selection.label, cardLast4: selection.cardLast4 }, applied: false }));
       },
       openLink: (url) => window.open(url, "_blank", "noopener"),
@@ -654,6 +654,8 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       : "";
   const voiceState = !connected ? "off" : conversation.isSpeaking ? "speaking" : mode === "voice" ? "listening" : "idle";
 
+  const handleUserActivity = () => recordUserActivity(activityRef.current, connected ? () => conversation.sendUserActivity() : undefined);
+
   if (!open)
     return (
       <button className="launcher" dir={dir} onClick={() => setOpen(true)} aria-label={t(lang, "askVoxi")}>
@@ -664,7 +666,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     );
 
   return (
-    <div className={`widget ${expanded ? "expanded" : ""} state-${voiceState}`} dir={dir} onPointerDown={() => { lastUserAtRef.current = Date.now(); if (connected) conversation.sendUserActivity(); }} onKeyDown={() => { lastUserAtRef.current = Date.now(); if (connected) conversation.sendUserActivity(); }}>
+    <div className={`widget ${expanded ? "expanded" : ""} state-${voiceState}`} dir={dir} onPointerDownCapture={handleUserActivity} onKeyDownCapture={handleUserActivity} onWheelCapture={handleUserActivity} onInputCapture={handleUserActivity}>
       <div className="widget-head">
         <div className={`orb ${voiceState}`} aria-hidden="true">
           <i /><i /><i />
@@ -833,7 +835,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           </button>
         ) : null}
         <div className="composer">
-          <input value={input} placeholder={mode === "idle" && !humanMode ? t(lang, "tapToTalk") : t(lang, "placeholder")} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { say(input); setInput(""); } }} onFocus={() => connected && conversation.sendUserActivity()} disabled={mode === "idle" && !humanMode} />
+          <input value={input} placeholder={mode === "idle" && !humanMode ? t(lang, "tapToTalk") : t(lang, "placeholder")} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { say(input); setInput(""); } }} onFocus={handleUserActivity} disabled={mode === "idle" && !humanMode} />
           <button className="sendbtn" disabled={(!connected && !humanMode) || !input.trim()} onClick={() => { say(input); setInput(""); }} aria-label={t(lang, "send")} title={t(lang, "send")}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
           </button>

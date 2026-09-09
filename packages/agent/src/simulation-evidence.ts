@@ -1,9 +1,29 @@
+import { TOOL_REGISTRY, type ToolName } from "@voxi/contracts";
+import { buildWebhookTools } from "./index.js";
+
 type Call = { name: string; arguments?: Record<string, unknown> };
 type ToolResult = { name: string; value?: unknown; result?: unknown; is_error?: boolean };
 export type SimulationEvidence = {
   name: string;
+  dynamic_variables?: Record<string, unknown>;
   transcript: { calls?: Call[]; results?: ToolResult[]; tool_calls?: Call[]; tool_results?: ToolResult[] }[];
 };
+
+// Read the actual generated bindings: a contract field can override a shared dynamic property.
+// Never manufacture a clock, contact detail, ID or required action argument to make a trace pass.
+const injectedBindings = new Map(
+  buildWebhookTools({
+    conciergeUrl: "https://fixture.invalid",
+    toolSecretHeader: { secret_id: "fixture-not-used" },
+  }).map((tool) => [
+    tool.name,
+    Object.entries(tool.api_schema.request_body_schema.properties).flatMap(([field, prop]) =>
+      "dynamic_variable" in prop && typeof prop.dynamic_variable === "string"
+        ? [[field, prop.dynamic_variable] as const]
+        : [],
+    ),
+  ]),
+);
 
 function itemIds(value: unknown): string[] {
   if (Array.isArray(value)) return value.flatMap(itemIds);
@@ -21,6 +41,8 @@ export function auditSimulationEvidence(test: SimulationEvidence): string[] {
   const menuIds = new Set<string>();
   const foodScenario = /\b06a\b/.test(test.name);
   const seatScenario = /\b08\b/.test(test.name);
+  // This fixed spoken-text scenario ends with thanks and supplies no rating or resolution.
+  const noFeedbackScenario = /\b13a\b/.test(test.name);
   let callCount = 0;
   let contextReceived = false;
   let mapReceived = false;
@@ -30,11 +52,27 @@ export function auditSimulationEvidence(test: SimulationEvidence): string[] {
     for (const call of turn.calls ?? turn.tool_calls ?? []) {
       callCount += 1;
       const args = call.arguments ?? {};
+      if (Object.hasOwn(TOOL_REGISTRY, call.name)) {
+        const hydrated = { ...args };
+        for (const [field, variable] of injectedBindings.get(call.name as ToolName) ?? []) {
+          const value = test.dynamic_variables?.[variable];
+          if (value !== undefined && !Object.hasOwn(hydrated, field)) hydrated[field] = value;
+        }
+        const parsed = TOOL_REGISTRY[call.name as ToolName].input.safeParse(hydrated);
+        if (!parsed.success) {
+          const issues = parsed.error.issues
+            .map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`)
+            .join("; ");
+          findings.push(`Turn ${index}: ${call.name} violates its server contract (${issues}).`);
+        }
+      }
       if (call.name === "prepare_payment" && args.customer !== undefined)
         findings.push(`Turn ${index}: authenticated payment supplied an unprovided customer object.`);
       if (call.name === "pay_order")
         findings.push(`Turn ${index}: payment attempted; none of these fixtures authorizes payment.`);
-      if (seatScenario && call.name === "quick_book" && !contextReceived)
+      if (noFeedbackScenario && call.name === "submit_feedback")
+        findings.push(`Turn ${index}: feedback submitted without a guest-provided rating or resolution.`);
+      if (seatScenario && call.name === "quick_book" && args.seatPreference !== undefined && !contextReceived)
         findings.push(`Turn ${index}: usual-seat booking proceeded without verified context.`);
       if (foodScenario && call.name === "prepare_payment" && !foodMutationSucceeded)
         findings.push(`Turn ${index}: payment preparation preceded a successful food mutation.`);

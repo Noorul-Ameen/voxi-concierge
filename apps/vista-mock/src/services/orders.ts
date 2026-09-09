@@ -635,6 +635,7 @@ export type PaymentInfo = {
 
 export type CompleteReq = {
   UserSessionId: string;
+  ExpectedVersion?: number;
   CustomerEmail: string;
   CustomerName: string;
   CustomerPhone: string;
@@ -781,7 +782,11 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
       )[0];
       if (booking) return { booking, order: fresh, alreadyCompleted: true };
     }
-    if (!fresh || fresh.version !== order.version)
+    if (
+      !fresh ||
+      fresh.version !== order.version ||
+      (req.ExpectedVersion != null && fresh.version !== req.ExpectedVersion)
+    )
       throw new VistaError(
         RC.GENERAL,
         RC.INVALID_STATE,

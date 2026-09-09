@@ -1483,7 +1483,8 @@
               "back",
               "aisle",
               "any"
-            ]
+            ],
+            "description": "Omit for 'my usual seats'; the backend infers authenticated history. Set only an explicit front/middle/back/aisle/any choice from the guest or a verified current get_session_context result. Never guess."
           },
           "sessionKey": {
             "type": "string",
@@ -1974,7 +1975,8 @@
           },
           "date": {
             "type": "string",
-            "pattern": "^(\\d{4}-\\d{2}-\\d{2}|today|tonight|tomorrow|day after tomorrow|weekend|this weekend|next weekend|(next )?(mon|tues|wednes|thurs|fri|satur|sun)day)$"
+            "pattern": "^(\\d{4}-\\d{2}-\\d{2}|today|tonight|tomorrow|day after tomorrow|weekend|this weekend|next weekend|(next )?(mon|tues|wednes|thurs|fri|satur|sun)day)$",
+            "description": "Requested date: today, tonight, tomorrow, a weekday or YYYY-MM-DD. Put relative words such as 'tonight' here, never in a clock field. Omit when the guest did not specify a date; the backend resolves its default in Dubai."
           },
           "cinemaName": {
             "type": "string",
@@ -1983,15 +1985,17 @@
           "time": {
             "type": "string",
             "pattern": "^\\d{2}:\\d{2}$",
-            "description": "Explicit target time in 24-hour HH:mm, overriding preferred timing"
+            "description": "Clock time only, in 24-hour HH:mm (for example 22:00). Set only when the guest supplied a clock time. Never send tonight, night, evening or another word. Omit when unspecified so backend history ranks the timing; put relative dates in date."
           },
           "timeFrom": {
             "type": "string",
-            "pattern": "^\\d{2}:\\d{2}$"
+            "pattern": "^\\d{2}:\\d{2}$",
+            "description": "Start of an explicitly requested clock window, 24-hour HH:mm only (for example 16:00). Omit when no window start was specified; never send relative-date or time-of-day words."
           },
           "timeTo": {
             "type": "string",
-            "pattern": "^\\d{2}:\\d{2}$"
+            "pattern": "^\\d{2}:\\d{2}$",
+            "description": "End of an explicitly requested clock window, 24-hour HH:mm only (for example 18:00). Omit when no window end was specified; never send relative-date or time-of-day words."
           },
           "limit": {
             "type": "integer",
@@ -4594,7 +4598,7 @@
     },
     "/tools/prepare_payment": {
       "post": {
-        "summary": "Create the payment summary the customer must confirm. For CARD / SAVED_CARD / APPLE_PAY / SAMSUNG_PAY it opens the secure Review & Pay sheet in the widget — the guest completes payment there and you do NOT call pay_order. For VOX_CREDIT / SHARE_POINTS read the summary, get a yes, then call pay_order with the confirmationId. Never read the confirmationId aloud.",
+        "summary": "Create a fresh payment summary only after all requested basket changes have finished. First resolve queued/running edits with get_action_result. If this returns needs:pending_basket or needs:review_updated_basket, check returned pendingActions, establish each change's outcome, explain failures, then call prepare_payment again for the actual updated basket; an earlier total or confirmation is not valid. For CARD / SAVED_CARD / APPLE_PAY / SAMSUNG_PAY it opens the secure Review & Pay sheet — the guest pays there; do NOT call pay_order. For VOX_CREDIT / SHARE_POINTS read the fresh summary, get confirmation, then call pay_order with that confirmationId. Never read the confirmationId aloud.",
         "tags": [
           "reads"
         ],
@@ -4681,7 +4685,7 @@
     },
     "/tools/quick_book": {
       "post": {
-        "summary": "Book from the guest's stated movie, cinema, date, time, ticket count and seat preference. Explicit choices override history. Uses the inferred cinema when not stated. Unknown ticket count returns needs:tickets and a quantity selector without holding seats. Once known, holds seats and shows a compact order review with optional snacks before one payment. Unavailable shows return alternatives. Returns the result inline; repeated idempotencyKey replays it.",
+        "summary": "Book using the guest's known choices; explicit choices override history. Before supplying profile-derived values, call get_session_context; otherwise omit them for backend inference. Omit seatPreference for 'my usual seats'. Unknown ticket count returns needs:tickets without holding seats. Once known, holds seats and shows an editable review with optional snacks before one payment. Unavailable shows return alternatives. Returns inline; repeated idempotencyKey replays the result.",
         "tags": [
           "actions"
         ],
@@ -6421,7 +6425,7 @@
     },
     "/tools/submit_feedback": {
       "post": {
-        "summary": "Record the end-of-chat feedback rating.",
+        "summary": "Record only a rating the guest explicitly gave on the 1–5 scale. Never invent a rating from thanks, a goodbye, positive sentiment or a successful journey. Include resolved only if the guest explicitly said whether their issue was resolved; otherwise omit it. A polite ending alone is not feedback submission.",
         "tags": [
           "actions"
         ],

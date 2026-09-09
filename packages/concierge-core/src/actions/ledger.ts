@@ -13,6 +13,7 @@ import { schema as S, prefixedId } from "@voxi/db";
  */
 import { and, eq, sql } from "drizzle-orm";
 import { type EventBus, appendEvent } from "../events.js";
+import { BASKET_ACTION_TYPES, invalidatePaymentConfirmations } from "../services/checkout.js";
 import { resolveLinkedConversation } from "../services/relink.js";
 
 export type ActionRow = typeof S.actions.$inferSelect;
@@ -52,6 +53,8 @@ export async function enqueue(
   try {
     const row = await db.transaction(async (tx) => {
       const current = await resolveLinkedConversation(tx, input.conversationId, true);
+      if (BASKET_ACTION_TYPES.includes(input.type))
+        await invalidatePaymentConfirmations(tx, input.resourceKey);
       const [inserted] = await tx
         .insert(S.actions)
         .values({

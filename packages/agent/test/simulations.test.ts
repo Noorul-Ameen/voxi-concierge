@@ -77,6 +77,20 @@ describe("ElevenLabs synthetic simulation preparation", () => {
     const bankCases = tests.filter((test) => test.scenario_group === "09-bank-offer");
     expect(bankCases).toHaveLength(2);
     expect(JSON.stringify(bankCases)).toContain("ticketCount");
+    const percentOffer = bankCases.find((test) => test.id === "09a")!;
+    expect(JSON.parse(percentOffer.body.tool_mock_overrides.fixture_id_suggest_fnb[0].mock_result).ok).toBe(
+      true,
+    );
+    for (const name of ["order_fnb", "add_concessions", "prepare_payment", "pay_order"]) {
+      expect(percentOffer.body.tool_mock_overrides[`fixture_id_${name}`].every((mock) => mock.is_error)).toBe(
+        true,
+      );
+    }
+    expect(
+      tests
+        .find((test) => test.id === "13a")!
+        .body.tool_mock_overrides.fixture_id_submit_feedback.every((mock) => mock.is_error),
+    ).toBe(true);
     for (const { body } of tests) {
       const session = JSON.parse(body.tool_mock_overrides.fixture_id_get_session_context[0].mock_result);
       expect(session.data.isLoggedIn).toBe(true);

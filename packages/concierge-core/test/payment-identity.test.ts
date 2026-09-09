@@ -6,6 +6,10 @@ import type { ToolCtx } from "../src/tools/types.js";
 vi.mock("../src/services/confirmations.js", () => ({
   createConfirmation: vi.fn(async () => ({ id: "payment-confirmation" })),
 }));
+vi.mock("../src/services/checkout.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/services/checkout.js")>()),
+  pendingBasketActions: vi.fn(async () => []),
+}));
 
 const profile = {
   firstName: "Sara",

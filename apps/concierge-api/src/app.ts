@@ -1243,6 +1243,7 @@ function clearBookingMetadata(metadata: Record<string, unknown>) {
     "activeOrder",
     "activeOrderId",
     "fnbOrder",
+    "fnbForBookingId",
     "activeSessionKey",
     "lastBookingId",
     "bookingDraft",

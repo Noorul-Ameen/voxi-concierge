@@ -2,7 +2,7 @@
 
 This is the current source-level handover for the VOX Cinemas Virtual Assistant enhancement. Deployment and acceptance are separate: record the final service revisions, agent version and actual test evidence when promoted. Earlier documents 08, 11 and 12 contain historical snapshots and must not be used as current acceptance evidence.
 
-Current verification is recorded in the [dated acceptance record](14-enhancement-acceptance.md): 177 local tests and 11 builds passed; lint retains 205 warnings. V4 provider simulations are still running, production deployment has not occurred, and actual voice listening is unverified.
+Current verification is recorded in the [dated acceptance record](14-enhancement-acceptance.md): **224 local tests across 34 files passed without failures or skips; 11 builds passed; lint has 0 errors and 212 warnings**. V9 scored 49/51 with no partial tool-audit failures, but a wrong spoken price remains an acceptance failure. V10's 17 variants × 3 repeats have been invoked on validation version `agtvrsn_2201m243pa2qfq8b35nsrae8swha`; results and the next PR CI run are pending. Main is not promoted, the application is not deployed, and actual voice listening is unverified.
 
 ## Agreed product choices
 

@@ -8,8 +8,8 @@
  * order_fnb     add to the unpaid basket, or a separate F&B order after ticket payment
  */
 import { createHash } from "node:crypto";
-import { ErrorCodes } from "@voxi/contracts";
-import { schema as S, prefixedId } from "@voxi/db";
+import { DomainError, ErrorCodes } from "@voxi/contracts";
+import { schema as S } from "@voxi/db";
 import {
   asEmirate,
   describeBenefit,
@@ -21,10 +21,12 @@ import {
 } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 import { eq, sql } from "drizzle-orm";
+import { renewLease } from "../actions/ledger.js";
 import { appendEvent } from "../events.js";
 import type { Cinema, Film, Session } from "../services/catalog.js";
 import { updateConversation } from "../services/conversation.js";
 import { fmtDate, fmtTime, joinList, money, t } from "../services/format.js";
+import { beginInlineBasketMutation, finishInlineBasketMutation } from "../services/inline-mutation.js";
 import { buildBookingState } from "../services/order-state.js";
 import { loadCustomer } from "./customer.js";
 import { filmCard, sessionCard } from "./movies.js";
@@ -43,6 +45,7 @@ type Meta = {
   lastCinemaId?: string;
   lastBookingId?: string;
   fnbOrder?: string | null;
+  fnbForBookingId?: string;
   usualCinemaId?: string;
   pendingBooking?: Record<string, unknown>;
   bookingState?: Record<string, unknown>;
@@ -87,6 +90,31 @@ export function sessionUnavailableReason(s: Session, nowLocal: string) {
 
 function holdExpired(o: VistaOrder, now = Date.now()) {
   return o.State === "expired" || (!!o.ExpiryDateUtc && new Date(o.ExpiryDateUtc).getTime() <= now);
+}
+
+/** A food edit replaces only the named items; omitted items and modifiers remain in the basket. */
+function mergeFoodItems(
+  order: VistaOrder | null,
+  items: { itemId: string; quantity: number; modifierIds?: string[] }[],
+) {
+  const existing = (order?.Concessions ?? []) as {
+    ItemId: string;
+    Quantity: number;
+    Modifiers?: (string | { Id: string })[];
+  }[];
+  const modifiers = (line: (typeof existing)[number] | undefined) =>
+    line?.Modifiers?.map((modifier) => (typeof modifier === "string" ? modifier : modifier.Id));
+  const requested = new Set(items.map((item) => item.itemId));
+  return [
+    ...existing
+      .filter((line) => !requested.has(line.ItemId))
+      .map((line) => ({ ItemId: line.ItemId, Quantity: line.Quantity, Modifiers: modifiers(line) })),
+    ...items.map((item) => ({
+      ItemId: item.itemId,
+      Quantity: item.quantity,
+      Modifiers: item.modifierIds ?? modifiers(existing.find((line) => line.ItemId === item.itemId)),
+    })),
+  ];
 }
 
 async function expiredChoice(
@@ -1084,28 +1112,28 @@ const quickHandlers: Pick<
       !input.bookingId && activeId ? (await ctx.vista.getOrder(activeId).catch(() => null))?.Order : null;
     if (active && !["paid", "cancelled"].includes(active.State) && active.Sessions?.[0]?.Tickets?.length) {
       if (holdExpired(active)) return expiredChoice(ctx, activeId!, true, active);
-      const requestedIds = new Set(items.map((i) => i.itemId));
-      const preserved = (active.Concessions ?? [])
-        .filter((c: any) => !requestedIds.has(c.ItemId))
-        .map((c: any) => ({ ItemId: c.ItemId, Quantity: c.Quantity, Modifiers: c.Modifiers }));
       const r = await ctx.vista.addConcessions({
         UserSessionId: activeId!,
         CinemaId: active.CinemaId,
         Replace: true,
-        Concessions: [
-          ...preserved,
-          ...items.map((i) => ({ ItemId: i.itemId, Quantity: i.quantity, Modifiers: i.modifierIds })),
-        ],
+        Concessions: mergeFoodItems(active, items),
       });
+      const failed = Array.isArray(r.FailedConcessions) ? r.FailedConcessions : [];
       const result = await bookingReview(
         ctx,
         r.Order,
-        t(
-          lang,
-          "Snacks added. Your tickets and food are ready for one payment.",
-          "تمت إضافة الوجبات الخفيفة. التذاكر والطعام جاهزان للدفع معاً.",
-        ),
-        { combinedCheckout: true },
+        failed.length
+          ? t(
+              lang,
+              "Some snacks could not be added. Please review what is in your basket.",
+              "تعذرت إضافة بعض الوجبات الخفيفة. يرجى مراجعة محتويات طلبك.",
+            )
+          : t(
+              lang,
+              "Snacks added. Your tickets and food are ready for one payment.",
+              "تمت إضافة الوجبات الخفيفة. التذاكر والطعام جاهزان للدفع معاً.",
+            ),
+        { combinedCheckout: true, ...(failed.length ? { failed, needs: "food_review" } : {}) },
       );
       await appendEvent(ctx.db, ctx.events, ctx.conversation.id, "order.updated", {
         userSessionId: activeId,
@@ -1120,18 +1148,32 @@ const quickHandlers: Pick<
         ErrorCodes.NOT_FOUND,
         t(lang, "Pick a show first, then we can add snacks.", "اختر عرضاً أولاً، ثم نضيف الوجبات الخفيفة."),
       );
-    const existing = meta(ctx).fnbOrder;
-    if (existing) await ctx.vista.cancelOrder(existing).catch(() => undefined);
-    const userSessionId = `usid_${createHash("sha256").update(`${ctx.conversation.id}:${ctx.toolCallId}:food`).digest("hex").slice(0, 24)}`;
+    const existingId = meta(ctx).fnbOrder;
+    const existingOrder = existingId ? (await ctx.vista.getOrder(existingId))?.Order : null;
+    const sameBooking =
+      meta(ctx).fnbForBookingId === bookingId ||
+      (!meta(ctx).fnbForBookingId && !input.bookingId && meta(ctx).lastBookingId === bookingId);
+    const reusable =
+      existingOrder &&
+      !["paid", "cancelled", "expired"].includes(existingOrder.State) &&
+      !holdExpired(existingOrder) &&
+      sameBooking &&
+      existingOrder.CinemaId === booking.CinemaId &&
+      String(existingOrder.Sessions?.[0]?.SessionId) === String(booking.SessionId) &&
+      !(existingOrder.Sessions?.[0]?.Tickets?.length ?? 0);
+    const userSessionId = reusable
+      ? existingId!
+      : `usid_${createHash("sha256").update(`${ctx.conversation.id}:${ctx.toolCallId}:food`).digest("hex").slice(0, 24)}`;
     const r = await ctx.vista.addConcessions({
       UserSessionId: userSessionId,
       CinemaId: booking.CinemaId,
       SessionId: booking.SessionId,
       Replace: true,
-      Concessions: items.map((i) => ({ ItemId: i.itemId, Quantity: i.quantity, Modifiers: i.modifierIds })),
-    } as any);
+      Concessions: mergeFoodItems(reusable ? existingOrder! : null, items),
+    });
     await setMeta(ctx, {
       fnbOrder: userSessionId,
+      fnbForBookingId: bookingId,
       activeOrder: userSessionId,
       activeSessionKey: `${booking.CinemaId}-${booking.SessionId}`,
       lastCinemaId: booking.CinemaId,
@@ -1139,6 +1181,23 @@ const quickHandlers: Pick<
     const cinema = await ctx.catalog.cinema(booking.CinemaId);
     const summary = orderSummary(r.Order, lang, ctx.nowLocal, cinemaName(cinema, lang));
     await appendEvent(ctx.db, ctx.events, ctx.conversation.id, "order.updated", { userSessionId, summary });
+    const failed = Array.isArray(r.FailedConcessions) ? r.FailedConcessions : [];
+    if (failed.length)
+      return ok(
+        { userSessionId, fnbOrder: userSessionId, order: summary, failed, needs: "food_review" },
+        t(
+          lang,
+          "Some snacks could not be added. Please review what is in your basket before payment.",
+          "تعذرت إضافة بعض الوجبات الخفيفة. يرجى مراجعة محتويات طلبك قبل الدفع.",
+        ),
+        {
+          type: "order",
+          title: t(lang, "Food & drinks", "المأكولات والمشروبات"),
+          items: [summary],
+          meta: { userSessionId, stage: "food", failed },
+          actions: [{ label: t(lang, "See full menu", "القائمة الكاملة"), value: "menu:open" }],
+        },
+      );
     const line = t(
       lang,
       `${joinList(summary.concessions.map((c) => `${c.quantity}× ${c.description}`))} — ${summary.total}, ready at the Candy Bar for your ${booking.FilmTitle} show.`,
@@ -1187,31 +1246,76 @@ async function runQuick<N extends "quick_book" | "recover_order" | "order_fnb">(
       await tx.select().from(S.actions).where(eq(S.actions.idempotencyKey, idempotencyKey))
     )[0];
     if (existing?.result?.toolResult) return existing.result.toolResult as ToolResult;
-    const fresh = (
-      await tx.select().from(S.conversations).where(eq(S.conversations.id, ctx.conversation.id))
-    )[0];
-    if (fresh) ctx.conversation.metadata = fresh.metadata;
+    if (existing)
+      return err(
+        ErrorCodes.ORDER_INVALID_STATE,
+        "That request hasn't confirmed its result. Check the current order before retrying.",
+        true,
+      );
+    let started: Awaited<ReturnType<typeof beginInlineBasketMutation>>;
+    try {
+      started = await beginInlineBasketMutation(ctx.db, {
+        conversationId: ctx.conversation.id,
+        type: name,
+        idempotencyKey,
+        payload: input as Record<string, unknown>,
+        toolCallId: ctx.toolCallId,
+        authGeneration: Number(ctx.conversation.metadata?.widgetAuthGeneration ?? 0),
+      });
+    } catch (error) {
+      if (error instanceof DomainError)
+        return err(
+          error.code,
+          error.message,
+          error.retryable,
+          error.detail as Record<string, unknown> | undefined,
+        );
+      throw error;
+    }
+    Object.assign(ctx.conversation, started.conversation);
+    const previousMutation = ctx.checkoutMutationActionId;
+    ctx.checkoutMutationActionId = started.action.id;
+    let renewing = false;
+    const renewal = setInterval(async () => {
+      if (renewing) return;
+      renewing = true;
+      try {
+        await renewLease(ctx.db, started.action);
+      } catch {
+        /* Completion is fenced if the lease cannot be renewed. */
+      } finally {
+        renewing = false;
+      }
+    }, 30_000);
+    renewal.unref();
     const handler = quickHandlers[name] as (
       ctx: ToolCtx,
       input: Parameters<ToolHandlers[N]>[1],
     ) => Promise<ToolResult>;
-    const result = await handler(ctx, input);
-    await tx.insert(S.actions).values({
-      id: prefixedId("act", 12),
-      conversationId: ctx.conversation.id,
-      type: name,
-      resourceKey: `conversation:${ctx.conversation.id}`.slice(0, 96),
-      idempotencyKey,
-      input: input as Record<string, unknown>,
-      status: result.ok ? "succeeded" : "failed",
-      attempts: 1,
-      maxAttempts: 1,
-      result: { toolResult: result },
-      toolCallId: ctx.toolCallId,
-      startedAt: new Date(),
-      finishedAt: new Date(),
-    });
-    return result;
+    try {
+      const result = await handler(ctx, input);
+      if (!(await finishInlineBasketMutation(ctx.db, started.action, result)))
+        return err(
+          ErrorCodes.ORDER_INVALID_STATE,
+          "That request needs a fresh status check. Check the current order before retrying.",
+          true,
+        );
+      return result;
+    } catch (error) {
+      await finishInlineBasketMutation(
+        ctx.db,
+        started.action,
+        err(
+          ErrorCodes.INTERNAL,
+          "The booking change did not finish. Check the current order before retrying.",
+          true,
+        ),
+      );
+      throw error;
+    } finally {
+      clearInterval(renewal);
+      ctx.checkoutMutationActionId = previousMutation;
+    }
   });
 }
 

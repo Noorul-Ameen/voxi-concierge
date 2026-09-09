@@ -1,4 +1,4 @@
-import type { Language } from "@voxi/contracts";
+import { DomainError, type Language } from "@voxi/contracts";
 import { schema as S, nowLocalIso, prefixedId } from "@voxi/db";
 import { centsToPoints } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
@@ -10,6 +10,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import type { AppContext } from "../context.js";
 import { appendEvent } from "../events.js";
 import type { Catalog } from "../services/catalog.js";
+import { assertPaymentConsent } from "../services/checkout.js";
 import { markJourney, updateConversation } from "../services/conversation.js";
 import { fmtDateTime, joinList, money, onDateTime, seatLabels, t } from "../services/format.js";
 import { resolveLinkedConversation } from "../services/relink.js";
@@ -69,6 +70,7 @@ class ActionError extends Error {
 }
 
 function fromVista(e: unknown): ActionError {
+  if (e instanceof DomainError) return new ActionError(e.code, e.message, e.retryable, false, e.detail);
   if (e instanceof VistaClientError) {
     if (e.kind === "result") {
       const x = e.extendedResultCode ?? 0;
@@ -215,8 +217,8 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
               );
       const speech = t(
         ctx.lang,
-        `All done. ${inp.partial ? `${inp.ticketIds.length} tickets on booking` : "Booking"} ${inp.bookingId} for ${inp.filmTitle} ${onDateTime(inp.showtime, "en", ctx.nowLocal)} ${inp.partial ? "have been" : "has been"} cancelled, and ${methodText}. Your refund number is ${refundRef}. A confirmation email is on its way.`,
-        `تم بنجاح. ${inp.partial ? `${inp.ticketIds.length} تذاكر من الحجز` : "الحجز"} ${inp.bookingId} لفيلم ${inp.filmTitle} في ${fmtDateTime(inp.showtime, "ar", ctx.nowLocal)} تم إلغاؤه، و${methodText}. رقم الاسترداد ${refundRef}. سيصلك بريد تأكيد.`,
+        `All done. ${inp.partial ? `${inp.ticketIds.length} tickets on booking` : "Booking"} ${inp.bookingId} for ${inp.filmTitle} ${onDateTime(inp.showtime, "en", ctx.nowLocal)} ${inp.partial ? "have been" : "has been"} cancelled, and ${methodText}. Your refund number is ${refundRef}. The confirmation is on screen.`,
+        `تم بنجاح. ${inp.partial ? `${inp.ticketIds.length} تذاكر من الحجز` : "الحجز"} ${inp.bookingId} لفيلم ${inp.filmTitle} في ${fmtDateTime(inp.showtime, "ar", ctx.nowLocal)} تم إلغاؤه، و${methodText}. رقم الاسترداد ${refundRef}. التأكيد ظاهر على الشاشة.`,
       );
       const card = {
         ...bookingCard(r.Booking, ctx.lang, ctx.nowLocal, await cname(ctx, inp.cinemaId)),
@@ -418,8 +420,8 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           : "";
       const speech = t(
         ctx.lang,
-        `Swapped! Your new booking is ${newBooking.VistaBookingId}: ${inp.ticketCount} ticket${inp.ticketCount === 1 ? "" : "s"} for ${inp.filmTitle}, ${inp.targetExperience} at ${await cname(ctx, inp.targetCinemaId)} ${onDateTime(inp.targetShowtime, "en", ctx.nowLocal)}, seats ${seats}.${fnbText} ${diffText} The original booking ${inp.bookingId} is cancelled and new tickets are on their way by email.`,
-        `تم التبديل! حجزك الجديد ${newBooking.VistaBookingId}: ${inp.ticketCount} تذكرة لفيلم ${inp.filmTitle}، ${inp.targetExperience} في ${await cname(ctx, inp.targetCinemaId)} بتاريخ ${fmtDateTime(inp.targetShowtime, "ar", ctx.nowLocal)}، المقاعد ${seats}.${fnbText} ${diffText} تم إلغاء الحجز الأصلي ${inp.bookingId} وستصلك التذاكر الجديدة بالبريد.`,
+        `Swapped! Your new booking is ${newBooking.VistaBookingId}: ${inp.ticketCount} ticket${inp.ticketCount === 1 ? "" : "s"} for ${inp.filmTitle}, ${inp.targetExperience} at ${await cname(ctx, inp.targetCinemaId)} ${onDateTime(inp.targetShowtime, "en", ctx.nowLocal)}, seats ${seats}.${fnbText} ${diffText} The original booking ${inp.bookingId} is cancelled. Your new booking details and QR are on screen.`,
+        `تم التبديل! حجزك الجديد ${newBooking.VistaBookingId}: ${inp.ticketCount} تذكرة لفيلم ${inp.filmTitle}، ${inp.targetExperience} في ${await cname(ctx, inp.targetCinemaId)} بتاريخ ${fmtDateTime(inp.targetShowtime, "ar", ctx.nowLocal)}، المقاعد ${seats}.${fnbText} ${diffText} تم إلغاء الحجز الأصلي ${inp.bookingId}. تفاصيل الحجز الجديد ورمز QR ظاهرة على الشاشة.`,
       );
       return {
         result: {
@@ -773,47 +775,58 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         userSessionId: string;
         method: string;
         amountCents: number;
+        checkoutSnapshot?: { version: string | null; fingerprint: string };
         customer: { name: string; email: string; phone: string };
         memberId?: string;
         customerId?: string;
         paymentToken?: string;
         cinemaId: string;
       };
-      const cur = await ctx.vista.getOrder(inp.userSessionId);
-      if (!cur.Order) throw new ActionError("NOT_FOUND", "No active order");
       if (!inp.customer?.email || !inp.customer?.name)
         throw new ActionError("VALIDATION", "A name, email and mobile number are needed for the tickets");
-      const total = cur.Order.TotalValueCents as number;
-      const tender =
-        inp.method === "VOX_CREDIT"
-          ? { PaymentTenderCategory: "EWALLET", PaymentValueCents: total, MemberId: inp.memberId }
-          : inp.method === "SHARE_POINTS"
-            ? {
-                PaymentTenderCategory: "LOYALTY",
-                PaymentValueCents: total,
-                PointsRedeemed: centsToPoints(total),
-                MemberId: inp.memberId,
-              }
-            : {
-                PaymentTenderCategory: "CREDIT",
-                PaymentValueCents: total,
-                PaymentToken: inp.paymentToken,
-                CardNumber: inp.paymentToken?.startsWith("tok_") ? undefined : "4111111111111111",
-              };
-      const pay = await ctx.vista
-        .completeOrder({
-          UserSessionId: inp.userSessionId,
-          CustomerEmail: inp.customer.email,
-          CustomerName: inp.customer.name,
-          CustomerPhone: inp.customer.phone,
-          PaymentInfoCollection: [tender],
-          MemberId: inp.memberId,
-          CustomerId: inp.customerId,
-          Source: "concierge",
-        })
-        .catch((e) => {
-          throw fromVista(e);
-        });
+      // Serialize consent validation/payment against newly queued edits. Existing
+      // edits are checked explicitly: worker scheduling is not assumed to be FIFO.
+      const pay = await ctx.db.transaction(async (tx) => {
+        const current = await resolveLinkedConversation(tx, a.conversationId, true);
+        const cur = await ctx.vista.getOrder(inp.userSessionId);
+        if (!cur.Order) throw new ActionError("NOT_FOUND", "No active order");
+        if (cur.Order.State !== "paid")
+          await assertPaymentConsent(tx, a.resourceKey, a.input, cur.Order, current?.id ?? a.conversationId);
+        // An already-paid provider order is an idempotent receipt recovery, never another charge.
+        const total = cur.Order.State === "paid" ? (cur.Order.TotalValueCents as number) : inp.amountCents;
+        const tender =
+          inp.method === "VOX_CREDIT"
+            ? { PaymentTenderCategory: "EWALLET", PaymentValueCents: total, MemberId: inp.memberId }
+            : inp.method === "SHARE_POINTS"
+              ? {
+                  PaymentTenderCategory: "LOYALTY",
+                  PaymentValueCents: total,
+                  PointsRedeemed: centsToPoints(total),
+                  MemberId: inp.memberId,
+                }
+              : {
+                  PaymentTenderCategory: "CREDIT",
+                  PaymentValueCents: total,
+                  PaymentToken: inp.paymentToken,
+                  CardNumber: inp.paymentToken?.startsWith("tok_") ? undefined : "4111111111111111",
+                };
+        return ctx.vista
+          .completeOrder({
+            UserSessionId: inp.userSessionId,
+            ExpectedVersion:
+              inp.checkoutSnapshot?.version != null ? Number(inp.checkoutSnapshot.version) : undefined,
+            CustomerEmail: inp.customer.email,
+            CustomerName: inp.customer.name,
+            CustomerPhone: inp.customer.phone,
+            PaymentInfoCollection: [tender],
+            MemberId: inp.memberId,
+            CustomerId: inp.customerId,
+            Source: "concierge",
+          })
+          .catch((e) => {
+            throw fromVista(e);
+          });
+      });
       const b = pay.Booking!;
       ctx.catalog.invalidateSessions(b.CinemaId);
       const fnbOrderPaid =
@@ -831,13 +844,13 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       const speech = fnbOnly
         ? t(
             ctx.lang,
-            `Done — food order ${b.VistaBookingId} is paid. Show the QR at the Candy Bar and it'll be ready for you. Enjoy the show!`,
-            `تم — طلب الطعام ${b.VistaBookingId} مدفوع. أظهر رمز QR عند الكاندي بار وسيكون جاهزاً. استمتع بالعرض!`,
+            `Food order ${b.VistaBookingId} is paid. Your items and QR are on screen. Enjoy the show!`,
+            `تم دفع طلب الطعام ${b.VistaBookingId}. الأصناف ورمز QR ظاهرة على الشاشة. استمتع بالعرض!`,
           )
         : t(
             ctx.lang,
-            `You're booked — reference ${b.VistaBookingId}. The QR is on screen and the tickets are in your email; just scan it at the entrance. Want popcorn or a drink for the show?`,
-            `تم الحجز — الرقم ${b.VistaBookingId}. رمز QR على الشاشة والتذاكر في بريدك؛ امسحه عند المدخل. هل تريد فشاراً أو مشروباً للعرض؟`,
+            `You're booked — reference ${b.VistaBookingId}. Your booking details and QR are on screen. Enjoy the show!`,
+            `تم الحجز — الرقم ${b.VistaBookingId}. تفاصيل الحجز ورمز QR ظاهرة على الشاشة. استمتع بالعرض!`,
           );
       return {
         result: { speech, bookingId: b.VistaBookingId, qrPayload: b.QrPayload, booking: card },
@@ -908,24 +921,11 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       };
       const n = (await ctx.db.select({ n: sql<number>`count(*)` }).from(S.complaints))[0]!.n;
       const id = `CMP-${new Date().getUTCFullYear()}-${String(Number(n) + 1).padStart(6, "0")}`;
-      const resolution =
-        inp.category === "refund"
-          ? t(
-              ctx.lang,
-              "A customer care specialist will review the refund within 24 hours.",
-              "سيراجع أخصائي خدمة العملاء الاسترداد خلال 24 ساعة.",
-            )
-          : inp.category === "fnb" || inp.category === "facility"
-            ? t(
-                ctx.lang,
-                "The cinema manager will be informed today and you'll hear back within 48 hours.",
-                "سيتم إبلاغ مدير السينما اليوم وستصلك إجابة خلال 48 ساعة.",
-              )
-            : t(
-                ctx.lang,
-                "Our team will respond by email within 48 hours.",
-                "سيرد فريقنا عبر البريد الإلكتروني خلال 48 ساعة.",
-              );
+      const resolution = t(
+        ctx.lang,
+        "Your complaint details are saved. Keep this reference for any follow-up.",
+        "تم حفظ تفاصيل شكواك. احتفظ بهذا الرقم لأي متابعة.",
+      );
       await ctx.db.insert(S.complaints).values({
         id,
         conversationId: a.conversationId,

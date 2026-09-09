@@ -59,7 +59,11 @@ describe("independent simulation trace checks", () => {
           calls: [
             {
               name: "prepare_payment",
-              arguments: { method: "SAVED_CARD", customer: { email: "made-up@example.invalid" } },
+              arguments: {
+                userSessionId: "fixture_order",
+                method: "SAVED_CARD",
+                customer: { name: "Invented Name", email: "made-up@example.invalid", phone: "+971500000000" },
+              },
             },
           ],
         },
@@ -79,7 +83,18 @@ describe("independent simulation trace checks", () => {
       auditSimulationEvidence({
         name: "VOX Enhancement 10b",
         transcript: [
-          { calls: [{ name: "pay_order", arguments: { confirmed: true } }] },
+          {
+            calls: [
+              {
+                name: "pay_order",
+                arguments: {
+                  userSessionId: "fixture_order",
+                  confirmationId: "fixture_confirmation",
+                  confirmed: true,
+                },
+              },
+            ],
+          },
           {
             results: [
               { name: "pay_order", value: { ok: false, error: { code: "UNEXPECTED_SIMULATION_TOOL" } } },
@@ -136,7 +151,11 @@ describe("independent simulation trace checks", () => {
         },
       ],
     };
-    const payment = { tool_calls: [{ name: "prepare_payment", arguments: { method: "CARD" } }] };
+    const payment = {
+      tool_calls: [
+        { name: "prepare_payment", arguments: { userSessionId: "fixture_order", method: "CARD" } },
+      ],
+    };
     const prefix = [
       { tool_results: [{ name: "suggest_fnb", result: JSON.stringify(menu.results[0]?.value) }] },
       { tool_calls: add.calls },
@@ -159,5 +178,126 @@ describe("independent simulation trace checks", () => {
     });
     expect(findings).toContain("Turn 0: usual-seat booking proceeded without verified context.");
     expect(findings).toContain("No successful seat-map tool result; a spoken display claim is insufficient.");
+  });
+
+  it("accepts backend usual-seat inference but rejects an explicit unverified position", () => {
+    const map = { results: [{ name: "render_seat_map", value: { ok: true, rendered: true } }] };
+    expect(
+      auditSimulationEvidence({
+        name: "VOX Enhancement 08",
+        transcript: [{ calls: [{ name: "quick_book", arguments: { tickets: 2 } }] }, map],
+      }),
+    ).toEqual([]);
+    expect(
+      auditSimulationEvidence({
+        name: "VOX Enhancement 08",
+        transcript: [
+          { calls: [{ name: "quick_book", arguments: { tickets: 2, seatPreference: "middle" } }] },
+          map,
+        ],
+      }),
+    ).toEqual(["Turn 0: usual-seat booking proceeded without verified context."]);
+  });
+
+  it.each(["time", "timeFrom", "timeTo"])(
+    "rejects an invalid %s even when the recommendation mock succeeds",
+    (field) => {
+      const findings = auditSimulationEvidence({
+        name: "Recommendation contract",
+        transcript: [
+          {
+            tool_calls: [
+              {
+                name: "get_recommendations",
+                arguments: { language: "English", date: "tonight", [field]: "tonight" },
+              },
+            ],
+          },
+          {
+            tool_results: [
+              { name: "get_recommendations", result: JSON.stringify({ ok: true, data: { movies: [] } }) },
+            ],
+          },
+        ],
+      });
+      expect(findings).toHaveLength(1);
+      expect(findings[0]).toContain(`${field}: HH:mm`);
+    },
+  );
+
+  it("accepts actual HH:mm arguments and does not inject an unrelated dynamic clock", () => {
+    expect(
+      auditSimulationEvidence({
+        name: "Recommendation contract",
+        dynamic_variables: { time: "tonight", language: "not-a-film-language" },
+        transcript: [
+          {
+            calls: [
+              {
+                name: "get_recommendations",
+                arguments: { date: "tonight", time: "22:00", timeFrom: "20:00", timeTo: "23:00" },
+              },
+            ],
+          },
+        ],
+      }),
+    ).toEqual([]);
+    expect(
+      auditSimulationEvidence({
+        name: "Recommendation contract",
+        dynamic_variables: { time: "tonight" },
+        transcript: [{ calls: [{ name: "get_recommendations", arguments: { date: "tonight" } }] }],
+      }),
+    ).toEqual([]);
+  });
+
+  it("never replaces an invalid supplied clock with a dynamic value", () => {
+    const findings = auditSimulationEvidence({
+      name: "Recommendation contract",
+      dynamic_variables: { time: "22:00" },
+      transcript: [{ calls: [{ name: "get_recommendations", arguments: { time: "tonight" } }] }],
+    });
+    expect(findings[0]).toContain("time: HH:mm");
+  });
+
+  it("does not invent a missing required action argument from an unbound dynamic variable", () => {
+    const findings = auditSimulationEvidence({
+      name: "Payment contract",
+      dynamic_variables: { userSessionId: "fixture_order" },
+      transcript: [{ calls: [{ name: "prepare_payment", arguments: { method: "CARD" } }] }],
+    });
+    expect(findings[0]).toContain("userSessionId: Required");
+  });
+
+  it("rejects invented feedback in the thanks-only scenario even when a mock accepts it", () => {
+    expect(
+      auditSimulationEvidence({
+        name: "VOX Enhancement 13a — Concise English spoken response",
+        transcript: [
+          { tool_calls: [{ name: "submit_feedback", arguments: { rating: 5, resolved: true } }] },
+          { tool_results: [{ name: "submit_feedback", result: JSON.stringify({ ok: true }) }] },
+        ],
+      }),
+    ).toEqual(["Turn 0: feedback submitted without a guest-provided rating or resolution."]);
+  });
+
+  it("allows silent journey logging in the thanks-only scenario", () => {
+    expect(
+      auditSimulationEvidence({
+        name: "VOX Enhancement 13a",
+        transcript: [
+          { calls: [{ name: "log_journey", arguments: { journey: "movie_info", status: "completed" } }] },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("does not ban feedback in other scenarios that may explicitly collect a rating", () => {
+    expect(
+      auditSimulationEvidence({
+        name: "Explicit guest feedback",
+        transcript: [{ calls: [{ name: "submit_feedback", arguments: { rating: 4 } }] }],
+      }),
+    ).toEqual([]);
   });
 });
