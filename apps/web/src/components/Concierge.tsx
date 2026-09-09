@@ -9,7 +9,7 @@ import { isRtl, t } from "../lib/i18n";
 import { type CardActions, Cards, Feedback, seatRange } from "./Cards";
 import { type Loc, LocationBar } from "./LocationBar";
 import { AccountPanel } from "./AccountPanel";
-import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, holdSeconds, recordUserActivity, renderVerifiedSeatMap, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
+import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, directSeatMapFeedback, holdSeconds, recordUserActivity, renderVerifiedSeatMap, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
 
 
 const nid = () => crypto.randomUUID();
@@ -605,6 +605,11 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           .catch((): Awaited<ReturnType<typeof sendCommand>> => ({ ok: false, error: langRef.current === "ar" ? "انقطع الاتصال. تحقق من حالة الحجز قبل إعادة المحاولة." : "The connection was interrupted. Check the booking status before trying again." }));
         if (sessionRef.current?.token !== current.token) return { ok: false, error: langRef.current === "ar" ? "تغيرت جلسة الحساب. تحقق من الطلب مجدداً." : "Your account session changed. Check the current booking again." };
         if (result.ui) { trackOrderFromUi(result.ui); push({ kind: "cards", ui: result.ui }); }
+        const mapFeedback = directSeatMapFeedback(String(cmd.type), result, langRef.current, statusRef.current === "connected", sessionRef.current?.token === current.token);
+        if (mapFeedback) {
+          push({ kind: "note", text: mapFeedback.text, polite: true });
+          if (mapFeedback.context) acknowledge(mapFeedback.context);
+        }
         const meaningful = ["seat.select", "payment.token", "booking.select", "order.recover"].includes(String(cmd.type));
         if (meaningful && result.action && ["queued", "running"].includes(result.action.status)) {
           const completed = completedActionsRef.current.get(result.action.actionId);
@@ -752,7 +757,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
               <Feedback lang={lang} act={act} />
             </div>
           ) : (
-            <div key={it.id} className="sysnote">
+            <div key={it.id} className="sysnote" role={it.polite ? "status" : undefined} aria-live={it.polite ? "polite" : undefined} aria-atomic={it.polite ? true : undefined}>
               {it.text}
             </div>
           );

@@ -25,6 +25,16 @@ export async function renderVerifiedSeatMap(load: () => Promise<CommandResult>, 
   }
 }
 
+/** Direct navigation confirms visible UI; a paused conversation must stay paused. */
+export function directSeatMapFeedback(command: string, result: CommandResult, lang: Lang, connected: boolean, currentSession: boolean) {
+  if (command !== "seat.plan" || !currentSession || !result.ok || result.ui?.type !== "seatmap") return;
+  return {
+    text: lang === "ar" ? "خريطة المقاعد جاهزة. يمكنك الآن اختيار مقاعدك." : "Seat map ready. You can choose your seats now.",
+    context: connected ? JSON.stringify({ action: "seat_map_opened", succeeded: true, rendered: true, bookingChanged: false,
+      instruction: "The seat map is already visible. Give one brief acknowledgement without calling tools, reopening the map or changing/holding seats. Wait for the customer." }) : undefined,
+  };
+}
+
 /** Consume transport positions even when a relink repeats an already displayed event. */
 export function acceptWidgetEvent(sequences: Map<string, number>, identities: Set<string>, conversationId: string, event: WidgetEvent): boolean {
   if (event.seq <= (sequences.get(conversationId) ?? 0)) return false;
@@ -103,7 +113,7 @@ function retainSelection(previous: UiHint, next: UiHint): UiHint {
 export type TranscriptBody =
   | { kind: "msg"; role: "user" | "agent" | "human"; text: string; who?: string }
   | { kind: "cards"; ui: UiHint; archived?: boolean }
-  | { kind: "note"; text: string }
+  | { kind: "note"; text: string; polite?: boolean }
   | { kind: "feedback" };
 export type TranscriptItem = TranscriptBody & { id: string };
 

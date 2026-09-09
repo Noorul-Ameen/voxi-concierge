@@ -1,7 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, holdSeconds, recordUserActivity, renderVerifiedSeatMap, uiActionLabel, type TranscriptItem } from "../src/lib/widget-state";
+import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, directSeatMapFeedback, holdSeconds, recordUserActivity, renderVerifiedSeatMap, uiActionLabel, type TranscriptItem } from "../src/lib/widget-state";
 
 describe("authoritative widget state", () => {
+  it("acknowledges a successful direct map without requesting another map or booking change", () => {
+    const feedback = directSeatMapFeedback("seat.plan", { ok: true, ui: { type: "seatmap", items: [] } }, "en", true, true);
+    expect(feedback?.text).toContain("Seat map ready");
+    expect(JSON.parse(feedback!.context!)).toMatchObject({ action: "seat_map_opened", succeeded: true, rendered: true, bookingChanged: false });
+    expect(JSON.parse(feedback!.context!).instruction).toContain("without calling tools, reopening the map or changing/holding seats");
+    // The agent-invoked client tool already produces its own response; it gets no second acknowledgement.
+    expect(directSeatMapFeedback("render_seat_map", { ok: true, ui: { type: "seatmap", items: [] } }, "en", true, true)).toBeUndefined();
+  });
+
+  it("gives localized UI feedback while disconnected without an agent message or reconnect request", () => {
+    const feedback = directSeatMapFeedback("seat.plan", { ok: true, ui: { type: "seatmap", items: [] } }, "ar", false, true);
+    expect(feedback).toEqual({ text: "خريطة المقاعد جاهزة. يمكنك الآن اختيار مقاعدك.", context: undefined });
+  });
+
+  it("does not announce a map for failed responses, wrong UI or a stale account", () => {
+    expect(directSeatMapFeedback("seat.plan", { ok: false, error: "Unavailable" }, "en", true, true)).toBeUndefined();
+    expect(directSeatMapFeedback("seat.plan", { ok: true, ui: { type: "order", items: [] } }, "en", true, true)).toBeUndefined();
+    expect(directSeatMapFeedback("seat.plan", { ok: true, ui: { type: "seatmap", items: [] } }, "en", true, false)).toBeUndefined();
+  });
+
   it("reports seat-map success only after the awaited verified map renders", async () => {
     let resolve!: (result: { ok: boolean; ui: { type: string; items: [] } }) => void;
     const pending = new Promise<{ ok: boolean; ui: { type: string; items: [] } }>((done) => { resolve = done; });
