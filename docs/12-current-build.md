@@ -26,7 +26,7 @@ Snapshot taken 9 Sep 2026, 16:55 Dubai. Everything below is what is deployed and
 | Example host page | https://voxi-demo.up.railway.app/embed/demo.html |
 | Concierge API | https://concierge-api-production-3d90.up.railway.app (every route also under `/api/*`) |
 | OpenAPI | `GET /openapi.json` on the API |
-| Health | `GET /health` on the API |
+| Health | `GET /healthz` and `GET /readyz` on the API |
 | Prototype site using the embed | https://voxi.kris-pradip.workers.dev/ (navy theme matches it) |
 
 ## 3. Runtime architecture (as deployed)
@@ -41,7 +41,7 @@ Browser (widget, Shadow DOM)  ──WebSocket──►  ElevenLabs Agents (EU re
                          worker  ──►  vista-mock (Vista-shaped API)  ──►  Postgres
 ```
 
-Railway project `voxi-concierge` (`52e8f8a4-…`), environment production (`b67e9b17-…`), US region, Trial plan.
+Railway project `voxi-concierge` (`52e8f8a4-…`), environment production (`b67e9b17-…`), Amsterdam region (1 replica each), Trial plan.
 
 | Service | Role | Notes |
 |---|---|---|
@@ -77,16 +77,16 @@ Go-live swap point: only `packages/vista-client` changes to point at the real MA
 |---|---|
 | Agent | `agent_1001m1m6rghcfsr8nrpj5x08g16e`, EU data residency (`wss://api.eu.residency.elevenlabs.io`) |
 | Name | VOX Cinemas Virtual Assistant (Phase 1 & 2 demo) |
-| Current version | `agtvrsn_8701m2302b2ge1ttvrjq2qpqznx0` (branch `agtbrch_1701m1m6rk9vfpvr3dajwz6ak3eg`) |
+| Current version | `agtvrsn_2601m233vgage39vp489mymzkdwv` (branch `agtbrch_1701m1m6rk9vfpvr3dajwz6ak3eg`); previous `agtvrsn_8701m2302…` differs only in TTS model/expressive mode and `speculative_turn` |
 | LLM | gemini-3.6-flash |
-| Voices | EN eleven_flash_v2 (`cgSgspJ2msm6clMCkdW9`) · AR preset flash v2.5 |
+| Voices | voice `cgSgspJ2msm6clMCkdW9`; TTS model **eleven_v3_conversational (expressive)** since a UI edit at 16:56 Dubai on 9 Sep (was eleven_flash_v2 in every conversation up to 16:45) · AR preset flash v2.5 |
 | ASR | Scribe v2 realtime, keyword boosts for cinema/film names |
 | Tools | **56** — 44 webhook (`/tools/*`, header `x-voxi-key`) + 12 client tools (render cards, seat map, QR, trailer, payment sheet, language switch, transfer UI, log journey…) |
 | Newest tools | quick_book, resume_order, recover_order, suggest_fnb, order_fnb (ids in `infra/elevenlabs-tool-ids.json`) |
-| Knowledge base | 49 docs (about VOX, 22 cinemas, 11 experiences, booking/manage, checkout & receipts, offers, refund policy, T&Cs, FAQ, age restrictions, Arabic glossary…), multilingual RAG (e5-large) |
+| Knowledge base | 12 attached documents (consolidated from the 49 source files in `packages/agent/kb`: refunds, age restrictions, booking/loyalty, about VOX & Customer Care, Arabic glossary, app/EATS/genres, offers, T&Cs, FAQ, experiences, UAE locations, checkout & receipts), multilingual RAG (e5-large, 20 chunks, distance 0.6) |
 | First message | `{{greetingEn}}` / AR preset `{{greetingAr}}` — member: "Hi {firstName}, welcome back. How can I help you today?" · guest: "Hi there, welcome to VOX Cinemas. How can I help you today?" |
 | Dynamic variables | conversationId, customerId, memberId, channel, language, firstName, greetingEn, greetingAr |
-| Turn config | silence end-call 180 s, max duration 30 min |
+| Turn config | turn_v3, turn timeout 8 s, speculative turns on, silence end-call 180 s, max duration 30 min; LLM temperature 0, minimal reasoning |
 | Origin allowlist | empty (widget may be embedded on any page) |
 | Analysis | evaluation criteria: confirmation_before_action, no_hallucinated_facts, language_match · data collection: outcome, topics, sentiment, language_used |
 | Post-call webhook | not configured (optional, see §10) |
