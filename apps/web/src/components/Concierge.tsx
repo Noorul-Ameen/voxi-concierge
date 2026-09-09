@@ -253,6 +253,15 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           if (sm && (sm.state === "paid" || sm.state === "cancelled" || sm.state === "expired")) setOrder(null);
           else setOrder({ userSessionId: e.userSessionId, expiresAtUtc: sm?.expiresAtUtc, totalCents: sm?.totalCents, filmTitle: sm?.filmTitle, seats: sm?.seats });
           warnedRef.current = {};
+          // keep an open Review & Pay sheet for this order in sync (offer applied, points redeemed, F&B added)
+          if (sm)
+            setItems((xs) =>
+              xs.map((it) =>
+                it.kind === "cards" && it.ui.type === "payment" && it.ui.meta?.userSessionId === e.userSessionId
+                  ? { ...it, ui: { ...it.ui, items: [{ ...(it.ui.items?.[0] ?? {}), ...sm }], meta: { ...it.ui.meta, amountCents: sm.totalCents, expiresAtUtc: sm.expiresAtUtc ?? it.ui.meta?.expiresAtUtc, vat: { beforeVatCents: (sm.totalCents ?? 0) - (sm.taxCents ?? 0), vatCents: sm.taxCents ?? 0, rate: 5 } } } }
+                  : it,
+              ),
+            );
           break;
         }
         case "transfer.status":
