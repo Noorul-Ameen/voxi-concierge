@@ -200,6 +200,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     },
     onMessage: (m: { source: string; message: string }) => {
       if (!m.message) return;
+      if (m.source === "user" && m.message.startsWith("[widget]")) return; // hidden widget → agent notes
       if (m.source === "user") lastUserAtRef.current = Date.now();
       push({ kind: "msg", role: m.source === "user" ? "user" : "agent", text: m.message });
     },
@@ -346,7 +347,10 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       setHoldLeft(left);
       const w = warnedRef.current;
       const ctxNote = (text: string) => {
-        if (statusRef.current === "connected") conversation.sendContextualUpdate(text);
+        if (statusRef.current !== "connected") return;
+        // a contextual update alone never makes the agent speak — send it as a hidden "[widget]" turn as well
+        conversation.sendContextualUpdate(text);
+        conversation.sendUserMessage(`[widget] ${text}`);
       };
       if (left <= 120 && left > 45 && w.two !== o.expiresAtUtc) {
         w.two = o.expiresAtUtc;
@@ -383,7 +387,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         nudgedRef.current = Date.now();
         const left = holdLeft != null ? Math.ceil(holdLeft / 60) : null;
         push({ kind: "note", text: lang === "ar" ? `ما زلت هنا؟${left ? ` مقاعدك محجوزة لـ ${left} دقائق أخرى.` : ""}` : `Still there?${left ? ` Your seats are held for ${left} more minute${left === 1 ? "" : "s"}.` : ""}` });
-        conversation.sendContextualUpdate(`The guest has been silent for a minute with a booking in progress${left ? ` (seats held for ${left} more minutes)` : ""}. Nudge once, briefly and warmly; do not repeat the summary.`);
+        conversation.sendUserMessage(`[widget] The guest has been silent for a minute with a booking in progress${left ? ` (seats held for ${left} more minutes)` : ""}. Nudge once, briefly and warmly; do not repeat the summary.`);
       }
     }, 5000);
     return () => clearInterval(iv);

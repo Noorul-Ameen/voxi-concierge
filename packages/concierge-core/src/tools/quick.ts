@@ -61,12 +61,17 @@ function cinemaName(c: Cinema | undefined | null, lang: "en" | "ar") {
 
 /** The member's usual cinema: the one they book most, else the profile's home cinema. */
 export async function usualCinema(ctx: ToolCtx, customerId: string, homeCinemaId?: string | null) {
+  // the profile's home cinema wins; the booking history decides only when none is set
+  if (homeCinemaId) {
+    const home = await ctx.catalog.cinema(homeCinemaId);
+    if (home) return home;
+  }
   const hist = await ctx.vista
     .customerHistory(customerId)
     .catch(() => ({ history: [] as Record<string, any>[] }));
   const counts = new Map<string, number>();
   for (const h of hist.history) counts.set(h.cinemaId, (counts.get(h.cinemaId) ?? 0) + 1);
-  const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? homeCinemaId ?? null;
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
   return top ? await ctx.catalog.cinema(top) : null;
 }
 
