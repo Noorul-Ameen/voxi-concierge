@@ -203,7 +203,7 @@ export const customerTools: Pick<
     const isFamilyFilm = (genres: string[], rating?: string | null) =>
       genres.some((g) => FAMILY.has(g)) || rating === "G";
     // History informs ranking; it never forces an extra "are children joining?" question.
-    const wantLang = normaliseFilmLanguage(input.language);
+    const wantLang = normaliseFilmLanguage(input.filmLanguage ?? input.language);
     let films = (await ctx.catalog.films()).filter((f) => f.status === "now_showing");
     if (wantLang) films = films.filter((f) => similarity(f.language, wantLang) >= 0.7);
     if (input.withChildren === true) films = films.filter((f) => !/^(15|18|21)\+?$/.test(f.rating ?? ""));
