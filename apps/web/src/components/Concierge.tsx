@@ -4,7 +4,7 @@
  */
 import { type DisconnectionDetails, useConversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { type BookingHistory, type CustomerProfile, type Customer, type Lang, type Session, type UiHint, type WidgetEvent, createSession, devTool, getCustomerProfile, getSignedUrl, getState, linkConversation, sendCommand, subscribe, widgetLogin, widgetLogout } from "../lib/api";
+import { type BookingHistory, type CustomerProfile, type Customer, type Lang, type Session, type UiHint, type WidgetEvent, createSession, devTool, getCustomerProfile, getSignedUrl, getState, isAuthorizationError, linkConversation, sendCommand, sessionExpiryHandler, subscribe, widgetLogin, widgetLogout } from "../lib/api";
 import { isRtl, t } from "../lib/i18n";
 import { type CardActions, Cards, Feedback, seatRange } from "./Cards";
 import { type Loc, LocationBar } from "./LocationBar";
@@ -24,6 +24,9 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const authBusyRef = useRef(false);
   const restoreRef = useRef<Promise<void> | null>(null);
   const pendingLinkRef = useRef<Promise<void> | null>(null);
+  const endingSessionRef = useRef<Promise<void> | null>(null);
+  const expiredConnectionRef = useRef(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
   const connectionAttemptRef = useRef(0);
   const startingRef = useRef(false);
   const commitSession = useCallback((next: Session | null) => {
@@ -78,6 +81,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     try {
       await restoreRef.current;
       await pendingLinkRef.current;
+      await endingSessionRef.current;
       const s = sessionRef.current ?? (await createSession({ language: langRef.current, modality: "text" }));
       if (!sessionRef.current) commitSession(s);
       const r = await widgetLogin(s, email, password);
@@ -88,6 +92,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       }
       const next = { ...s, token: r.token ?? s.token, isLoggedIn: true, dynamicVariables: r.dynamicVariables ?? s.dynamicVariables };
       commitSession(next);
+      setSessionExpired(false);
       if (customer && customer.id !== r.customer.id) { setItems([]); setOrder(null); }
       setCustomer(r.customer);
       void refreshProfile(next);
@@ -267,22 +272,23 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const conversation = useConversation({
     clientTools,
     micMuted: muted,
-    onConnect: () => push({ kind: "note", text: lang === "ar" ? "متصل" : "Connected" }),
+    onConnect: () => { if (!expiredConnectionRef.current) push({ kind: "note", text: langRef.current === "ar" ? "متصل" : "Connected" }); },
     onDisconnect: (d?: DisconnectionDetails) => {
-      if (switchingRef.current) return;
+      if (switchingRef.current || expiredConnectionRef.current) return;
       setMode("idle");
       const why = d?.reason === "error" ? d.message : d?.reason === "agent" && d.context?.code && d.context.code !== 1000 ? `${d.context.code} ${d.context.reason ?? ""}`.trim() : "";
-      if (idleEndedRef.current) { push({ kind: "note", text: lang === "ar" ? "توقفت المحادثة بعد ثلاث دقائق من عدم النشاط. يمكنك المتابعة متى أردت." : "The conversation paused after three minutes of inactivity. Reconnect whenever you’re ready." }); return; }
-      if (why) push({ kind: "note", text: `⚠️ ${lang === "ar" ? "انقطع الاتصال" : "Connection closed"}: ${why}` });
-      else push({ kind: "note", text: lang === "ar" ? "انتهت المحادثة" : "Conversation ended" });
+      if (idleEndedRef.current) { push({ kind: "note", text: langRef.current === "ar" ? "توقفت المحادثة بعد ثلاث دقائق من عدم النشاط. يمكنك المتابعة متى أردت." : "The conversation paused after three minutes of inactivity. Reconnect whenever you’re ready." }); return; }
+      if (why) push({ kind: "note", text: `⚠️ ${langRef.current === "ar" ? "انقطع الاتصال" : "Connection closed"}: ${why}` });
+      else push({ kind: "note", text: langRef.current === "ar" ? "انتهت المحادثة" : "Conversation ended" });
       if (!switchingRef.current && !idleEndedRef.current) push({ kind: "feedback" });
     },
     onError: (m: unknown, ctx?: unknown) => {
+      if (expiredConnectionRef.current) return;
       const detail = typeof m === "string" ? m : (m as { message?: string })?.message ?? (ctx as { reason?: string })?.reason ?? "";
-      push({ kind: "note", text: `⚠️ ${detail || (lang === "ar" ? "تعذّر الاتصال بالمساعد الافتراضي — حاول مجدداً" : "Could not connect to the Virtual Assistant — please try again")}` });
+      push({ kind: "note", text: `⚠️ ${detail || (langRef.current === "ar" ? "تعذّر الاتصال بالمساعد الافتراضي — حاول مجدداً" : "Could not connect to the Virtual Assistant — please try again")}` });
     },
     onMessage: (m: { source: string; message: string }) => {
-      if (!m.message) return;
+      if (!m.message || expiredConnectionRef.current) return;
       if (m.source === "user" && m.message.startsWith("[widget]")) return; // hidden widget → agent notes
       if (m.source === "user") activityRef.current.lastUserAt = Date.now();
       push({ kind: "msg", role: m.source === "user" ? "user" : "agent", text: m.message });
@@ -290,6 +296,32 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   });
 
   statusRef.current = conversation.status;
+
+  const expireSession = (expired: Session) => {
+    ++authEpochRef.current;
+    ++connectionAttemptRef.current;
+    startingRef.current = false;
+    expiredConnectionRef.current = true;
+    switchingRef.current = true;
+    commitSession(null);
+    setSessionExpired(true);
+    setCustomer(null); setProfile(null); setHistory([]); setProfileLoading(false); setAuthErr(null); setAuthOpen(false);
+    setOrder(null); orderRef.current = null; setHoldLeft(null); warnedRef.current = {};
+    setItems([]); setInput(""); setHumanMode(null); setMode("idle"); setSseStatus("closed");
+    pendingAckRef.current.clear(); completedActionsRef.current.clear(); ackQueueRef.current = [];
+    eventSeqRef.current.clear(); eventIdsRef.current.clear();
+    if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
+    try {
+      const saved = JSON.parse(localStorage.getItem("voxi.session") ?? "null");
+      if (saved?.token === expired.token && saved.conversationId === expired.conversationId) localStorage.removeItem("voxi.session");
+    } catch { /* Never remove a newer tab's session while recovering this one. */ }
+    onAuth?.(null);
+    // End only the transport. No logout, cancellation or fresh hold is sent to the backend.
+    const ending = Promise.resolve().then(() => conversation.endSession()).catch(() => undefined).finally(() => {
+      if (endingSessionRef.current === ending) { endingSessionRef.current = null; switchingRef.current = false; }
+    });
+    endingSessionRef.current = ending;
+  };
 
   // link ElevenLabs conversation id ↔ concierge conversation
   useEffect(() => {
@@ -347,8 +379,12 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
 
   // SSE subscription to concierge events
   useEffect(() => {
-    if (!session) return;
+    if (!session || authBusy) return;
     let subscribed = true;
+    let unsub = () => {};
+    const onAuthInvalid = sessionExpiryHandler(session, authEpochRef.current,
+      () => ({ session: sessionRef.current, epoch: authEpochRef.current, busy: authBusyRef.current || !subscribed }),
+      () => { subscribed = false; unsub(); expireSession(session); });
     const isCurrent = () => subscribed && sessionRef.current?.token === session.token && sessionRef.current.conversationId === session.conversationId;
     const onEvent = (e: WidgetEvent) => {
       if (!isCurrent()) return;
@@ -400,7 +436,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           break;
       }
     };
-    const unsub = subscribe(session, onEvent, setSseStatus);
+    unsub = subscribe(session, onEvent, (status) => { if (isCurrent()) setSseStatus(status); }, onAuthInvalid);
     getState(session)
       .then((s) => {
         if (!isCurrent()) return;
@@ -409,9 +445,9 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           if (isCurrent() && result.ui) { trackOrderFromUi(result.ui); push({ kind: "cards", ui: result.ui }); }
         });
       })
-      .catch(() => undefined);
+      .catch((error) => { if (isAuthorizationError(error)) onAuthInvalid(); });
     return () => { subscribed = false; unsub(); };
-  }, [session?.conversationId, session?.token]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [session?.conversationId, session?.token, authBusy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // mic level meter
   useEffect(() => {
@@ -497,7 +533,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   }, [conversation.status]);
 
   const start = async (m: "voice" | "text") => {
-    if (startingRef.current || authBusyRef.current || statusRef.current === "connected") return;
+    if (startingRef.current || authBusyRef.current || (statusRef.current === "connected" && !expiredConnectionRef.current)) return;
     startingRef.current = true;
     const attempt = ++connectionAttemptRef.current;
     const valid = () => attempt === connectionAttemptRef.current;
@@ -507,10 +543,12 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     let watchdog: ReturnType<typeof setTimeout> | undefined;
     try {
       await restoreRef.current;
+      await endingSessionRef.current;
       if (!valid()) return;
       const s = sessionRef.current ?? (await createSession({ language: langRef.current, modality: m }));
       if (!valid()) return;
       commitSession(s);
+      setSessionExpired(false);
       const { signedUrl, agentId, wsOrigin } = await getSignedUrl(s);
       if (!valid()) return;
       const currentLang = langRef.current;
@@ -528,6 +566,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       const overrides = { agent: { language: currentLang }, conversation: { textOnly: m === "text" } } as const;
       const serverLocation = /eu\.residency/.test(wsOrigin ?? "") ? "eu-residency" : /in\.residency/.test(wsOrigin ?? "") ? "in-residency" : "us";
       const origin = { serverLocation, textOnly: m === "text" };
+      expiredConnectionRef.current = false;
       const started = signedUrl
         ? conversation.startSession({ signedUrl, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never)
         : conversation.startSession({ agentId, connectionType: "websocket", dynamicVariables: dyn, overrides, ...origin } as never);
@@ -709,13 +748,20 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       {authOpen ? <AccountPanel lang={lang} customer={customer} profile={profile} history={history} loading={profileLoading} busy={authBusy} error={authErr} onLogin={doLogin} onLogout={doLogout} onClose={() => setAuthOpen(false)} /> : null}
 
       <div className="widget-body" ref={bodyRef}>
+        {sessionExpired ? <div className="sysnote" role="alert">
+          <p>{lang === "ar" ? "انتهت صلاحية الجلسة أو تغيرت. أعد الاتصال أو سجّل الدخول مجدداً. لم نلغِ حجوزاتك." : "Your session expired or changed. Reconnect or sign in again. Your bookings have not been cancelled."}</p>
+          <div className="startbtns">
+            <button className="btn primary" onClick={() => void start("text")}>{lang === "ar" ? "إعادة الاتصال" : "Reconnect"}</button>
+            <button className="btn ghost" onClick={() => setAuthOpen(true)}>{lang === "ar" ? "تسجيل الدخول" : "Sign in"}</button>
+          </div>
+        </div> : null}
         {mode !== "idle" && !items.length && !connected ? (
           <div className="start">
             <div className="hero-orb listening"><i /><i /><i /></div>
             <p>{t(lang, "connecting")}</p>
           </div>
         ) : null}
-        {mode === "idle" && !connected && items.every((i) => i.kind === "note") ? (
+        {!sessionExpired && mode === "idle" && !connected && items.every((i) => i.kind === "note") ? (
           <div className="start">
             <div className="hero-orb"><i /><i /><i /></div>
             <h3>{lang === "ar" ? "مساعد فوكس سينما الافتراضي" : "VOX Cinemas Virtual Assistant"}</h3>

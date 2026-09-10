@@ -24,8 +24,13 @@ export type ActionRef = { actionId: string; type: string; status: string; result
 
 export type Session = { conversationId: string; token: string; language: Lang; mode: "bot" | "human"; isLoggedIn: boolean; agentId: string; dynamicVariables: Record<string, string> };
 
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) { super(message); }
+}
+export const isAuthorizationError = (error: unknown): error is ApiError => error instanceof ApiError && (error.status === 401 || error.status === 403);
+
 async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  if (!res.ok) throw new ApiError(res.status, `${res.status} ${await res.text()}`);
   return (await res.json()) as T;
 }
 
@@ -45,8 +50,8 @@ export async function sendCommand(session: Session, cmd: Record<string, unknown>
   return (await res.json()) as CommandResult;
 }
 
-export async function getState(session: Session) {
-  return json<{ conversation: Record<string, any>; transfer?: Record<string, any> }>(await fetch(`${API_BASE}/widget/state`, { headers: { authorization: `Bearer ${session.token}` } }));
+export async function getState(session: Session, signal?: AbortSignal) {
+  return json<{ conversation: Record<string, any>; transfer?: Record<string, any> }>(await fetch(`${API_BASE}/widget/state`, { headers: { authorization: `Bearer ${session.token}` }, signal }));
 }
 
 export async function getSignedUrl(session: Session): Promise<{ signedUrl?: string; agentId: string; wsOrigin?: string }> {
@@ -62,16 +67,42 @@ export async function getSignedUrl(session: Session): Promise<{ signedUrl?: stri
   return (await res.json()) as { signedUrl?: string; agentId: string; wsOrigin?: string };
 }
 
-/** Subscribe to widget events (SSE). Returns an unsubscribe function. Reconnects with backoff. */
-export function subscribe(session: Session, onEvent: (e: WidgetEvent) => void, onStatus?: (s: "open" | "closed") => void): () => void {
+/** An old expiry result must never clear a newer account, login attempt or conversation. */
+export function sessionExpiryHandler(expected: Session, epoch: number, current: () => { session: Session | null; epoch: number; busy: boolean }, expire: () => void): () => void {
+  let handled = false;
+  return () => {
+    const now = current();
+    if (handled || now.busy || now.epoch !== epoch || now.session?.token !== expected.token || now.session.conversationId !== expected.conversationId) return;
+    handled = true;
+    expire();
+  };
+}
+
+/** Retry transport failures; a confirmed authentication failure terminates this subscription. */
+export function subscribe(session: Session, onEvent: (e: WidgetEvent) => void, onStatus?: (s: "open" | "closed") => void, onAuthInvalid?: () => void): () => void {
   let es: EventSource | null = null;
   let last = 0;
   let closed = false;
   let retry = 1000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let probe: AbortController | null = null;
+  let probeTimer: ReturnType<typeof setTimeout> | undefined;
+  const stop = () => {
+    closed = true;
+    if (timer) clearTimeout(timer);
+    if (probeTimer) clearTimeout(probeTimer);
+    probe?.abort();
+    es?.close();
+  };
+  const reconnect = () => {
+    if (!closed) timer = setTimeout(connect, (retry = Math.min(retry * 2, 15000)));
+  };
   const connect = () => {
     if (closed) return;
-    es = new EventSource(`${API_BASE}/widget/events?token=${encodeURIComponent(session.token)}&after=${last}`);
+    const source = new EventSource(`${API_BASE}/widget/events?token=${encodeURIComponent(session.token)}&after=${last}`);
+    es = source;
     const handler = (ev: MessageEvent) => {
+      if (closed || es !== source) return;
       try {
         const data = JSON.parse(ev.data) as WidgetEvent;
         if (typeof data.seq === "number" && data.seq > last) last = data.seq;
@@ -80,22 +111,34 @@ export function subscribe(session: Session, onEvent: (e: WidgetEvent) => void, o
         /* ignore */
       }
     };
-    for (const t of ["ui.render", "action.queued", "action.completed", "order.updated", "transfer.status", "human.message", "language.changed", "heartbeat"]) es.addEventListener(t, handler as EventListener);
-    es.onopen = () => {
+    for (const t of ["ui.render", "action.queued", "action.completed", "order.updated", "transfer.status", "human.message", "language.changed", "heartbeat"]) source.addEventListener(t, handler as EventListener);
+    source.onopen = () => {
+      if (closed || es !== source) return;
       retry = 1000;
       onStatus?.("open");
     };
-    es.onerror = () => {
-      es?.close();
+    source.onerror = () => {
+      if (closed || es !== source || probe) return;
+      source.close();
       onStatus?.("closed");
-      if (!closed) setTimeout(connect, (retry = Math.min(retry * 2, 15000)));
+      // EventSource hides HTTP status. Confirm with the same token before clearing any account state.
+      const checking = new AbortController();
+      probe = checking;
+      probeTimer = setTimeout(() => checking.abort(), 5000);
+      void getState(session, checking.signal).then(reconnect, (error) => {
+        if (closed) return;
+        if (isAuthorizationError(error)) {
+          stop();
+          onAuthInvalid?.();
+        } else reconnect();
+      }).finally(() => {
+        if (probeTimer) clearTimeout(probeTimer);
+        if (probe === checking) probe = null;
+      });
     };
   };
   connect();
-  return () => {
-    closed = true;
-    es?.close();
-  };
+  return stop;
 }
 
 export type ReportingFilters = { days?: number; language?: string; modality?: string; channel?: string; outcome?: string; demo?: "include" | "exclude" | "only"; q?: string; limit?: number };
