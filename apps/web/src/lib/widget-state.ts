@@ -136,6 +136,47 @@ export function holdSeconds(expiresAt: string | undefined, now = Date.now()): nu
   return Math.max(0, Math.ceil((Date.parse(expiresAt) - now) / 1000));
 }
 
+export type HoldNoticeSnapshot = { token: string; conversationId: string; epoch: number; userSessionId: string; expiresAtUtc: string };
+export type HoldNotice = { kind: "none" | "clear" | "soon" | "expired"; ui?: UiHint };
+
+export function isCurrentHold(expected: HoldNoticeSnapshot, actual: HoldNoticeSnapshot | null): boolean {
+  return actual !== null && (Object.keys(expected) as (keyof HoldNoticeSnapshot)[]).every((key) => actual[key] === expected[key]);
+}
+
+/** Historical cards can carry old deadlines. Only current server state may produce a hold notice. */
+export async function verifyHoldNotice(
+  expected: HoldNoticeSnapshot,
+  current: () => HoldNoticeSnapshot | null,
+  readState: () => Promise<{ conversation: Record<string, any> }>,
+  readOrder: () => Promise<CommandResult>,
+  now: () => number = Date.now,
+): Promise<HoldNotice> {
+  const stillCurrent = () => isCurrentHold(expected, current());
+  try {
+    if (!stillCurrent()) return { kind: "none" };
+    const state = await readState();
+    if (!stillCurrent() || state.conversation?.id !== expected.conversationId) return { kind: "none" };
+    const metadata = state.conversation?.metadata;
+    if (!metadata || !Object.hasOwn(metadata, "activeOrder")) return { kind: "none" };
+    if (metadata.activeOrder !== expected.userSessionId) return { kind: "clear" };
+    const left = holdSeconds(expected.expiresAtUtc, now());
+    if (left === null || left > 120) return { kind: "none" };
+    if (left > 0) {
+      // This silent read must not emit a resume card over an active checkout sheet.
+      const booking = metadata.bookingState;
+      return { kind: booking?.userSessionId === expected.userSessionId && booking.seatHoldExpiry === expected.expiresAtUtc && ["seats", "payment"].includes(booking.currentJourneyStage) && booking.requiresFreshHold === false ? "soon" : "none" };
+    }
+    const result = await readOrder();
+    if (!stillCurrent() || !result.ok) return { kind: "none" };
+    const data = result.data;
+    if (data?.paid === true || (data?.active === false && data.expired !== true)) return { kind: "clear" };
+    if (data?.expired !== true || data.userSessionId !== expected.userSessionId || data.summary?.expiresAtUtc !== expected.expiresAtUtc) return { kind: "none" };
+    return { kind: "expired", ui: result.ui };
+  } catch {
+    return { kind: "none" };
+  }
+}
+
 /** Keep acknowledgements factual and exclude credentials and payment tokens. */
 export function actionContext(type: string, result: { ok: boolean; speech?: string; data?: Record<string, unknown>; action?: { status: string; type: string; result?: Record<string, unknown> }; error?: string }): string {
   const data = result.data ?? result.action?.result ?? {};

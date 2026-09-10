@@ -9,7 +9,7 @@ import { isRtl, t } from "../lib/i18n";
 import { type CardActions, Cards, Feedback, seatRange } from "./Cards";
 import { type Loc, LocationBar } from "./LocationBar";
 import { AccountPanel } from "./AccountPanel";
-import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, directSeatMapFeedback, holdSeconds, recordUserActivity, renderVerifiedSeatMap, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
+import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, directSeatMapFeedback, holdSeconds, isCurrentHold, recordUserActivity, renderVerifiedSeatMap, verifyHoldNotice, type HoldNoticeSnapshot, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
 
 
 const nid = () => crypto.randomUUID();
@@ -93,7 +93,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       const next = { ...s, token: r.token ?? s.token, isLoggedIn: true, dynamicVariables: r.dynamicVariables ?? s.dynamicVariables };
       commitSession(next);
       setSessionExpired(false);
-      if (customer && customer.id !== r.customer.id) { setItems([]); setOrder(null); }
+      if (customer && customer.id !== r.customer.id) { setItems([]); commitOrder(null); }
       setCustomer(r.customer);
       void refreshProfile(next);
       onAuth?.(r.customer);
@@ -127,7 +127,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       switchingRef.current = true;
       try { await conversation.endSession(); } catch { /* Backend sign-out already succeeded. */ } finally { switchingRef.current = false; }
       commitSession({ ...current, token: result.token ?? current.token, isLoggedIn: false, dynamicVariables: result.dynamicVariables ?? current.dynamicVariables });
-      setCustomer(null); setProfile(null); setHistory([]); setProfileLoading(false); setOrder(null); setItems([]); setAuthOpen(false); setMode("idle");
+      setCustomer(null); setProfile(null); setHistory([]); setProfileLoading(false); commitOrder(null); setItems([]); setAuthOpen(false); setMode("idle");
       pendingAckRef.current.clear(); completedActionsRef.current.clear(); ackQueueRef.current = [];
       onAuth?.(null);
     } catch { setAuthErr(lang === "ar" ? "تعذر تسجيل الخروج. حاول مرة أخرى." : "Could not sign out. Please try again."); }
@@ -140,9 +140,15 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const [order, setOrder] = useState<LiveOrder | null>(null);
   const orderRef = useRef<LiveOrder | null>(null);
   orderRef.current = order;
+  const commitOrder = (next: LiveOrder | null | ((previous: LiveOrder | null) => LiveOrder | null)) => {
+    const value = typeof next === "function" ? next(orderRef.current) : next;
+    orderRef.current = value;
+    setOrder(value);
+  };
   const [muted, setMuted] = useState(false);
   const [holdLeft, setHoldLeft] = useState<number | null>(null); // seconds
   const warnedRef = useRef<{ two?: string; short?: string; expired?: string }>({});
+  const holdCheckRef = useRef<{ key: string; pending: boolean; retryAt: number } | null>(null);
   const activityRef = useRef({ lastUserAt: Date.now(), lastProviderPingAt: Number.NEGATIVE_INFINITY });
   const idleEndedRef = useRef(false);
   const switchingRef = useRef(false);
@@ -306,7 +312,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     commitSession(null);
     setSessionExpired(true);
     setCustomer(null); setProfile(null); setHistory([]); setProfileLoading(false); setAuthErr(null); setAuthOpen(false);
-    setOrder(null); orderRef.current = null; setHoldLeft(null); warnedRef.current = {};
+    commitOrder(null); setHoldLeft(null); warnedRef.current = {}; holdCheckRef.current = null;
     setItems([]); setInput(""); setHumanMode(null); setMode("idle"); setSseStatus("closed");
     pendingAckRef.current.clear(); completedActionsRef.current.clear(); ackQueueRef.current = [];
     eventSeqRef.current.clear(); eventIdsRef.current.clear();
@@ -345,12 +351,12 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     if (!ui) return;
     if (ui.type === "login") { setAuthOpen(true); return; }
     if (ui.type === "qr") {
-      setOrder(null);
+      commitOrder(null);
       return;
     }
     const m = ui.meta ?? {};
     if ((ui.type === "payment" || ui.type === "order") && m.userSessionId && m.expiresAtUtc)
-      setOrder((o) => ({ ...(o ?? {}), userSessionId: String(m.userSessionId), expiresAtUtc: String(m.expiresAtUtc), totalCents: Number(m.amountCents ?? o?.totalCents ?? 0) }));
+      commitOrder((o) => ({ ...(o ?? {}), userSessionId: String(m.userSessionId), expiresAtUtc: String(m.expiresAtUtc), totalCents: Number(m.amountCents ?? o?.totalCents ?? 0) }));
   };
 
   // Same-device resume: remember the conversation so a reload/return within 30 minutes picks the booking back up.
@@ -404,9 +410,9 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           break;
         case "order.updated": {
           const sm = e.summary as Record<string, any>;
-          if (sm && (sm.state === "paid" || sm.state === "cancelled")) setOrder(null);
-          else setOrder({ userSessionId: e.userSessionId, expiresAtUtc: sm?.expiresAtUtc, totalCents: sm?.totalCents, filmTitle: sm?.filmTitle, seats: sm?.seats });
           if (sm?.expiresAtUtc !== orderRef.current?.expiresAtUtc) warnedRef.current = {};
+          if (sm && (sm.state === "paid" || sm.state === "cancelled")) commitOrder(null);
+          else commitOrder({ userSessionId: e.userSessionId, expiresAtUtc: sm?.expiresAtUtc, totalCents: sm?.totalCents, filmTitle: sm?.filmTitle, seats: sm?.seats });
           // keep an open Review & Pay sheet for this order in sync (offer applied, points redeemed, F&B added)
           if (sm)
             setItems((xs) =>
@@ -498,29 +504,50 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
 
   // The backend owns the hold expiry. Disconnecting never extends it.
   useEffect(() => {
+    let disposed = false;
+    const snapshot = (): HoldNoticeSnapshot | null => {
+      const active = orderRef.current;
+      const account = sessionRef.current;
+      return !disposed && !authBusyRef.current && account && active?.expiresAtUtc
+        ? { token: account.token, conversationId: account.conversationId, epoch: authEpochRef.current, userSessionId: active.userSessionId, expiresAtUtc: active.expiresAtUtc }
+        : null;
+    };
     const tick = () => {
       const current = orderRef.current;
       const left = holdSeconds(current?.expiresAtUtc);
       setHoldLeft(left);
       if (!current?.expiresAtUtc || left === null) return;
       const expiry = current.expiresAtUtc;
-      if (left === 0 && warnedRef.current.expired !== expiry) {
-        warnedRef.current.expired = expiry;
-        push({ kind: "note", text: lang === "ar" ? "انتهت مهلة المقاعد. احتفظنا باختياراتك؛ يمكنك طلب التحقق من المقاعد مجدداً." : "Your seat hold expired. Your choices are saved—check availability again when you’re ready." });
-        const currentSession = sessionRef.current;
-        if (currentSession) void sendCommand(currentSession, { type: "order.state", userSessionId: current.userSessionId }).then((result) => {
-          if (sessionRef.current?.token === currentSession.token && result.ui) push({ kind: "cards", ui: result.ui });
-        }).catch(() => undefined);
-        if (statusRef.current === "connected") conversation.sendContextualUpdate("The seat hold expired. Choices are preserved. Ask before recover_order confirmed:true; never automatically hold seats or restart the timer.");
-      } else if (left > 0 && left <= 120 && warnedRef.current.two !== expiry) {
-        warnedRef.current.two = expiry;
-        push({ kind: "note", text: lang === "ar" ? "تبقى أقل من دقيقتين على مهلة المقاعد." : "Less than two minutes remain on your seat hold." });
-      }
+      const kind = left === 0 ? "expired" : "two";
+      if (left > 120 || warnedRef.current[kind] === expiry) return;
+      const expected = snapshot();
+      const currentSession = sessionRef.current;
+      if (!expected || !currentSession) return;
+      const key = `${expected.token}:${expected.epoch}:${expected.userSessionId}:${expiry}:${kind}`;
+      const previous = holdCheckRef.current;
+      if (previous?.key === key && (previous.pending || previous.retryAt > Date.now())) return;
+      const check = { key, pending: true, retryAt: 0 };
+      holdCheckRef.current = check;
+      void verifyHoldNotice(expected, snapshot, () => getState(currentSession),
+        () => sendCommand(currentSession, { type: "order.state", userSessionId: expected.userSessionId }))
+        .then((notice) => {
+          if (!isCurrentHold(expected, snapshot())) return;
+          if (notice.kind === "clear") { commitOrder(null); setHoldLeft(null); return; }
+          if (notice.kind === "none") return;
+          const marker = notice.kind === "expired" ? "expired" : "two";
+          if (warnedRef.current[marker] === expiry) return;
+          warnedRef.current[marker] = expiry;
+          if (notice.kind === "expired") {
+            push({ kind: "note", text: langRef.current === "ar" ? "انتهت مهلة المقاعد. احتفظنا باختياراتك؛ يمكنك طلب التحقق من المقاعد مجدداً." : "Your seat hold expired. Your choices are saved—check availability again when you’re ready." });
+            if (notice.ui) push({ kind: "cards", ui: notice.ui });
+            if (statusRef.current === "connected") conversation.sendContextualUpdate("The seat hold expired. Choices are preserved. Ask before recover_order confirmed:true; never automatically hold seats or restart the timer.");
+          } else push({ kind: "note", text: langRef.current === "ar" ? "تبقى أقل من دقيقتين على مهلة المقاعد." : "Less than two minutes remain on your seat hold." });
+        }).finally(() => { check.pending = false; check.retryAt = Date.now() + 10000; });
     };
     tick();
     const timer = setInterval(tick, 1000);
-    return () => clearInterval(timer);
-  }, [order?.expiresAtUtc, lang]);
+    return () => { disposed = true; clearInterval(timer); };
+  }, [order?.userSessionId, order?.expiresAtUtc, session?.token, lang]);
 
   useEffect(() => {
     const timer = setInterval(() => {
