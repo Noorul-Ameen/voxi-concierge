@@ -13,6 +13,8 @@ export type ToolCtx = AppContext & {
   correlationId: string;
   /** Internal inline mutation currently preparing its own completed basket. Never supplied by a tool. */
   checkoutMutationActionId?: string;
+  /** Widget-only ownership proof for the exact refund review. Never accepted as agent tool input. */
+  refundChoiceProof?: string;
 };
 
 export type ToolResult = {

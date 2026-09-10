@@ -1,6 +1,6 @@
 import { DomainError, type Language } from "@voxi/contracts";
 import { schema as S, nowLocalIso, prefixedId } from "@voxi/db";
-import { centsToPoints } from "@voxi/domain";
+import { centsToPoints, evaluateCancellation } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 /**
  * Executes ledger actions against the ports (Vista, handover, DB). Runs in the worker.
@@ -14,7 +14,7 @@ import { assertPaymentConsent } from "../services/checkout.js";
 import { markJourney, updateConversation } from "../services/conversation.js";
 import { fmtDateTime, joinList, money, onDateTime, seatLabels, t } from "../services/format.js";
 import { resolveLinkedConversation } from "../services/relink.js";
-import { bookingCard, orderSummary, seatRange } from "../tools/index.js";
+import { bookingCard, orderSummary, seatRange, toSnapshot } from "../tools/index.js";
 import { type ActionRow, complete, fail } from "./ledger.js";
 
 /** "RF-7K2M9Q" style refund number derived from the Vista refund id (letters/digits that are easy to say). */
@@ -180,6 +180,22 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         showtime: string;
         cinemaId: string;
       };
+      const existing = (await ctx.vista.getBooking(inp.bookingId)).Booking;
+      const repeated = existing.Refunds?.find((refund: any) => refund.Reference === a.id);
+      if (!repeated) {
+        const eligibility = evaluateCancellation(
+          toSnapshot(existing),
+          ctx.nowLocal,
+          inp.partial ? inp.ticketIds : undefined,
+          ctx.cfg.policy,
+        );
+        const allowed = eligibility.refundMethods.find((m) => m.method === inp.refundMethod);
+        if (!eligibility.eligible || !allowed || allowed.amountCents !== inp.amountCents)
+          throw new ActionError(
+            "BOOKING_NOT_ELIGIBLE",
+            eligibility.reasons[0] ?? "The refund changed; review its current amount and destination again.",
+          );
+      }
       const r = await ctx.vista
         .refundBooking({
           BookingId: inp.bookingId,
@@ -190,6 +206,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           InitiatedBy: "voxi",
           ConversationId: a.conversationId,
           ExpectedVersion: inp.expectedVersion,
+          ExpectedAmountCents: inp.amountCents,
         })
         .catch((e) => {
           throw fromVista(e);
@@ -212,8 +229,8 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
               )
             : t(
                 ctx.lang,
-                `${money(amount, "en")} will reach your original payment method in 5–10 working days`,
-                `سيصل ${money(amount, "ar")} إلى وسيلة الدفع الأصلية خلال 5–10 أيام عمل`,
+                `${money(amount, "en")} will reach the same original card in 5–10 days`,
+                `سيصل ${money(amount, "ar")} إلى البطاقة الأصلية نفسها خلال 5–10 أيام`,
               );
       const speech = t(
         ctx.lang,
@@ -253,191 +270,74 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
     async swap_booking(ctx, a, steps) {
       const inp = a.input as {
         bookingId: string;
-        filmTitle: string;
-        fromShowtime: string;
+        expectedVersion: number;
         targetCinemaId: string;
         targetSessionId: string;
+        newTotalCents: number;
+        differenceCents: number;
+        paymentMethod: string;
+        refundMethod: string;
+        selectedSeats: { Row: string; Number: string; TicketTypeCode: string }[];
+        filmTitle: string;
         targetShowtime: string;
         targetExperience: string;
-        tickets: { TicketTypeCode: string; Qty: number }[];
-        ticketCount: number;
-        differenceCents: number;
-        paymentMethodForDifference: string;
-        concessions?: { ItemId: string; Quantity: number; Description: string; Modifiers: string[] }[];
-        customer: {
-          FirstName: string;
-          LastName: string;
-          Email: string;
-          Phone: string;
-          MemberId?: string;
-          ID?: string;
-        };
-        expectedVersion?: number;
       };
-      const usid = `swap-${a.id}`;
-      const step = (name: string, status: "done" | "failed" | "compensated", detail?: unknown) =>
-        steps.push({ name, status, at: new Date().toISOString(), detail });
-      // 1. hold seats on the new session
-      let order: Record<string, any>;
-      try {
-        const r = await ctx.vista.addTickets({
-          UserSessionId: usid,
-          CinemaId: inp.targetCinemaId,
-          SessionId: inp.targetSessionId,
-          TicketTypes: inp.tickets,
-          ConversationId: a.conversationId,
-        });
-        order = r.Order;
-        step("hold_new_seats", "done", { seats: seatLabels(order.Sessions[0].Tickets) });
-      } catch (e) {
-        step("hold_new_seats", "failed");
-        throw fromVista(e);
-      }
-      // 1b. carry the food & drinks over to the new order (best effort — the swap still goes ahead without them)
-      let fnbCarried: string[] = [];
-      let fnbDropped: string[] = [];
-      if (inp.concessions?.length) {
-        try {
-          const r = await ctx.vista.addConcessions({
-            UserSessionId: usid,
-            CinemaId: inp.targetCinemaId,
-            Concessions: inp.concessions.map((c) => ({
-              ItemId: c.ItemId,
-              Quantity: c.Quantity,
-              Modifiers: c.Modifiers,
-            })),
-          });
-          order = r.Order ?? order;
-          fnbCarried = inp.concessions.map((c) => `${c.Quantity}× ${c.Description}`);
-          step("carry_fnb", "done", { items: fnbCarried });
-        } catch {
-          fnbDropped = inp.concessions.map((c) => `${c.Quantity}× ${c.Description}`);
-          step("carry_fnb", "failed", { items: fnbDropped });
-        }
-      }
-      // 2. pay the new order (card on file simulated via token / wallet / points)
-      const memberId = inp.customer.MemberId;
-      const method = inp.paymentMethodForDifference;
-      const tender =
-        method === "VOX_CREDIT"
-          ? { PaymentTenderCategory: "EWALLET", PaymentValueCents: order.TotalValueCents, MemberId: memberId }
-          : method === "SHARE_POINTS"
-            ? {
-                PaymentTenderCategory: "LOYALTY",
-                PaymentValueCents: order.TotalValueCents,
-                PointsRedeemed: centsToPoints(order.TotalValueCents),
-                MemberId: memberId,
-              }
-            : {
-                PaymentTenderCategory: "CREDIT",
-                PaymentValueCents: order.TotalValueCents,
-                PaymentToken: `tok_swap_${a.id}`,
-                CardNumber: "4111111111111111",
-              };
-      let newBooking: Record<string, any>;
-      try {
-        const pay = await ctx.vista.completeOrder({
-          UserSessionId: usid,
-          CustomerEmail: inp.customer.Email,
-          CustomerName: `${inp.customer.FirstName} ${inp.customer.LastName}`.trim(),
-          CustomerPhone: inp.customer.Phone,
-          PaymentInfoCollection: [tender],
-          MemberId: memberId,
-          CustomerId: inp.customer.ID ?? undefined,
-          Source: "concierge-swap",
-        });
-        newBooking = pay.Booking!;
-        step("pay_new_order", "done", { bookingId: pay.VistaBookingId });
-      } catch (e) {
-        step("pay_new_order", "failed");
-        await ctx.vista.cancelOrder(usid).catch(() => undefined);
-        step("hold_new_seats", "compensated");
-        throw fromVista(e);
-      }
-      // 3. refund the original (to VOX credit for members, original card for guests)
-      let refund: Record<string, any>;
-      try {
-        const r = await ctx.vista.refundBooking({
+      // No full-charge/refund fallback: the provider must support this atomic difference-only capability.
+      const result = await ctx.vista
+        .exchangeBooking({
           BookingId: inp.bookingId,
-          RefundTenderCategory: memberId ? "EWALLET" : "CREDIT",
-          Reason: `Swapped to ${newBooking.VistaBookingId} via Voxi`,
-          Reference: `${a.id}-refund`,
-          InitiatedBy: "voxi",
-          ConversationId: a.conversationId,
+          TargetCinemaId: inp.targetCinemaId,
+          TargetSessionId: inp.targetSessionId,
           ExpectedVersion: inp.expectedVersion,
+          ExpectedTotalCents: inp.newTotalCents,
+          ExpectedDifferenceCents: inp.differenceCents,
+          Seats: inp.selectedSeats,
+          PaymentMethod: inp.paymentMethod,
+          RefundMethod: inp.refundMethod,
+          Reference: a.id,
+          ConversationId: a.conversationId,
+        })
+        .catch((e) => {
+          throw fromVista(e);
         });
-        refund = r.Refund;
-        step("refund_original", "done", { reference: r.Refund.Reference, amountCents: r.Refund.AmountCents });
-      } catch (e) {
-        step("refund_original", "failed");
-        // compensate: refund the new booking back to the tender used
-        await ctx.vista
-          .refundBooking({
-            BookingId: newBooking.VistaBookingId,
-            RefundTenderCategory:
-              method === "VOX_CREDIT" ? "EWALLET" : method === "SHARE_POINTS" ? "LOYALTY" : "CREDIT",
-            Reason: "Swap rollback",
-            Reference: `${a.id}-rollback`,
-          })
-          .catch(() => undefined);
-        step("pay_new_order", "compensated");
-        throw fromVista(e);
-      }
-      await ctx.vista.linkSwappedBookings(inp.bookingId, newBooking.VistaBookingId).catch(() => undefined);
-      step("link_bookings", "done");
+      steps.push({
+        name: "atomic_exchange",
+        status: "done",
+        at: new Date().toISOString(),
+        detail: {
+          newBookingId: result.Booking.VistaBookingId,
+          differenceCents: result.DifferenceCents,
+          idempotent: result.Idempotent,
+        },
+      });
       ctx.catalog.invalidateSessions(inp.targetCinemaId);
-      const seats = seatLabels(newBooking.Tickets);
-      const diffText =
-        inp.differenceCents > 0
-          ? t(
-              ctx.lang,
-              `The new tickets (${money(order.TotalValueCents, "en")}) were charged and ${money(refund.AmountCents, "en")} from the original booking went ${memberId ? "to your VOX credit" : "back to your card"}.`,
-              `تم خصم ${money(order.TotalValueCents, "ar")} للتذاكر الجديدة وأُعيد ${money(refund.AmountCents, "ar")} من الحجز الأصلي ${memberId ? "إلى رصيد فوكس" : "إلى بطاقتك"}.`,
-            )
-          : refund.AmountCents === order.TotalValueCents
-            ? t(
-                ctx.lang,
-                `Same total (${money(order.TotalValueCents, "en")}): the original payment was refunded ${memberId ? "to your VOX credit" : "to your card"} and the new booking charged the same amount, so nothing changes for you.`,
-                `نفس الإجمالي (${money(order.TotalValueCents, "ar")}): أُعيد المبلغ الأصلي ${memberId ? "إلى رصيد فوكس" : "إلى بطاقتك"} وخُصم المبلغ نفسه للحجز الجديد، فلا يتغير شيء بالنسبة لك.`,
-              )
-            : t(
-                ctx.lang,
-                `${money(refund.AmountCents, "en")} from the original booking went ${memberId ? "to your VOX credit" : "back to your card"} and the new tickets were ${money(order.TotalValueCents, "en")}.`,
-                `أُعيد ${money(refund.AmountCents, "ar")} من الحجز الأصلي ${memberId ? "إلى رصيد فوكس" : "إلى بطاقتك"} وكلفت التذاكر الجديدة ${money(order.TotalValueCents, "ar")}.`,
-              );
-      const fnbText = fnbCarried.length
-        ? t(
-            ctx.lang,
-            ` Your ${joinList(fnbCarried, "en")} moved with it.`,
-            ` وانتقلت معه ${joinList(fnbCarried, "ar")}.`,
-          )
-        : fnbDropped.length
-          ? t(
-              ctx.lang,
-              ` I couldn't move your ${joinList(fnbDropped, "en")} to the new booking — you can add them again or buy them at the counter.`,
-              ` لم أتمكن من نقل ${joinList(fnbDropped, "ar")} إلى الحجز الجديد — يمكنك إضافتها مجدداً أو شراؤها من المنفذ.`,
-            )
-          : "";
+      const booking = result.Booking;
+      const financial =
+        result.DifferenceCents > 0
+          ? `Only ${money(result.DifferenceCents, ctx.lang)} extra was paid.`
+          : result.DifferenceCents < 0
+            ? `${money(-result.DifferenceCents, ctx.lang)} is being refunded ${inp.refundMethod === "ORIGINAL_PAYMENT" ? "to the same original card in 5–10 days" : inp.refundMethod === "SHARE_POINTS" ? "to SHARE Points" : "as VOX credit, valid 90 days"}.`
+            : "There was no additional charge or refund.";
       const speech = t(
         ctx.lang,
-        `Swapped! Your new booking is ${newBooking.VistaBookingId}: ${inp.ticketCount} ticket${inp.ticketCount === 1 ? "" : "s"} for ${inp.filmTitle}, ${inp.targetExperience} at ${await cname(ctx, inp.targetCinemaId)} ${onDateTime(inp.targetShowtime, "en", ctx.nowLocal)}, seats ${seats}.${fnbText} ${diffText} The original booking ${inp.bookingId} is cancelled. Your new booking details and QR are on screen.`,
-        `تم التبديل! حجزك الجديد ${newBooking.VistaBookingId}: ${inp.ticketCount} تذكرة لفيلم ${inp.filmTitle}، ${inp.targetExperience} في ${await cname(ctx, inp.targetCinemaId)} بتاريخ ${fmtDateTime(inp.targetShowtime, "ar", ctx.nowLocal)}، المقاعد ${seats}.${fnbText} ${diffText} تم إلغاء الحجز الأصلي ${inp.bookingId}. تفاصيل الحجز الجديد ورمز QR ظاهرة على الشاشة.`,
+        `Exchanged. Your new booking is ${booking.VistaBookingId}; seats ${seatLabels(booking.Tickets)}. ${financial} Your new ticket and QR are on screen.`,
+        `تم التبديل. حجزك الجديد ${booking.VistaBookingId}، المقاعد ${seatLabels(booking.Tickets)}. ${result.DifferenceCents === 0 ? "لا يوجد خصم أو استرداد جديد." : `فرق السعر ${money(Math.abs(result.DifferenceCents), "ar")} ${result.DifferenceCents > 0 ? "تم دفعه" : "تم طلب استرداده"}.`} تفاصيل الحجز ورمز QR على الشاشة.`,
       );
       return {
         result: {
           speech,
-          newBookingId: newBooking.VistaBookingId,
-          refundReference: spokenRefundRef(String(refund.Id ?? refund.Reference)),
-          refundAmountCents: refund.AmountCents,
-          seats,
+          newBookingId: booking.VistaBookingId,
+          differenceCents: result.DifferenceCents,
+          settlement: result.Settlement,
+          idempotent: result.Idempotent,
         },
         ui: {
           type: "qr",
-          title: t(ctx.lang, "New booking", "الحجز الجديد"),
           items: [
             {
-              ...bookingCard(newBooking, ctx.lang, ctx.nowLocal, await cname(ctx, inp.targetCinemaId)),
+              ...bookingCard(booking, ctx.lang, ctx.nowLocal, await cname(ctx, inp.targetCinemaId)),
               swappedFrom: inp.bookingId,
+              settlement: result.Settlement,
             },
           ],
         },
@@ -708,6 +608,11 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         promoCode?: string;
         cardBin?: string;
         memberId?: string;
+        remove?: boolean;
+        removedOfferIds?: string[];
+        expectedVersion?: number;
+        expectedTotalCents?: number;
+        nextPaymentMethod?: string;
       };
       const r = await ctx.vista
         .applyOffer({
@@ -716,6 +621,10 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           PromoCode: inp.promoCode,
           CardBin: inp.cardBin,
           MemberId: inp.memberId,
+          Remove: inp.remove,
+          OfferIds: inp.removedOfferIds,
+          ExpectedVersion: inp.expectedVersion,
+          ExpectedTotalCents: inp.expectedTotalCents,
         })
         .catch((e) => {
           throw fromVista(e);
@@ -726,8 +635,13 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         summary: s,
       });
       const d = r.AppliedOffer?.DiscountCents ?? 0;
-      const speech =
-        d > 0
+      const speech = inp.remove
+        ? t(
+            ctx.lang,
+            `Bank offer removed. The updated total is ${money(s.totalCents, ctx.lang)}; review payment again before paying.`,
+            `أزيل عرض البنك. الإجمالي المحدث ${money(s.totalCents, ctx.lang)}؛ راجع الدفع مجدداً قبل التأكيد.`,
+          )
+        : d > 0
           ? t(
               ctx.lang,
               `${r.AppliedOffer?.Title} applied — you save ${money(d, "en")}. New total ${money(s.totalCents, "en")}.`,
@@ -739,7 +653,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
               `تم تطبيق ${r.AppliedOffer?.Title} على طلبك.`,
             );
       return {
-        result: { speech, order: s, offer: r.AppliedOffer },
+        result: { speech, order: s, offer: r.AppliedOffer, nextPaymentMethod: inp.nextPaymentMethod },
         ui: { type: "order", items: [s] },
         journey: { name: "apply_offer", status: "completed" },
       };
@@ -764,8 +678,8 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       });
       const speech = t(
         ctx.lang,
-        `${r.Redeemed.Amount} Share Points applied, worth ${money(r.Redeemed.Amount, "en")}. ${s.totalCents > 0 ? `${money(s.totalCents, "en")} left to pay.` : "Nothing left to pay — shall I confirm the booking?"}`,
-        `تم استخدام ${r.Redeemed.Amount} نقطة شير بقيمة ${money(r.Redeemed.Amount, "ar")}. ${s.totalCents > 0 ? `المتبقي ${money(s.totalCents, "ar")}.` : "لا يوجد مبلغ متبقٍ — هل أؤكد الحجز؟"}`,
+        `${centsToPoints(r.Redeemed.Amount)} Share Points reserved, worth ${money(r.Redeemed.Amount, "en")}. ${s.totalCents > 0 ? `${money(s.totalCents, "en")} left to pay.` : "Nothing left to pay — shall I confirm the booking?"}`,
+        `تم حجز ${centsToPoints(r.Redeemed.Amount)} نقطة شير بقيمة ${money(r.Redeemed.Amount, "ar")}. ${s.totalCents > 0 ? `المتبقي ${money(s.totalCents, "ar")}.` : "لا يوجد مبلغ متبقٍ — هل أؤكد الحجز؟"}`,
       );
       return { result: { speech, order: s, redeemed: r.Redeemed }, ui: { type: "order", items: [s] } };
     },
@@ -1019,6 +933,9 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           ? `Complaint: ${complaint.id} (${complaint.category}) — ${complaint.description.slice(0, 200)}`
           : "",
         toolsUsed.length ? `Steps taken: ${toolsUsed.join(", ")}` : "",
+        a.input.paymentInvestigation
+          ? `Verified backend investigation (reported reference/last4 are not proof of debit): ${JSON.stringify(a.input.paymentInvestigation)}`
+          : "",
         (ctx.conversation.metadata as { activeOrder?: string })?.activeOrder
           ? `Active order: ${(ctx.conversation.metadata as { activeOrder?: string }).activeOrder}`
           : "",
@@ -1034,7 +951,12 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
           conversationId,
           reason: inp.reason,
           summary,
-          context: { bookingIds, complaintId: complaint?.id, toolsUsed },
+          context: {
+            bookingIds,
+            complaintId: complaint?.id,
+            toolsUsed,
+            paymentInvestigation: a.input.paymentInvestigation,
+          },
           adapter: ctx.handover.name,
           status: "requested",
         });
@@ -1056,7 +978,11 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
             memberId: customer?.memberId ?? undefined,
             customerId: customer?.id,
           },
-          context: { bookingIds, complaintId: complaint?.id },
+          context: {
+            bookingIds,
+            complaintId: complaint?.id,
+            paymentInvestigation: a.input.paymentInvestigation,
+          },
           transcript: transcriptRows.map((e) => ({
             role: e.actor === "user" ? "user" : "agent",
             text: String(e.payload.text ?? ""),

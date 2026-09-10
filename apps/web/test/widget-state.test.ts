@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, directSeatMapFeedback, holdSeconds, recordUserActivity, renderVerifiedSeatMap, uiActionLabel, type TranscriptItem } from "../src/lib/widget-state";
 
 describe("authoritative widget state", () => {
+  it("preserves the exact refund confirmation and proposed choices without exposing signed proofs", () => {
+    const context = JSON.parse(actionContext("refund.choose", { ok: true, data: { confirmationId: "confirmation-123", summary: { refundCents: 4500, refundMethod: "original", refundChoiceProof: "PRIVATE-PROOF" }, proposal: { filmTitle: "Selected film", proposalToken: "PRIVATE-TOKEN", held: false } } }));
+    expect(context.state.confirmationId).toBe("confirmation-123");
+    expect(context.state.summary).toEqual({ refundCents: 4500, refundMethod: "original" });
+    expect(context.state.proposal).toEqual({ filmTitle: "Selected film", held: false });
+    expect(JSON.stringify(context)).not.toContain("PRIVATE");
+  });
   it("acknowledges a successful direct map without requesting another map or booking change", () => {
     const feedback = directSeatMapFeedback("seat.plan", { ok: true, ui: { type: "seatmap", items: [] } }, "en", true, true);
     expect(feedback?.text).toContain("Seat map ready");

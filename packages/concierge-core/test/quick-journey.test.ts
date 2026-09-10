@@ -71,7 +71,7 @@ function context(metadata: Record<string, unknown> = {}) {
     nowLocal: "2026-09-10T16:40:00",
     toolCallId: "call-one",
     correlationId: "correlation",
-    cfg: { orderExpiryMinutes: 6 },
+    cfg: { orderExpiryMinutes: 6, widgetJwtSecret: "test-proposal-secret" },
     events: {},
     catalog: {
       cinemas: vi.fn(async () => [cinema]),
@@ -301,5 +301,138 @@ describe("later food-only basket edits", () => {
     );
     expect(ctx.vista.addConcessions).toHaveBeenCalledTimes(1);
     expect(ctx.conversation.metadata?.fnbOrder).toBe(first.data?.fnbOrder);
+  });
+});
+
+describe("read-only booking proposal", () => {
+  function proposalContext() {
+    const ctx = context();
+    ctx.vista.seatPlan = vi.fn(async () => ({
+      SeatLayoutData: {
+        ColumnCount: 4,
+        Areas: [
+          {
+            AreaCategoryCode: "STD",
+            Rows: [
+              {
+                PhysicalName: "C",
+                RowIndexZeroBased: 2,
+                Seats: [1, 2, 3, 4].map((n) => ({
+                  Id: String(n),
+                  Status: n === 1 ? 1 : 0,
+                  SeatStyle: 0,
+                  Position: { ColumnIndex: n - 1 },
+                })),
+              },
+            ],
+          },
+        ],
+      },
+    })) as any;
+    ctx.vista.ticketTypes = vi.fn(async () => ({
+      BookingFeeCentsPerTicket: 250,
+      Tickets: [
+        { TicketTypeCode: "ADULT", AreaCategoryCode: "STD", PriceInCents: 5000 },
+        { TicketTypeCode: "CHILD", AreaCategoryCode: "STD", IsChildOnlyTicket: true, PriceInCents: 3000 },
+      ],
+    })) as any;
+    return ctx;
+  }
+  it("quotes actual available adult and child seats including fees without creating or editing an order", async () => {
+    const ctx = proposalContext();
+    const result = await quickTools.propose_booking(ctx, {
+      sessionKey: session.key,
+      tickets: 1,
+      childTickets: 1,
+    } as any);
+    expect(result.ok).toBe(true);
+    expect(result.data).toMatchObject({
+      needs: "proposal_acceptance",
+      proposal: {
+        ticketQuantity: 2,
+        adultTickets: 1,
+        childTickets: 1,
+        held: false,
+        ticketsCents: 8000,
+        bookingFeeCents: 500,
+        totalCents: 8500,
+      },
+    });
+    expect((result.data?.proposal as any).selectedSeats.map((s: any) => s.row + s.number)).toEqual([
+      "C2",
+      "C3",
+    ]);
+    expect(result.data?.proposalToken).toEqual(expect.any(String));
+    expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+    expect(ctx.vista.setSeats).not.toHaveBeenCalled();
+    const alternative = await quickTools.propose_booking(ctx, {
+      sessionKey: session.key,
+      tickets: 1,
+      time: "19:00",
+    } as any);
+    expect(alternative.data?.proposal).toMatchObject({ isAlternative: true, requested: { time: "19:00" } });
+    expect(alternative.speech).toMatch(/alternative to your requested time/);
+  });
+  it("asks for missing quantity without assuming one or issuing an acceptance token", async () => {
+    const ctx = proposalContext();
+    const result = await quickTools.propose_booking(ctx, { sessionKey: session.key } as any);
+    expect(result.data).toMatchObject({
+      needs: "tickets",
+      proposal: { ticketQuantity: null, totalCents: null, held: false },
+    });
+    expect(result.data?.proposalToken).toBeUndefined();
+    expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+  });
+  it("rejects a sold exact seat and a changed or forged proposal before holding", async () => {
+    const ctx = proposalContext();
+    const unavailable = await quickTools.propose_booking(ctx, {
+      sessionKey: session.key,
+      tickets: 1,
+      seats: [{ row: "C", number: "1" }],
+    } as any);
+    expect(unavailable.ok).toBe(false);
+    const proposed = await quickTools.propose_booking(ctx, { sessionKey: session.key, tickets: 1 } as any);
+    expect(
+      (await quickTools.quick_book(ctx, { proposalToken: `${String(proposed.data?.proposalToken)}x` } as any))
+        .ok,
+    ).toBe(false);
+    ctx.vista.ticketTypes = vi.fn(async () => ({
+      BookingFeeCentsPerTicket: 250,
+      Tickets: [{ TicketTypeCode: "ADULT", AreaCategoryCode: "STD", PriceInCents: 5500 }],
+    })) as any;
+    const changed = await quickTools.quick_book(ctx, { proposalToken: proposed.data?.proposalToken } as any);
+    expect(changed.ok).toBe(false);
+    expect(changed.data).toMatchObject({ needs: "proposal_refresh" });
+    expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+  });
+  it("fails closed when full fees cannot be quoted", async () => {
+    const ctx = proposalContext();
+    ctx.vista.ticketTypes = vi.fn(async () => ({
+      Tickets: [{ TicketTypeCode: "ADULT", AreaCategoryCode: "STD", PriceInCents: 5000 }],
+    })) as any;
+    const result = await quickTools.propose_booking(ctx, { sessionKey: session.key, tickets: 1 } as any);
+    expect(result.ok).toBe(false);
+    expect(result.data).toMatchObject({ needs: "price_unavailable" });
+    expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+  });
+  it("rejects an expired proposal before replaying a cached hold or creating another", async () => {
+    const ctx = proposalContext();
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    try {
+      const proposed = await quickTools.propose_booking(ctx, { sessionKey: session.key, tickets: 1 } as any);
+      const transaction = vi.fn();
+      ctx.db = { transaction } as unknown as ToolCtx["db"];
+      clock.mockReturnValue(1_800_000_180_001);
+      const result = await quickTools.quick_book(ctx, { proposalToken: proposed.data?.proposalToken } as any);
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: "CONFIRMATION_EXPIRED" },
+        data: { needs: "proposal_refresh" },
+      });
+      expect(transaction).not.toHaveBeenCalled();
+      expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+    } finally {
+      clock.mockRestore();
+    }
   });
 });

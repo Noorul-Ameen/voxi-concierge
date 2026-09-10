@@ -2,11 +2,169 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Customer } from "../lib/api";
 import { AccountPanel } from "./AccountPanel";
-import { Cards, routeAction, seatPlanCommand, type CardActions } from "./Cards";
+import { Cards, cardConfirmationId, chooseShowtime, confirmedQrPayload, createTicketQr, refundChoiceCommand, routeAction, seatPlanCommand, type CardActions } from "./Cards";
 
 const act: CardActions = { say: () => undefined, command: async () => ({ ok: true }), openLink: () => undefined, playTrailer: () => undefined };
 
 describe("concierge decision cards", () => {
+  it("binds confirm and decline to the displayed confirmation without triggering a payment", async () => {
+    const decisions: unknown[] = [];
+    const commands: unknown[] = [];
+    const messages: string[] = [];
+    const actions: CardActions = { ...act, decision: (decision) => { decisions.push(decision); }, command: async (command) => { commands.push(command); return { ok: true }; }, say: (message) => { messages.push(message); } };
+    const ui = { type: "booking", meta: { confirmationId: "confirm-card-A" }, items: [{ filmTitle: "The Journey", bookingId: "BOOK-A" }], actions: [{ value: "confirm:confirm-card-A", label: "Confirm exchange" }, { value: "abort", label: "Keep original" }] };
+    await routeAction("confirm:confirm-card-A", "Confirm exchange", actions, "en", ui);
+    await routeAction("abort", "Keep original", actions, "en", ui);
+    await routeAction("confirm:confirm-card-B", "Confirm another", actions, "en", ui);
+    expect(decisions).toEqual([{ confirmationId: "confirm-card-A", confirmed: true, summary: "The Journey" }, { confirmationId: "confirm-card-A", confirmed: false, summary: "The Journey" }]);
+    expect(commands.every((command: any) => command.type === "card.action")).toBe(true);
+    expect(messages).toEqual([]);
+  });
+
+  it("uses exact-ID fallback and refuses ambiguous or missing confirmation bindings", () => {
+    const messages: string[] = [];
+    routeAction("confirm:review-123", "Confirm", { ...act, say: (message) => { messages.push(message); } }, "en");
+    expect(messages).toEqual(["I confirm request review-123. Go ahead."]);
+    expect(cardConfirmationId("abort", { type: "booking", items: [], actions: [{ value: "confirm:a", label: "A" }] })).toBe("a");
+    expect(cardConfirmationId("abort", { type: "booking", items: [], actions: [{ value: "confirm:a", label: "A" }, { value: "confirm:b", label: "B" }] })).toBeUndefined();
+    expect(cardConfirmationId("confirm:unlisted", { type: "booking", items: [] })).toBeUndefined();
+    expect(cardConfirmationId("confirm:")).toBeUndefined();
+    expect(cardConfirmationId("abort")).toBeUndefined();
+  });
+
+  it("keeps a swap showtime selection in its exact existing booking and only requests a preview", async () => {
+    const commands: unknown[] = [];
+    const messages: string[] = [];
+    const actions: CardActions = { ...act, command: async (command) => { commands.push(command); return { ok: true }; }, say: (message) => { messages.push(message); } };
+    const ui = { type: "showtimes", items: [{ sessionKey: "cinema-target" }], meta: { journey: "swap", bookingId: "BOOK-ORIGINAL" } };
+    await chooseShowtime("cinema-target", ui, actions, "en");
+    await routeAction("swap-choice:BOOK-ORIGINAL:cinema-target", "7 PM", actions, "ar", ui);
+    await chooseShowtime("guessed-target", ui, actions, "en");
+    await chooseShowtime("cinema-target", { ...ui, meta: { journey: "swap" } }, actions, "en");
+    await routeAction("swap-choice:OTHER-BOOKING:cinema-target", "7 PM", actions, "en", ui);
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toBe("Review swapping booking BOOK-ORIGINAL to showtime cinema-target; keep the original booking until I confirm the exchange.");
+    expect(messages[1]).toContain("BOOK-ORIGINAL");
+    expect(messages[1]).toContain("cinema-target");
+    expect(commands.every((command: any) => command.type === "card.action")).toBe(true);
+    await chooseShowtime("cinema-target", { type: "showtimes", items: ui.items }, actions, "en");
+    expect(commands.at(-1)).toEqual({ type: "booking.select", sessionKey: "cinema-target" });
+  });
+
+  it("displays backend reprice amounts and destination before a separate offer-switch consent", () => {
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "payment_switch", items: [{ currentTotalCents: 9050, totalAfterCents: 12550, removedOfferIds: ["BANK-VERIFIED"], nextPaymentMethod: "VOX_CREDIT" }], meta: { confirmationId: "switch-1" }, actions: [{ value: "confirm:switch-1", label: "Remove offer and switch" }, { value: "abort", label: "Keep bank offer" }] }} />);
+    for (const text of ["Current total", "AED 90.50", "AED 125.50", "VOX Credit", "BANK-VERIFIED", "Payment is reviewed and confirmed separately", "Remove offer and switch"]) expect(html).toContain(text);
+    expect(html).not.toContain("Payment complete");
+    expect(html).not.toContain("Pay now");
+  });
+
+  it("does not invent a zero total when a switch preview amount is missing", () => {
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "payment_switch", items: [{ nextPaymentMethod: "SHARE_POINTS" }] }} />);
+    expect(html).toContain("SHARE Points");
+    expect(html).not.toContain("AED");
+    expect(html).not.toContain("Current total");
+  });
+
+  it("shows candidate bookings without claiming the reported debit matched or presenting their QR", async () => {
+    const ui = { type: "payment_investigation", items: [{ bookingFound: false, needs: "booking_selection", nextStep: "choose_booking", candidateBookings: [{ bookingId: "BOOK-CANDIDATE", filmTitle: "The Journey", cinemaName: "Mall of the Emirates", showtimeLabel: "Friday 7 PM", seats: "G8, G9", total: "AED 100", qrPayload: "actual-but-not-yet-matched-qr" }] }] };
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={ui} />);
+    for (const text of ["Possible bookings to check", "not been matched to the reported debit", "The Journey", "Check booking BOOK-CANDIDATE"]) expect(html).toContain(text);
+    for (const text of ["Booking located", "Booking confirmed", "Download QR", "actual-but-not-yet-matched-qr"]) expect(html).not.toContain(text);
+    const messages: string[] = [];
+    await routeAction("investigation:booking:BOOK-CANDIDATE", "", { ...act, say: (message) => { messages.push(message); } }, "en");
+    expect(messages).toEqual(["Check booking BOOK-CANDIDATE for that payment"]);
+  });
+
+  it("carries the signed refund choice proof unchanged and rejects malformed proofs", () => {
+    expect(refundChoiceCommand({ bookingId: "BOOK-A", ticketIds: ["ticket-2"], refundChoiceProof: "opaque.signed.proof" }, "VOX_CREDIT")).toEqual({ type: "refund.choose", bookingId: "BOOK-A", refundMethod: "VOX_CREDIT", ticketIds: ["ticket-2"], refundChoiceProof: "opaque.signed.proof" });
+    expect(refundChoiceCommand({ bookingId: "BOOK-A", refundChoiceProof: {} }, "VOX_CREDIT")).toBeUndefined();
+    expect(refundChoiceCommand({ bookingId: "BOOK-A", refundChoiceProof: "" }, "VOX_CREDIT")).toBeUndefined();
+  });
+
+  it("displays the exact refund timing, destination and validity in the final review", () => {
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "booking", meta: { confirmationId: "refund-1" }, items: [{ bookingId: "BOOK-A", refund: { amountCents: 10000, method: "ORIGINAL_PAYMENT", cardLast4: "6789", eta: "5–10 days", validityDays: 90 } }] }} />);
+    for (const text of ["AED 100", "Original payment method", "6789", "5–10 days", "90 days"]) expect(html).toContain(text);
+  });
+
+  it.each([{ differenceCents: 2000, chargeCents: 2000, refundCents: 0, newTotalCents: 12000, expected: "Extra amount to pay" }, { differenceCents: -2000, chargeCents: 0, refundCents: 2000, newTotalCents: 8000, expected: "Refund timing" }, { differenceCents: 0, chargeCents: 0, refundCents: 0, newTotalCents: 10000, expected: "No extra charge or refund" }])("shows actual exchange settlement and target choices: $differenceCents cents", (financial) => {
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "booking", meta: { confirmationId: "exchange-1" }, items: [{ bookingId: "BOOK-A", swapTo: { ...financial, originalTotalCents: 10000, showtimeLabel: "Saturday 6 PM", cinemaName: "Mall of the Emirates", experience: "MAX", seats: ["J8", "J9"], concessions: [{ quantity: 1, description: "Salted popcorn" }], paymentMethod: "CARD", refundMethod: "ORIGINAL_PAYMENT", cardLast4: "4321", refundEta: "5–10 days to the same original card" } }] }} />);
+    for (const text of ["Original total", "New total", "J8, J9", "1× Salted popcorn", "Saturday 6 PM", financial.expected]) expect(html).toContain(text);
+    if (financial.differenceCents !== 0) { expect(html).toContain("AED 20"); expect(html).toContain("4321"); }
+    if (financial.differenceCents >= 0) expect(html).not.toContain("5–10 days");
+  });
+
+  it("never substitutes a booking reference or brand text for a missing confirmed QR payload", () => {
+    expect(confirmedQrPayload(undefined, { qrPayload: undefined })).toBeUndefined();
+    expect(confirmedQrPayload("", { qrPayload: "older-ticket" })).toBeUndefined();
+    expect(confirmedQrPayload("  ", {})).toBeUndefined();
+    expect(confirmedQrPayload(42, {})).toBeUndefined();
+    expect(confirmedQrPayload("verified-new-payload", { qrPayload: "older-ticket" })).toBe("verified-new-payload");
+    expect(confirmedQrPayload(undefined, { qrPayload: "verified-ticket-payload" })).toBe("verified-ticket-payload");
+  });
+
+  it("creates a real PNG for the confirmed QR and rejects an empty payload", async () => {
+    const png = await createTicketQr("CONFIRMED:QR:W4PU9V6");
+    const other = await createTicketQr("CONFIRMED:QR:W9SH6AR");
+    expect(png).toMatch(/^data:image\/png;base64,iVBORw0KGgo/);
+    expect(png).not.toBe(other);
+    await expect(createTicketQr(" ")).rejects.toThrow("confirmed QR payload");
+  });
+
+  it("keeps the receipt, actual amount and reference together without invented fulfilment claims or purchase date", () => {
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "qr", items: [{ bookingId: "W4PU9V6", filmTitle: "The Journey", cinemaName: "Mall of the Emirates", showtimeLabel: "Friday, 7 PM", seats: "D8, D9", totalCents: 16200 }] }} />);
+    for (const value of ["Booking confirmed", "W4PU9V6", "The Journey", "D8, D9", "AED 162", "QR code isn&#x27;t available"]) expect(html).toContain(value);
+    expect(html).not.toContain("emailed");
+    expect(html).not.toContain("Prepare my order");
+    expect(html).not.toContain("Purchase date");
+    expect(html).not.toContain('download=');
+    expect(html).not.toContain('alt="QR"');
+  });
+
+  it("makes a priced proposal visibly unheld and does not attach a countdown", () => {
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "booking_proposal", meta: { proposalToken: "signed-proposal" }, items: [{ filmTitle: "The Journey", ticketQuantity: 2, selectedSeats: [{ row: "G", number: "8" }, { row: "G", number: "9" }], totalCents: 10000, priceIncludesFees: true, held: false }] }} />);
+    expect(html).toContain("No seats held yet");
+    expect(html).toContain("G8, G9");
+    expect(html).toContain("AED 100");
+    expect(html).toContain("Includes booking fees");
+    expect(html).not.toContain('class="hold');
+    expect(html).not.toMatch(/disabled=""[^>]*>Hold these seats/);
+  });
+
+  it("requires a verified proposal token, quantity and price before accepting", () => {
+    for (const [meta, proposal] of [[{}, { ticketQuantity: 2, totalCents: 10000 }], [{ proposalToken: "signed" }, { ticketQuantity: null, totalCents: 10000 }], [{ proposalToken: "signed" }, { ticketQuantity: 2, totalCents: null }]] as const) {
+      const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "booking_proposal", meta, items: [proposal] }} />);
+      expect(html).toMatch(/disabled=""[^>]*>Hold these seats/);
+    }
+  });
+
+  it("shows refund destinations and returned processing terms without claiming refund completion", () => {
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "refund_options", items: [{ method: "ORIGINAL_PAYMENT", amountCents: 9000, eta: "5–7 working days", cardLast4: "1234" }, { method: "VOX_CREDIT", amountCents: 9000, eta: "Immediately after confirmation", validityDays: 365 }] }} />);
+    expect(html).toContain("Original payment method");
+    expect(html).toContain("VOX Credit");
+    expect(html).toContain("5–7 working days");
+    expect(html).toContain("1234");
+    expect(html).toContain("Valid for 365 days");
+    expect(html).not.toContain("Refund completed");
+  });
+
+  it("preserves the exact refund booking and selected tickets in a direct review command", () => {
+    expect(refundChoiceCommand({ bookingId: "W4PU9V6", ticketIds: ["ticket-2", "ticket-4"] }, "ORIGINAL_PAYMENT")).toEqual({ type: "refund.choose", bookingId: "W4PU9V6", refundMethod: "ORIGINAL_PAYMENT", ticketIds: ["ticket-2", "ticket-4"] });
+    expect(refundChoiceCommand({ bookingId: "W4PU9V6" }, "SHARE_POINTS")).toEqual({ type: "refund.choose", bookingId: "W4PU9V6", refundMethod: "SHARE_POINTS" });
+    expect(refundChoiceCommand({}, "ORIGINAL_PAYMENT")).toBeUndefined();
+    expect(refundChoiceCommand({ bookingId: "W4PU9V6", ticketIds: "ticket-2" }, "ORIGINAL_PAYMENT")).toBeUndefined();
+    expect(refundChoiceCommand({ bookingId: "W4PU9V6" }, "OTHER_CARD")).toBeUndefined();
+  });
+
+  it("separates an unverified payment report from an actual confirmed booking", () => {
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "payment_investigation", items: [{ status: "unresolved", bookingFound: false, investigationId: "inv-123", reportedTransactionReference: "bank-456", reportedCardLast4: "1234", transactionReferenceVerified: false, nextStep: "offer_handover", bookings: [], retryPaymentAllowed: false }] }} />);
+    expect(html).toContain("No confirmed booking found");
+    expect(html).toContain("This transaction reference has not been verified");
+    expect(html).toContain("bank-456");
+    expect(html).toContain("Customer Care");
+    expect(html).not.toContain("offer_handover");
+    expect(html).not.toContain("Booking confirmed");
+    expect(html).not.toContain("Pay now");
+  });
   it("opens the card's verified seat map directly in either language without asking the agent", async () => {
     const commands: Record<string, unknown>[] = [];
     const messages: string[] = [];

@@ -4,6 +4,7 @@ import QRCode from "qrcode";
 import type { CommandResult, Lang, UiHint } from "../lib/api";
 import { money, t } from "../lib/i18n";
 import { decisionSummary, uiActionLabel } from "../lib/widget-state";
+import { cinemaDate } from "../lib/cinema-time";
 
 export type CardActions = {
   say: (text: string) => void; // send a user message to the agent
@@ -11,6 +12,7 @@ export type CardActions = {
   openLink: (url: string) => void;
   playTrailer: (youtubeId: string, title?: string) => void;
   selection?: (selection: { kind: "payment_method" | "food_quantity" | "offer_selection"; label: string; cardLast4?: string }) => void;
+  decision?: (decision: { confirmationId: string; confirmed: boolean; summary?: string }) => void;
 };
 
 /** "G10, G11" → "G10–G11" when the seats run together in one row. */
@@ -33,9 +35,17 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
       case "recommendation":
         return <MovieRow items={items} lang={lang} act={act} recommended={ui.type === "recommendation"} />;
       case "showtimes":
-        return <Showtimes items={items} lang={lang} act={act} film={ui.meta?.film} groupBy={ui.meta?.groupBy} />;
+        return <Showtimes items={items} lang={lang} act={act} ui={ui} film={ui.meta?.film} groupBy={ui.meta?.groupBy} />;
       case "quantity":
         return <TicketQuantity meta={ui.meta ?? {}} lang={lang} act={act} />;
+      case "booking_proposal":
+        return <BookingProposal proposal={items[0] ?? {}} meta={ui.meta ?? {}} lang={lang} act={act} />;
+      case "refund_options":
+        return <RefundOptions items={items} meta={ui.meta ?? {}} lang={lang} act={act} />;
+      case "payment_investigation":
+        return <PaymentInvestigation result={items[0] ?? {}} lang={lang} act={act} />;
+      case "payment_switch":
+        return <PaymentSwitch summary={items[0] ?? ui.meta?.summary ?? {}} lang={lang} />;
       case "cinema":
         return items.map((c, i) => <CinemaCard key={i} c={c} lang={lang} act={act} />);
       case "offer":
@@ -81,7 +91,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
     <div className="cards" data-type={ui.type}>
       {expired ? <h4>{lang === "ar" ? "انتهى الحجز المؤقت" : "Seat hold expired"}</h4> : ui.title && ui.type !== "showtimes" && <h4>{ui.title}</h4>}
       {body}
-      {ui.type !== "quantity" && actions?.length ? (
+      {!["quantity", "booking_proposal", "refund_options"].includes(ui.type) && !(ui.type === "showtimes" && ui.meta?.journey === "swap") && actions?.length ? (
         <div className="actionsrow">
           {actions.map((a, i) => (
             <button key={i} className={`btn ${a.style === "primary" ? "primary" : a.style === "danger" ? "danger" : "ghost"}`} disabled={isSeatMapAction(a.value) && !seatPlanCommand(ui)} onClick={() => routeAction(a.value, a.label, act, lang, ui)}>
@@ -126,14 +136,27 @@ export function routeAction(value: string, label: string, act: CardActions, lang
     case "recover":
       if (arg === "confirm") return void act.command({ type: "order.recover", confirmed: true, idempotencyKey: crypto.randomUUID() });
       return;
+    case "investigation":
+      if (arg.startsWith("handover:")) return act.say(ar ? `أريد التحدث مع خدمة العملاء بخصوص التحقق من الدفع ${arg.slice(9)}` : `I'd like Customer Care to help with payment investigation ${arg.slice(9)}`);
+      if (arg.startsWith("booking:") && arg.slice(8)) return act.say(ar ? `تحقق من الحجز ${arg.slice(8)} بخصوص هذا الدفع` : `Check booking ${arg.slice(8)} for that payment`);
+      return;
     case "cancel":
       return act.say(ar ? `أريد إلغاء الحجز ${arg} واسترداد المبلغ` : `I'd like to cancel booking ${arg} and get a refund`);
     case "swap":
       return act.say(ar ? `أريد تبديل موعد الحجز ${arg}` : `I'd like to swap booking ${arg} to another showtime`);
+    case "swap-choice": {
+      const bookingId = ui?.meta?.bookingId;
+      const sessionKey = typeof bookingId === "string" && arg.startsWith(`${bookingId}:`) ? arg.slice(bookingId.length + 1) : undefined;
+      if (!sessionKey || !ui?.items?.some((item) => item.sessionKey === sessionKey)) return;
+      return chooseShowtime(sessionKey, ui, act, lang);
+    }
     case "confirm":
-      return act.say(ar ? "نعم، أؤكد. تابع." : "Yes, I confirm. Go ahead.");
     case "abort":
-      return act.say(ar ? "لا، توقف من فضلك." : "No, please don't.");
+      { const confirmationId = cardConfirmationId(value, ui); if (!confirmationId) return;
+        const confirmed = kind === "confirm";
+        if (act.decision) return act.decision({ confirmationId, confirmed, ...(ui ? { summary: decisionSummary(ui, lang) } : {}) });
+        return act.say(confirmed ? ar ? `أؤكد الطلب ${confirmationId}. تابع.` : `I confirm request ${confirmationId}. Go ahead.` : ar ? `لا أؤكد الطلب ${confirmationId}. اتركه دون تغيير.` : `I do not confirm request ${confirmationId}. Leave it unchanged.`);
+      }
     case "book":
       return act.say(ar ? `أريد حجز هذا العرض ${arg ? `(${arg})` : ""}` : `I'd like to book this showtime${arg ? ` (${arg})` : ""}`);
     case "offer":
@@ -158,6 +181,29 @@ export function routeAction(value: string, label: string, act: CardActions, lang
     default:
       return act.say(label);
   }
+}
+
+/** Bind consent to the exact card, never whichever confirmation happened to arrive last. */
+export function cardConfirmationId(value: string, ui?: UiHint): string | undefined {
+  const metaId = typeof ui?.meta?.confirmationId === "string" && ui.meta.confirmationId ? ui.meta.confirmationId : undefined;
+  const actionIds = [...new Set(ui?.actions?.filter((action) => action.value.startsWith("confirm:")).map((action) => action.value.slice(8)).filter(Boolean) ?? [])];
+  if (value.startsWith("confirm:")) {
+    const id = value.slice(8);
+    if (!id || (metaId && metaId !== id) || (ui && !metaId && !actionIds.includes(id))) return;
+    return id;
+  }
+  if (value === "abort") return metaId ?? (actionIds.length === 1 ? actionIds[0] : undefined);
+}
+
+/** A swap choice only requests a preview; it cannot start a new basket or exchange tickets. */
+export function chooseShowtime(sessionKey: string, ui: UiHint, act: CardActions, lang: Lang) {
+  if (!sessionKey || !ui.items?.some((item) => item.sessionKey === sessionKey)) return;
+  if (ui.meta?.journey === "swap") {
+    const bookingId = ui.meta.bookingId;
+    if (typeof bookingId !== "string" || !bookingId) return;
+    return act.say(lang === "ar" ? `راجع تبديل الحجز ${bookingId} إلى العرض ${sessionKey}، واحتفظ بالحجز الأصلي حتى أؤكد التبديل.` : `Review swapping booking ${bookingId} to showtime ${sessionKey}; keep the original booking until I confirm the exchange.`);
+  }
+  return act.command({ type: "booking.select", sessionKey });
 }
 
 function MovieRow({ items, lang, act, recommended }: { items: any[]; lang: Lang; act: CardActions; recommended?: boolean }) {
@@ -199,7 +245,7 @@ function MovieRow({ items, lang, act, recommended }: { items: any[]; lang: Lang;
   );
 }
 
-function Showtimes({ items, lang, act, film, groupBy }: { items: any[]; lang: Lang; act: CardActions; film?: any; groupBy?: string }) {
+function Showtimes({ items, lang, act, ui, film, groupBy }: { items: any[]; lang: Lang; act: CardActions; ui: UiHint; film?: any; groupBy?: string }) {
   const ar = lang === "ar";
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -218,8 +264,8 @@ function Showtimes({ items, lang, act, film, groupBy }: { items: any[]; lang: La
     setBusy(s.sessionKey);
     setError(null);
     try {
-      const result = await act.command({ type: "booking.select", sessionKey: s.sessionKey });
-      if (!result.ok) setError(result.error ?? (ar ? "هذا الموعد لم يعد متاحاً. جرّب موعداً آخر." : "That show isn't available now. Try another time."));
+      const result = await chooseShowtime(s.sessionKey, ui, act, lang);
+      if (result && !result.ok) setError(result.error ?? (ar ? "هذا الموعد لم يعد متاحاً. جرّب موعداً آخر." : "That show isn't available now. Try another time."));
     } catch { setError(ar ? "تعذر الاتصال. حاول مرة أخرى." : "Couldn't connect. Try again."); }
     finally { setBusy(null); }
   };
@@ -299,6 +345,92 @@ function TicketQuantity({ meta, lang, act }: { meta: Record<string, any>; lang: 
   </div>;
 }
 
+function BookingProposal({ proposal: p, meta, lang, act }: { proposal: any; meta: Record<string, any>; lang: Lang; act: CardActions }) {
+  const ar = lang === "ar";
+  const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const quantity = Number(p.ticketQuantity);
+  const canAccept = !!meta.proposalToken && quantity > 0 && p.totalCents != null && Number.isFinite(Number(p.totalCents));
+  const seats = (p.selectedSeats ?? []).map((seat: any) => `${seat.row}${seat.number}`).join(", ");
+  return <div className="booking-proposal">
+    <div className="decision-status"><span className="status-dot" /><span>{ar ? "اقتراحك" : "Your proposed booking"}</span><small>{ar ? "لم تُحجز المقاعد بعد" : "No seats held yet"}</small></div>
+    <div className="proposal-film">{p.posterUrl ? <img src={p.posterUrl} alt="" /> : null}<div><h3>{p.filmTitle}</h3><p>{p.cinemaName}</p><p>{p.showtimeLabel}{p.experience ? ` · ${p.experience}` : ""}</p></div></div>
+    <dl className="decision-facts"><div><dt>{ar ? "التذاكر" : "Tickets"}</dt><dd>{quantity > 0 ? quantity : ar ? "اختر العدد" : "Choose quantity"}{p.adultTickets != null && p.childTickets > 0 ? <small>{ar ? `${p.adultTickets} بالغ · ${p.childTickets} طفل` : `${p.adultTickets} adult · ${p.childTickets} child`}</small> : null}</dd></div><div><dt>{ar ? "المقاعد المقترحة" : "Suggested seats"}</dt><dd>{seats || (ar ? "سنبحث عن المقاعد المناسبة" : "To be selected")}</dd></div></dl>
+    {!quantity && p.sessionKey ? <div className="proposal-quantity"><p>{p.childTickets > 0 ? ar ? "كم عدد البالغين؟" : "How many adults?" : ar ? "كم شخصاً سيحضر؟" : "How many are going?"}</p><div className="quantity-options" role="group" aria-label={ar ? "عدد التذاكر" : "Number of tickets"}>{[1, 2, 3, 4, 5, 6].map((tickets) => <button type="button" key={tickets} disabled={busy} onClick={async () => { setBusy(true); setError(null); try { const result = await act.command({ type: "proposal.preview", input: { sessionKey: p.sessionKey, tickets, ...(p.childTickets > 0 ? { childTickets: p.childTickets } : {}) } }); if (!result.ok) setError(result.error ?? (ar ? "تعذر تحديث الاقتراح." : "Couldn't update the proposal.")); } catch { setError(ar ? "تعذر الاتصال. حاول مجدداً." : "Couldn't connect. Please try again."); } finally { setBusy(false); } }}>{tickets}</button>)}</div></div> : null}
+    {p.totalCents != null && Number.isFinite(Number(p.totalCents)) ? <div className="proposal-total"><span>{ar ? "الإجمالي المقترح" : "Proposed total"}{p.priceIncludesFees ? <small>{ar ? "يشمل رسوم الحجز" : "Includes booking fees"}</small> : null}</span><b>{money(Number(p.totalCents), lang)}</b></div> : null}
+    <p className="decision-help">{ar ? "سنراجع التوفر والسعر عند تأكيد اختيارك." : "Availability and price are checked when you accept."}</p>
+    {error ? <p className="err" role="alert">{error}</p> : null}
+    <div className="actionsrow"><button className="btn cta" disabled={!canAccept || busy} onClick={async () => { setBusy(true); setError(null); try { const result = await act.command({ type: "proposal.accept", proposalToken: meta.proposalToken }); if (!result.ok) setError(result.error ?? (ar ? "تعذر تأكيد الاختيار. حاول مجدداً." : "Couldn't accept this choice. Please try again.")); } catch { setError(ar ? "تعذر الاتصال. حاول مجدداً." : "Couldn't connect. Please try again."); } finally { setBusy(false); } }}>{busy ? t(lang, "processing") : ar ? "احجز هذه المقاعد مؤقتاً" : "Hold these seats"}</button><button className="btn ghost" disabled={busy} aria-expanded={editing} onClick={() => setEditing(!editing)}>{ar ? "تعديل الاختيارات" : "Make changes"}</button></div>
+    {editing ? <div className="proposal-edits">{[{ en: "Movie", ar: "الفيلم", request: "the movie", requestAr: "الفيلم" }, { en: "Cinema", ar: "السينما", request: "the cinema", requestAr: "السينما" }, { en: "Date & time", ar: "التاريخ والوقت", request: "the date or time", requestAr: "التاريخ أو الوقت" }, { en: "Experience", ar: "التجربة", request: "the cinema experience", requestAr: "تجربة السينما" }, { en: "Tickets", ar: "التذاكر", request: "the ticket quantity", requestAr: "عدد التذاكر" }, { en: "Seats", ar: "المقاعد", request: "the proposed seats", requestAr: "المقاعد المقترحة" }].map((choice) => <button className="btn ghost" type="button" key={choice.en} onClick={() => act.say(ar ? `أود تغيير ${choice.requestAr} في اقتراح الحجز` : `I'd like to change ${choice.request} in this booking proposal`)}>{ar ? choice.ar : choice.en}</button>)}</div> : null}
+  </div>;
+}
+
+export function refundChoiceCommand(meta: Record<string, any>, method: unknown): Record<string, unknown> | undefined {
+  if (typeof meta.bookingId !== "string" || !meta.bookingId || !["VOX_CREDIT", "ORIGINAL_PAYMENT", "SHARE_POINTS"].includes(String(method))) return;
+  if (meta.ticketIds !== undefined && (!Array.isArray(meta.ticketIds) || meta.ticketIds.some((id: unknown) => typeof id !== "string" || !id))) return;
+  if (meta.refundChoiceProof !== undefined && (typeof meta.refundChoiceProof !== "string" || !meta.refundChoiceProof)) return;
+  return { type: "refund.choose", bookingId: meta.bookingId, refundMethod: method, ...(meta.ticketIds !== undefined ? { ticketIds: [...meta.ticketIds] } : {}), ...(meta.refundChoiceProof !== undefined ? { refundChoiceProof: meta.refundChoiceProof } : {}) };
+}
+
+function RefundOptions({ items, meta, lang, act }: { items: any[]; meta: Record<string, any>; lang: Lang; act: CardActions }) {
+  const ar = lang === "ar";
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const labels: Record<string, string> = { VOX_CREDIT: ar ? "رصيد فوكس" : "VOX Credit", ORIGINAL_PAYMENT: ar ? "طريقة الدفع الأصلية" : "Original payment method", SHARE_POINTS: ar ? "نقاط شير" : "SHARE Points" };
+  return <div className="refund-options"><p className="decision-help">{ar ? "اختر طريقة الاسترداد. ستراجع التفاصيل قبل التأكيد." : "Choose where your refund goes. You'll review it before confirming."}</p>{items.map((option, index) => <button type="button" className="refund-option" disabled={busy || !labels[option.method] || !refundChoiceCommand(meta, option.method)} key={option.method ?? index} onClick={async () => { const command = refundChoiceCommand(meta, option.method); if (!command) return; setBusy(true); setError(null); try { const result = await act.command(command); if (!result.ok) setError(result.error ?? (ar ? "تعذر مراجعة الاسترداد. حاول مجدداً." : "Couldn't review this refund. Please try again.")); } catch { setError(ar ? "تعذر الاتصال. حاول مجدداً." : "Couldn't connect. Please try again."); } finally { setBusy(false); } }}><span><b>{labels[option.method] ?? (ar ? "طريقة غير متاحة" : "Unavailable method")}</b>{option.cardLast4 ? <small dir="ltr">•••• {option.cardLast4}</small> : null}{option.eta ? <small>{option.eta}</small> : null}{option.validityDays ? <small>{ar ? `صالح لمدة ${option.validityDays} يوماً` : `Valid for ${option.validityDays} days`}</small> : null}{option.points != null ? <small>{option.points} {ar ? "نقطة" : "points"}</small> : null}</span><strong>{option.amountCents != null && Number.isFinite(Number(option.amountCents)) ? money(Number(option.amountCents), lang) : ""}</strong><span aria-hidden="true">›</span></button>)}{error ? <p className="err" role="alert">{error}</p> : null}</div>;
+}
+
+function PaymentInvestigation({ result, lang, act }: { result: any; lang: Lang; act: CardActions }) {
+  const ar = lang === "ar";
+  const candidates = !result.bookingFound && Array.isArray(result.candidateBookings) ? result.candidateBookings : [];
+  const nextSteps: Record<string, string> = {
+    show_confirmed_booking: ar ? "تفاصيل حجزك المؤكد أدناه." : "Your confirmed booking details are below.",
+    check_pending_action: ar ? "طلب الدفع قيد المعالجة. لا تحاول الدفع مجدداً أثناء التحقق." : "Your payment request is still processing. Don't retry payment while its result is checked.",
+    offer_handover: ar ? "يمكن لخدمة العملاء متابعة الطلب ومرجع العملية الذي قدمته." : "Customer Care can review the order and the transaction reference you provided.",
+    choose_booking: ar ? "اختر الحجز الذي تريد التحقق منه. لم نربط هذه الحجوزات بعملية الخصم بعد." : "Choose the booking to check. These bookings have not been matched to the reported debit.",
+  };
+  return <div className="investigation-card">
+    <div className="decision-status"><span className="status-dot" /><span>{ar ? "نتيجة التحقق من الدفع" : "Payment check"}</span></div>
+    <b>{result.bookingFound ? ar ? "عثرنا على الحجز" : "Booking located" : candidates.length ? ar ? "حجوزات محتملة للتحقق" : "Possible bookings to check" : result.status === "processing" ? ar ? "الدفع قيد المعالجة" : "Payment is processing" : ar ? "لم نعثر على حجز مؤكد" : "No confirmed booking found"}</b>
+    {nextSteps[result.nextStep] ? <p>{nextSteps[result.nextStep]}</p> : null}
+    <dl className="decision-facts">
+      {result.investigationId ? <div><dt>{ar ? "مرجع المتابعة" : "Investigation reference"}</dt><dd className="mono">{result.investigationId}</dd></div> : null}
+      {result.reportedTransactionReference ? <div><dt>{ar ? "مرجع العملية الذي قدمته" : "Transaction reference you provided"}</dt><dd className="mono">{result.reportedTransactionReference}</dd></div> : null}
+      {result.reportedCardLast4 ? <div><dt>{ar ? "البطاقة التي ذكرتها" : "Card you reported"}</dt><dd dir="ltr">•••• {result.reportedCardLast4}</dd></div> : null}
+    </dl>
+    {!result.transactionReferenceVerified && result.reportedTransactionReference ? <p className="decision-help">{ar ? "لم يتم التحقق من مرجع العملية بعد." : "This transaction reference has not been verified."}</p> : null}
+    {candidates.map((booking: any, index: number) => <div className="investigation-candidate" key={booking.bookingId ?? index}>
+      <b>{booking.filmTitle}</b><span>{booking.cinemaName}</span><span>{booking.showtimeLabel}</span>
+      {booking.seats ? <span>{t(lang, "seats")}: {Array.isArray(booking.seats) ? booking.seats.join(", ") : booking.seats}</span> : null}
+      {booking.total ? <span>{booking.total}</span> : null}
+      <button type="button" className="btn ghost" disabled={typeof booking.bookingId !== "string" || !booking.bookingId} onClick={() => routeAction(`investigation:booking:${booking.bookingId}`, "", act, lang)}>{ar ? `تحقق من الحجز ${booking.bookingId ?? ""}` : `Check booking ${booking.bookingId ?? ""}`}</button>
+    </div>)}
+    {result.bookingFound && Array.isArray(result.bookings) ? result.bookings.map((booking: any, index: number) => confirmedQrPayload(undefined, booking) ? <QRTicket key={booking.bookingId ?? index} b={booking} lang={lang} /> : <BookingCard key={booking.bookingId ?? index} b={booking} lang={lang} act={act} />) : null}
+  </div>;
+}
+
+const hasAmount = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+function paymentMethodLabel(method: unknown, lang: Lang): string {
+  const labels: Record<string, [string, string]> = { VOX_CREDIT: ["VOX Credit", "رصيد فوكس"], SHARE_POINTS: ["SHARE Points", "نقاط شير"], ORIGINAL_PAYMENT: ["Original payment method", "طريقة الدفع الأصلية"], CARD: ["Original card", "البطاقة الأصلية"], SAVED_CARD: ["Saved card", "البطاقة المحفوظة"] };
+  return labels[String(method)]?.[lang === "ar" ? 1 : 0] ?? (lang === "ar" ? "طريقة غير محددة" : "Method not specified");
+}
+
+function PaymentSwitch({ summary, lang }: { summary: any; lang: Lang }) {
+  const ar = lang === "ar";
+  return <div className="payment-switch">
+    <p className="decision-help">{ar ? "راجع تغيير العرض وطريقة الدفع. لن يتغير طلبك حتى تؤكد." : "Review the offer and payment change. Your order stays unchanged until you confirm."}</p>
+    <dl className="decision-facts">
+      {hasAmount(summary.currentTotalCents) ? <div><dt>{ar ? "الإجمالي الحالي" : "Current total"}</dt><dd>{money(summary.currentTotalCents, lang)}</dd></div> : null}
+      {hasAmount(summary.totalAfterCents) ? <div><dt>{ar ? "الإجمالي بعد إزالة العرض" : "Total after removing the offer"}</dt><dd>{money(summary.totalAfterCents, lang)}</dd></div> : null}
+      <div><dt>{ar ? "طريقة الدفع التالية" : "Next payment method"}</dt><dd>{paymentMethodLabel(summary.nextPaymentMethod, lang)}</dd></div>
+      {Array.isArray(summary.removedOfferIds) && summary.removedOfferIds.length ? <div><dt>{ar ? "العروض التي ستُزال" : "Offers to remove"}</dt><dd>{summary.removedOfferIds.join(", ")}</dd></div> : null}
+    </dl>
+    <p className="decision-help">{ar ? "هذا التأكيد يغيّر العرض فقط. ستراجع الدفع وتؤكده في خطوة منفصلة." : "This confirmation changes the offer. Payment is reviewed and confirmed separately."}</p>
+  </div>;
+}
+
 function CinemaCard({ c, lang, act }: { c: any; lang: Lang; act: CardActions }) {
   return (
     <div className="cinema">
@@ -344,6 +476,7 @@ function OfferCard({ o, lang, act }: { o: any; lang: Lang; act: CardActions }) {
         <b>{o.title}</b>
         <div>{o.benefit}</div>
         <div style={{ color: "#6b6b76", marginTop: 2 }}>{o.description}</div>
+        {typeof o.discountCents === "number" && typeof o.totalAfterOfferCents === "number" ? <div className="offer-price-preview"><span>{lang === "ar" ? "التوفير" : "Saving"} <b>{money(o.discountCents, lang)}</b></span><span>{lang === "ar" ? "الإجمالي مع العرض" : "Total with offer"} <b>{money(o.totalAfterOfferCents, lang)}</b></span></div> : null}
         <div style={{ marginTop: 6, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           <span className={`badge ${o.eligible ? "ok" : o.requires?.length ? "warn" : "soft"}`}>{o.eligible ? (lang === "ar" ? "مؤهل" : "Eligible") : o.requires?.length ? (lang === "ar" ? `يتطلب ${o.requires.join("، ")}` : `Needs ${o.requires.join(", ")}`) : o.type}</span>
           <button className="btn ghost" style={{ padding: "4px 8px" }} onClick={() => routeAction(`offer:${o.offerId}`, o.titleEn ?? o.title, act, lang)}>
@@ -451,8 +584,11 @@ function BookingCard({ b, lang, act, confirmationId }: { b: any; lang: Lang; act
           <>
             <span>{t(lang, "refund")}</span>
             <b>
-              {money(b.refund.amountCents, lang)} → {b.refund.method.replace("_", " ")} {b.refund.reference ? `(${b.refund.reference})` : ""}
+              {hasAmount(b.refund.amountCents) ? money(b.refund.amountCents, lang) : ""} → {paymentMethodLabel(b.refund.method, lang)} {b.refund.reference ? `(${b.refund.reference})` : ""}
             </b>
+            {b.refund.cardLast4 ? <><span>{lang === "ar" ? "البطاقة" : "Card"}</span><b dir="ltr">•••• {b.refund.cardLast4}</b></> : null}
+            {b.refund.eta ? <><span>{lang === "ar" ? "موعد الاسترداد" : "Refund timing"}</span><b>{b.refund.eta}</b></> : null}
+            {b.refund.validityDays ? <><span>{lang === "ar" ? "الصلاحية" : "Validity"}</span><b>{lang === "ar" ? `${b.refund.validityDays} يوماً` : `${b.refund.validityDays} days`}</b></> : null}
           </>
         ) : null}
         {b.swapTo ? (
@@ -461,6 +597,13 @@ function BookingCard({ b, lang, act, confirmationId }: { b: any; lang: Lang; act
             <b>
               {b.swapTo.showtimeLabel} · {b.swapTo.experience} · {b.swapTo.cinemaName}
             </b>
+            {Array.isArray(b.swapTo.seats) && b.swapTo.seats.length ? <><span>{lang === "ar" ? "المقاعد الجديدة" : "New seats"}</span><b>{b.swapTo.seats.join(", ")}</b></> : null}
+            {b.swapTo.concessions?.length ? <><span>{lang === "ar" ? "الطعام المنقول" : "Food transferring"}</span><b>{b.swapTo.concessions.map((food: any) => `${food.quantity}× ${food.description}`).join(", ")}</b></> : null}
+            {hasAmount(b.swapTo.originalTotalCents) ? <><span>{lang === "ar" ? "الإجمالي الأصلي" : "Original total"}</span><b>{money(b.swapTo.originalTotalCents, lang)}</b></> : null}
+            {hasAmount(b.swapTo.newTotalCents) ? <><span>{lang === "ar" ? "الإجمالي الجديد" : "New total"}</span><b>{money(b.swapTo.newTotalCents, lang)}</b></> : null}
+            {hasAmount(b.swapTo.chargeCents) && b.swapTo.chargeCents > 0 ? <><span>{lang === "ar" ? "الفرق المطلوب دفعه" : "Extra amount to pay"}</span><b>{money(b.swapTo.chargeCents, lang)} · {paymentMethodLabel(b.swapTo.paymentMethod, lang)}{b.swapTo.cardLast4 && ["CARD", "SAVED_CARD"].includes(b.swapTo.paymentMethod) ? ` •••• ${b.swapTo.cardLast4}` : ""}</b></> : null}
+            {hasAmount(b.swapTo.refundCents) && b.swapTo.refundCents > 0 ? <><span>{t(lang, "refund")}</span><b>{money(b.swapTo.refundCents, lang)} · {paymentMethodLabel(b.swapTo.refundMethod, lang)}{b.swapTo.cardLast4 && b.swapTo.refundMethod === "ORIGINAL_PAYMENT" ? ` •••• ${b.swapTo.cardLast4}` : ""}</b>{b.swapTo.refundEta ? <><span>{lang === "ar" ? "موعد الاسترداد" : "Refund timing"}</span><b>{b.swapTo.refundEta}</b></> : null}</> : null}
+            {b.swapTo.differenceCents === 0 ? <><span>{lang === "ar" ? "فرق السعر" : "Price difference"}</span><b>{lang === "ar" ? "لا دفعة إضافية أو استرداد" : "No extra charge or refund"}</b></> : null}
           </>
         ) : null}
       </div>
@@ -507,7 +650,7 @@ function TicketTypes({ items, lang, act }: { items: any[]; lang: Lang; act: Card
           </div>
         );
       })}
-      <small className="vatnote">{lang === "ar" ? "الأسعار شاملة ضريبة القيمة المضافة ٥٪. لا رسوم حجز." : "Prices include 5% VAT. No booking fee."}</small>
+      <small className="vatnote">{lang === "ar" ? "الأسعار لكل تذكرة. تظهر أي رسوم حجز في المراجعة النهائية." : "Prices are per ticket. Any booking fees appear in the final review."}</small>
     </div>
   );
 }
@@ -519,9 +662,7 @@ export function OrderSummary({ o, meta, lang, act, hideActions }: { o: any; meta
   const ticketTotal = tickets.reduce((sum: number, ticket: any) => sum + Number(ticket.finalCents ?? ticket.priceCents ?? 0), 0);
   return (
     <div className="order">
-      <div style={{ marginBottom: 6 }}>
-        <b>{o.filmTitle}</b> · {o.experience} · {o.showtimeLabel} · {o.cinemaName}
-      </div>
+      <div className="order-heading"><b>{o.filmTitle}</b><span>{[o.showtimeLabel, o.cinemaName, o.experience].filter(Boolean).join(" · ")}</span></div>
       {tickets.length ? <div className="line"><span>{lang === "ar" ? `${tickets.length} تذاكر` : `${tickets.length} ticket${tickets.length === 1 ? "" : "s"}`}{seats ? <span className="badge soft">{seats}</span> : null}</span><span>{money(ticketTotal, lang)}</span></div> : null}
       {(o.concessions ?? []).map((c: any) => (
         <div className="line" key={`c${c.id}`}>
@@ -1032,30 +1173,40 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
   );
 }
 
-/** Receipt + e-ticket: the same fields the real "Your receipt" / "How to collect" tabs show. */
+/** Only the backend's confirmed QR payload can produce a ticket image. */
+export function confirmedQrPayload(qr: unknown, booking: { qrPayload?: unknown }): string | undefined {
+  const payload = qr ?? booking.qrPayload;
+  return typeof payload === "string" && payload.trim() ? payload : undefined;
+}
+
+export async function createTicketQr(payload: string): Promise<string> {
+  if (!payload.trim()) throw new Error("A confirmed QR payload is required.");
+  return QRCode.toDataURL(payload, { type: "image/png", width: 720, margin: 4, errorCorrectionLevel: "M", color: { dark: "#1f2428", light: "#ffffff" } });
+}
+
+/** One receipt keeps the verified reference, visit details and QR together. */
 function QRTicket({ b, lang, qr }: { b: any; lang: Lang; qr?: string }) {
   const ar = lang === "ar";
-  const [src, setSrc] = useState("");
-  const [tab, setTab] = useState<"receipt" | "collect">("receipt");
+  const [qrResult, setQrResult] = useState<{ payload: string; src: string; failed: boolean } | null>(null);
+  const payload = confirmedQrPayload(qr, b);
+  const currentQr = qrResult?.payload === payload ? qrResult : null;
+  const src = currentQr?.src ?? "";
   useEffect(() => {
-    QRCode.toDataURL(qr ?? b.qrPayload ?? b.bookingId ?? "VOX", { width: 360, margin: 1, color: { dark: "#1f2428", light: "#ffffff" } }).then(setSrc).catch(() => setSrc(""));
-  }, [qr, b.qrPayload, b.bookingId]);
-  const purchased = b.bookedAt ? new Date(b.bookedAt).toLocaleDateString(ar ? "ar-AE" : "en-GB", { day: "2-digit", month: "short", year: "2-digit", timeZone: "Asia/Dubai" }) : new Date().toLocaleDateString(ar ? "ar-AE" : "en-GB", { day: "2-digit", month: "short", year: "2-digit", timeZone: "Asia/Dubai" });
+    let current = true;
+    if (payload) void createTicketQr(payload).then((image) => { if (current) setQrResult({ payload, src: image, failed: false }); }).catch(() => { if (current) setQrResult({ payload, src: "", failed: true }); });
+    return () => { current = false; };
+  }, [payload]);
+  const date = b.bookedAt ? cinemaDate(b.bookedAt) : undefined;
+  const purchased = date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString(ar ? "ar-AE" : "en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Dubai" }) : undefined;
+  const filename = `VOX-QR-${String(b.bookingId ?? "booking").replace(/[^A-Za-z0-9_-]/g, "_")}.png`;
   return (
     <div className="ticket">
       <div className="t-top">
         <div className="t-brand">VOX <span>CINEMAS</span></div>
         <div className="t-exp">{b.experience}</div>
       </div>
-      <div className="t-tabs">
-        <button className={tab === "receipt" ? "on" : ""} onClick={() => setTab("receipt")}>
-          {ar ? "إيصالك" : "Your receipt"}
-        </button>
-        <button className={tab === "collect" ? "on" : ""} onClick={() => setTab("collect")}>
-          {ar ? "كيفية الاستلام" : "How to collect"}
-        </button>
-      </div>
-      {tab === "receipt" ? (
+      <div className="receipt-status"><span aria-hidden="true">✓</span><div><b>{ar ? "تم تأكيد الحجز" : "Booking confirmed"}</b>{b.bookingId ? <small>{t(lang, "bookingRef")} <strong className="mono" dir="ltr">{b.bookingId}</strong></small> : null}</div></div>
+      {
         <>
           <div className="t-main">
             <div className="t-film">
@@ -1063,33 +1214,24 @@ function QRTicket({ b, lang, qr }: { b: any; lang: Lang; qr?: string }) {
               {b.rating ? <span className="badge soft">{b.rating}</span> : null}
             </div>
             <div className="t-grid">
-              <div><small>{ar ? "تاريخ الشراء" : "Purchase date"}</small><b>{purchased}</b></div>
+              {purchased ? <div><small>{ar ? "تاريخ الشراء" : "Purchase date"}</small><b>{purchased}</b></div> : null}
               <div><small>{ar ? "المكان" : "Venue"}</small><b>{b.cinemaName ?? b.cinemaId}{b.screenName ? ` · ${b.screenName}` : ""}</b></div>
               <div><small>{ar ? "الموعد" : "When"}</small><b>{b.showtimeLabel}</b></div>
               <div><small>{t(lang, "seats")}</small><b>{b.seats}</b></div>
-              <div><small>{ar ? "رقم الطلب" : "Order reference"}</small><b className="mono">{b.bookingId}</b></div>
               {b.payment ? <div><small>{ar ? "الدفع" : "Paid with"}</small><b>{b.payment}</b></div> : null}
             </div>
             {b.concessions?.length ? <div className="t-fnb">{b.concessions.map((c: any) => `${c.quantity}× ${c.description}`).join(", ")}</div> : null}
           </div>
           <div className="t-tear"><i /><i /></div>
           <div className="t-qr">
-            {src ? <img src={src} alt="QR" /> : null}
+            <div className="receipt-qr">{src ? <><img src={src} alt={ar ? `رمز QR للحجز ${b.bookingId ?? ""}` : `QR code for booking ${b.bookingId ?? ""}`} /><a className="btn ghost qr-download" href={src} download={filename}>{ar ? "تنزيل رمز QR" : "Download QR Code"}<small>PNG <span aria-hidden="true">↓</span></small></a></> : <p className="qr-unavailable" role="status">{payload && !currentQr?.failed ? ar ? "جارٍ تجهيز رمز QR…" : "Loading your QR code…" : ar ? "رمز QR غير متاح لهذا الحجز حالياً." : "A QR code isn't available for this booking yet."}</p>}</div>
             <div className="t-paid">
               <small>{ar ? "المبلغ المدفوع" : "AMOUNT PAID"}</small>
               <b>{b.total ?? money(b.totalCents, lang)}</b>
             </div>
           </div>
         </>
-      ) : (
-        <div className="t-collect">
-          <h6>{ar ? "هذه تذكرتك" : "This is your ticket"}</h6>
-          <p>{ar ? "امسح رمز QR عند منصة التذاكر وادخل مباشرة إلى الصالة. لا طوابير ولا طباعة. تحتوي تذكرتك الإلكترونية على جميع التذاكر في هذا الطلب — تأكد من وصول جميع ضيوفك قبل مسح الرمز." : "Scan this QR code at the ticket podium and head straight into the cinema. No ticket queues. No print outs. No hassles. Your e-ticket holds all of the tickets purchased with this order. Make sure all of your guests have arrived before scanning the code."}</p>
-          <h6>{ar ? "المأكولات والمشروبات" : "Food & Drinks"}</h6>
-          <p>{ar ? "بعد اختيار «تحضير طلبي» أو مسح رمز QR عند الكشك، يبدأ المطبخ تحضير طلبك فوراً. يظهر رقم استلام طلبك على شاشات استلام الأطعمة الساخنة في الكاندي بار." : "After you have selected 'Prepare my order' or scanned your QR code at a kiosk, the kitchen will start to prepare your order immediately. Your order collection number will display on the hot food collection screens at the Candy Bar."}</p>
-          <small className="muted">{ar ? "أُرسلت التذاكر أيضاً إلى بريدك الإلكتروني." : "Your tickets have also been emailed to you."}</small>
-        </div>
-      )}
+      }
     </div>
   );
 }

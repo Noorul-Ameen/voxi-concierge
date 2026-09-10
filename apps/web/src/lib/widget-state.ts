@@ -1,5 +1,6 @@
 import type { CommandResult, Lang, UiHint, WidgetEvent } from "./api";
 import { cinemaDate } from "./cinema-time";
+import { money } from "./i18n";
 
 export type UserActivityClock = { lastUserAt: number; lastProviderPingAt: number };
 
@@ -83,7 +84,14 @@ export function decisionSummary(ui: UiHint, lang: Lang): string {
   const count = item.tickets?.length || item.ticketCount || meta.selectedTicketCount;
   const seats = typeof item.seats === "string" ? item.seats : Array.isArray(item.seats) ? item.seats.join(", ") : item.tickets?.map((ticket: any) => ticket.seat).filter(Boolean).join(", ") ?? meta.selectedSeats;
   const details = [film, cinema, when, count ? ar ? `${count} تذاكر` : `${count} ticket${count === 1 ? "" : "s"}` : null, seats ? `${ar ? "المقاعد" : "Seats"} ${seats}` : null].filter(Boolean);
-  if (["order", "payment", "booking", "qr", "quantity", "seatmap"].includes(ui.type) && details.length) return details.join(" · ");
+  const amount = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? money(value, lang) : undefined;
+  if (ui.type === "payment_switch") return [ar ? "تغيير العرض" : "Offer change", amount(item.currentTotalCents), "→", amount(item.totalAfterCents), item.nextPaymentMethod].filter(Boolean).join(" · ");
+  if (item.swapTo) {
+    const swap = item.swapTo;
+    details.push(...["→", swap.cinemaName, swap.showtimeLabel, swap.experience, Array.isArray(swap.seats) ? swap.seats.join(", ") : undefined, typeof swap.differenceCents === "number" ? `${ar ? "فرق السعر" : "Price difference"} ${amount(swap.differenceCents)}` : undefined].filter((value): value is string => typeof value === "string"));
+  }
+  if (item.refund) details.push(...[ar ? "الاسترداد" : "Refund", amount(item.refund.amountCents), item.refund.method, item.refund.eta, item.refund.validityDays ? `${item.refund.validityDays} ${ar ? "يوماً" : "days"}` : undefined].filter((value): value is string => typeof value === "string"));
+  if (["order", "payment", "booking", "booking_proposal", "qr", "quantity", "seatmap"].includes(ui.type) && details.length) return details.join(" · ");
   if (["movie", "recommendation"].includes(ui.type)) return film ?? `${ar ? "خيارات الأفلام" : "Movie options"}${items.length ? ` · ${names(items.map((movie) => movie.title ?? movie.filmTitle))}` : ""}`;
   if (ui.type === "showtimes") return selected && details.length ? details.join(" · ") : [ar ? "مواعيد العرض" : "Showtimes", film ?? names(items.map((show) => show.filmTitle)), cinema ?? names(items.map((show) => show.cinemaName))].filter(Boolean).join(" · ");
   if (ui.type === "menu") {
@@ -180,9 +188,9 @@ export async function verifyHoldNotice(
 /** Keep acknowledgements factual and exclude credentials and payment tokens. */
 export function actionContext(type: string, result: { ok: boolean; speech?: string; data?: Record<string, unknown>; action?: { status: string; type: string; result?: Record<string, unknown> }; error?: string }): string {
   const data = result.data ?? result.action?.result ?? {};
-  const safe = Object.fromEntries(Object.entries(data).filter(([key]) => ["bookingState", "summary", "seats", "totalCents", "expiresAtUtc", "needs", "combinedCheckout", "bookingReference"].includes(key)));
+  const safe = Object.fromEntries(Object.entries(data).filter(([key]) => ["bookingState", "summary", "proposal", "confirmationId", "seats", "totalCents", "expiresAtUtc", "needs", "combinedCheckout", "bookingReference"].includes(key)));
   const scrub = (value: unknown): unknown => Array.isArray(value) ? value.map(scrub) : value && typeof value === "object"
-    ? Object.fromEntries(Object.entries(value).filter(([key]) => !/(?:password|token|secret|cvv|authorization)|^(?:pin|otp|email|phone|cardBin|cardNumber|first6)$/i.test(key)).map(([key, nested]) => [key, scrub(nested)]))
+    ? Object.fromEntries(Object.entries(value).filter(([key]) => !/(?:password|token|proof|secret|cvv|authorization)|^(?:pin|otp|email|phone|cardBin|cardNumber|first6)$/i.test(key)).map(([key, nested]) => [key, scrub(nested)]))
     : value;
   const pending = ["queued", "running"].includes(result.action?.status ?? "");
   const succeeded = result.ok && !pending && !["failed", "cancelled"].includes(result.action?.status ?? "");

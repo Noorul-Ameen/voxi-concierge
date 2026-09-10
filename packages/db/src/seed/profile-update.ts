@@ -7,7 +7,7 @@ import * as S from "../schema/index.js";
 import { PERSONAS } from "./personas.js";
 import { nowLocalIso } from "./util.js";
 
-export const DEMO_PROFILE_VERSION = 1;
+export const DEMO_PROFILE_VERSION = 2;
 export const demoHistoryId = (customerId: string, day: "weekday" | "weekend", visit: number) =>
   `pref_${customerId}_${day === "weekday" ? "wd" : "we"}_${visit}`;
 export const DEMO_PROFILE_PATTERNS = [
@@ -98,7 +98,7 @@ export async function updateDemoProfiles(db: Db, env = process.env, now = nowLoc
             experience: persona.preferences.experiences?.[0] ?? "Standard",
             showtime: date,
             ticketCount: 2,
-            concessionItemIds: [],
+            concessionItemIds: pattern.id === "cust_sara" ? ["9540", "7747"] : [],
             spendCents: 9200,
             seatPreference: pattern.seat,
             synthetic: true,

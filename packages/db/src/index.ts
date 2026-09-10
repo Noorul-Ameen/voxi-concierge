@@ -4,4 +4,5 @@ export * as schema from "./schema/index.js";
 export * from "./schema/index.js";
 export * from "./seats.js";
 export * from "./password.js";
+export * from "./schema-readiness.js";
 export { nowLocalDate, nowLocalIso, addDaysIso, addMinutesIso } from "./seed/util.js";

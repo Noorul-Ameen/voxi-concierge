@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLIENT_TOOLS, TOOL_REGISTRY, type ToolName } from "@voxi/contracts";
 import type { z } from "zod";
+import { procedureFallbackPrompt } from "./procedures.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -177,7 +178,7 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
       response_timeout_secs: isWrite ? 20 : 15,
       execution_mode: "immediate" as const,
       // Announce the verified result, not an action or hold that may fail.
-      pre_tool_speech: SILENT_TOOLS.has(name) || isWrite ? ("off" as const) : ("auto" as const),
+      pre_tool_speech: "off" as const,
       interruption_mode: isWrite ? ("disable_during_tool" as const) : ("allow" as const),
       tool_error_handling_mode: "passthrough" as const,
       api_schema: {
@@ -211,8 +212,11 @@ export function buildClientTools() {
   });
 }
 
-export function systemPrompt(): string {
-  return readFileSync(path.resolve(here, "../prompts/system.md"), "utf8");
+export function systemPrompt(options: { proceduresEnabled?: boolean } = {}): string {
+  const core = readFileSync(path.resolve(here, "../prompts/system.md"), "utf8");
+  return options.proceduresEnabled
+    ? `${core}\n\nUse the applicable published VOX procedure for task-specific guidance. Keep the same voice and conversation context; do not announce a procedure or recite its steps.\n`
+    : `${core}\n\n${procedureFallbackPrompt()}`;
 }
 
 /** Native turn control only; it does not call the backend or change an order/hold. */
@@ -225,11 +229,15 @@ export const SKIP_TURN = {
 } as const;
 
 /** Existing-agent sync changes behaviour only, preserving all live model, voice, privacy and KB settings. */
-export function buildAgentBehaviorPatch(toolIds: string[]) {
+export function buildAgentBehaviorPatch(toolIds: string[], options: { proceduresEnabled?: boolean } = {}) {
   return {
     conversation_config: {
       agent: {
-        prompt: { prompt: systemPrompt(), tool_ids: toolIds, built_in_tools: { skip_turn: SKIP_TURN } },
+        prompt: {
+          prompt: systemPrompt(options),
+          tool_ids: toolIds,
+          built_in_tools: { skip_turn: SKIP_TURN },
+        },
       },
     },
   };

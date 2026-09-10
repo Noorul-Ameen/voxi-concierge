@@ -38,6 +38,12 @@ try {
   await updateDemoProfiles(profileDb.db);
   const { refreshDemoSchedule } = await import("./seed/refresh-demo-schedule.js");
   const schedule = await refreshDemoSchedule(profileDb.db);
+  const { refreshDemoJourneyFixtures } = await import("./seed/journey-fixtures.js");
+  const journeys = await refreshDemoJourneyFixtures(profileDb.db);
+  if (journeys.enabled)
+    console.log(
+      `bootstrap: added ${journeys.inserted} tagged journey fixtures; archived ${journeys.archived} untouched seed examples`,
+    );
   if (schedule.enabled)
     console.log(
       `bootstrap: synthetic demo schedule added ${schedule.inserted} sessions for the next ${schedule.days} days`,

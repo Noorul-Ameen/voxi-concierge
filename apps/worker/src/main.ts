@@ -12,11 +12,18 @@ import {
   executeAction,
   ledger,
 } from "@voxi/concierge-core";
-import { createDb } from "@voxi/db";
+import { createDb, waitForCommerceSchema } from "@voxi/db";
 import { schema as S } from "@voxi/db";
 import { eq } from "drizzle-orm";
 
 const { db, sql, close } = createDb();
+try {
+  await waitForCommerceSchema(db);
+} catch (error) {
+  console.error((error as Error).message);
+  await close();
+  process.exit(1);
+}
 const ctx = createContext(db, { sql });
 const catalog = new Catalog(ctx.vista);
 const workerId = `${hostname()}-${process.pid}`;

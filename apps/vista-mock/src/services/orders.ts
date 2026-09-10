@@ -9,13 +9,14 @@ import {
   shortId,
 } from "@voxi/db";
 import { flattenLayout, nowLocalDate } from "@voxi/db";
-import { centsToPoints } from "@voxi/domain";
+import { balanceMethod, centsToPoints, isCardOffer } from "@voxi/domain";
 /**
  * Order lifecycle (Vista V1 Ticketing/Order semantics) with real seat holds.
  * Every mutation runs in a transaction holding a Postgres advisory lock on the session's seat map,
  * so concurrent holds on the same seats are impossible.
  */
 import { and, eq, sql } from "drizzle-orm";
+import { consumeWalletCredits, expireWalletCredits } from "./wallet.js";
 
 export class VistaError extends Error {
   constructor(
@@ -111,7 +112,7 @@ export async function loadSeatState(tx: Tx, cinemaId: string, sessionId: string)
   return { sess, tpl, state };
 }
 
-async function saveSeatState(
+export async function saveSeatState(
   tx: Tx,
   cinemaId: string,
   sessionId: string,
@@ -170,6 +171,7 @@ export async function getOrCreateOrder(
   sessionId: string | null,
   cfg: OrderCfg,
   conversationId?: string,
+  previousOrderId?: string,
 ): Promise<OrderRow> {
   const existing = (await tx.select().from(S.orders).where(eq(S.orders.userSessionId, userSessionId)))[0];
   if (existing) {
@@ -182,6 +184,33 @@ export async function getOrCreateOrder(
       throw new VistaError(RC.GENERAL, RC.INVALID_STATE, `Order is ${existing.state}`);
     return existing;
   }
+  let expiryAt = new Date(Date.now() + cfg.expiryMinutes * 60000);
+  if (previousOrderId) {
+    const [prior] = await tx.select().from(S.orders).where(eq(S.orders.userSessionId, previousOrderId));
+    let owner = prior?.conversationId;
+    const seen = new Set<string>();
+    while (owner && owner !== conversationId && !seen.has(owner) && seen.size < 32) {
+      seen.add(owner);
+      const [linked] = await tx.select().from(S.conversations).where(eq(S.conversations.id, owner));
+      owner =
+        typeof linked?.metadata?.linkedConversationId === "string"
+          ? linked.metadata.linkedConversationId
+          : null;
+    }
+    if (!prior || !conversationId || owner !== conversationId || ["paid", "cancelled"].includes(prior.state))
+      throw new VistaError(
+        RC.GENERAL,
+        RC.INVALID_STATE,
+        "The prior hold cannot be replaced by this conversation",
+      );
+    if (prior.expiryAt.getTime() <= Date.now() || prior.state === "expired")
+      throw new VistaError(
+        RC.GENERAL,
+        RC.ORDER_EXPIRED,
+        "The original hold expired; explicitly review a fresh hold",
+      );
+    expiryAt = prior.expiryAt;
+  }
   const [row] = await tx
     .insert(S.orders)
     .values({
@@ -191,7 +220,7 @@ export async function getOrCreateOrder(
       state: "draft",
       conversationId: conversationId ?? null,
       // Only a new order starts a hold. Basket edits retain this original deadline.
-      expiryAt: new Date(Date.now() + cfg.expiryMinutes * 60000),
+      expiryAt,
     })
     .returning();
   return row!;
@@ -209,6 +238,7 @@ export async function addTickets(
     ReorderSessionTickets?: boolean;
     SeatPreference?: "front" | "middle" | "back" | "aisle";
     ConversationId?: string;
+    PreviousOrderId?: string;
   },
   cfg: OrderCfg = DEFAULT_CFG,
 ) {
@@ -220,6 +250,7 @@ export async function addTickets(
       req.SessionId,
       cfg,
       req.ConversationId,
+      req.PreviousOrderId,
     );
     if (order.sessionId && order.sessionId !== req.SessionId)
       throw new VistaError(
@@ -739,8 +770,17 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
     }
   }
   // Bank offers must be paid with a card from that bank — re-check the card actually used at payment.
-  const bankOffers = order.appliedOffers.filter((o) => o.bankBins?.length);
+  const bankOffers = order.appliedOffers.filter(isCardOffer);
   if (bankOffers.length) {
+    if (
+      order.loyaltyPointsPayableValueInCents > 0 ||
+      req.PaymentInfoCollection.some((p) => balanceMethod(p.PaymentTenderCategory) && p.PaymentValueCents > 0)
+    )
+      throw new VistaError(
+        RC.GENERAL,
+        RC.OFFER_NOT_ELIGIBLE,
+        "Bank-card offers cannot be combined with VOX credit or SHARE Points, including split payments",
+      );
     const custId0 = req.CustomerId ?? order.customerId ?? null;
     const saved = custId0
       ? ((await db.select().from(S.customers).where(eq(S.customers.id, custId0)))[0]?.savedCards ?? [])
@@ -750,30 +790,20 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
       (p) => p.PaymentTenderCategory === "CREDIT" || p.PaymentTenderCategory === "CREDITCARD",
     );
     for (const o of bankOffers) {
-      const okCard = bins.some((b) => o.bankBins!.some((x) => b.startsWith(x)));
-      if (cardTender && !okCard)
+      const okCard = bins.some((b) => o.bankBins?.some((x) => b.startsWith(x)));
+      if (!cardTender || !okCard)
         throw new VistaError(
           RC.GENERAL,
           RC.OFFER_NOT_ELIGIBLE,
           `${o.title} must be paid with an eligible ${o.bankName ?? "bank"} card — pay with that card or remove the offer`,
         );
-      if (
-        !cardTender &&
-        bins.length === 0 &&
-        !req.PaymentInfoCollection.every(
-          (p) => p.PaymentTenderCategory === "LOYALTY" || p.PaymentTenderCategory === "EWALLET",
-        )
-      )
-        throw new VistaError(
-          RC.GENERAL,
-          RC.OFFER_NOT_ELIGIBLE,
-          `${o.title} requires card payment with an eligible ${o.bankName ?? "bank"} card`,
-        );
     }
   }
   return withSessionLock(db, order.cinemaId, order.sessionId!, async (tx) => {
     // A second payment can enter before the first commits; re-read under the session lock.
-    const fresh = (await tx.select().from(S.orders).where(eq(S.orders.userSessionId, req.UserSessionId)))[0];
+    const fresh = (
+      await tx.select().from(S.orders).where(eq(S.orders.userSessionId, req.UserSessionId)).for("update")
+    )[0];
     if (fresh?.state === "paid") {
       const booking = (
         await tx
@@ -805,7 +835,25 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
       : [];
     // Loyalty / wallet tenders debit the member account (with optimistic version check)
     const memberId = req.MemberId ?? req.PaymentInfoCollection.find((p) => p.MemberId)?.MemberId;
-    for (const p of req.PaymentInfoCollection) {
+    const reserved = order.appliedOffers.find((offer) => offer.type === "loyalty_redeem");
+    const payments: PaymentInfo[] = [...req.PaymentInfoCollection];
+    if (order.loyaltyPointsPayableValueInCents > 0) {
+      if (!reserved || !["SHARE_POINTS", "VOX_REWARDS"].includes(reserved.offerId))
+        throw new VistaError(
+          RC.GENERAL,
+          RC.PAYMENT_DECLINED,
+          "Reserved balance is not backed by a valid redemption",
+        );
+      payments.push({
+        PaymentTenderCategory: reserved.offerId === "SHARE_POINTS" ? "LOYALTY" : "EWALLET",
+        PaymentValueCents: order.loyaltyPointsPayableValueInCents,
+        MemberId: memberId,
+        ...(reserved.offerId === "SHARE_POINTS"
+          ? { PointsRedeemed: centsToPoints(order.loyaltyPointsPayableValueInCents) }
+          : {}),
+      });
+    }
+    for (const p of payments) {
       if (p.PaymentTenderCategory === "LOYALTY" || p.PaymentTenderCategory === "EWALLET") {
         if (!memberId)
           throw new VistaError(
@@ -813,6 +861,7 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
             RC.INSUFFICIENT_FUNDS,
             "Member id required for loyalty/wallet payments",
           );
+        if (p.PaymentTenderCategory === "EWALLET") await expireWalletCredits(tx, memberId);
         const acct = (
           await tx
             .select()
@@ -854,6 +903,7 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
             reference: req.UserSessionId,
           });
         } else {
+          await consumeWalletCredits(tx, memberId, p.PaymentValueCents);
           if (acct.voxRewardsBalanceCents < p.PaymentValueCents)
             throw new VistaError(
               RC.GENERAL,
@@ -904,6 +954,7 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
       state.seats[k] = { status: 1, bookingId };
     }
     await saveSeatState(tx, order.cinemaId, order.sessionId!, state.seats, state.version);
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext('booking-reference-sequence'))`);
     const n = (
       await tx
         .select({ n: sql<number>`coalesce(max(${S.bookings.vistaBookingNumber}),100000)+1` })
@@ -946,7 +997,7 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
         })),
         concessions: order.concessions,
         appliedOffers: order.appliedOffers,
-        payments: req.PaymentInfoCollection.map((p, i) => {
+        payments: payments.map((p, i) => {
           const card = describeCard(p, savedCards);
           return {
             PaymentTenderCategory: (p.PaymentTenderCategory === "CREDITCARD"
@@ -960,7 +1011,7 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
             Reference: `${p.PaymentTenderCategory.slice(0, 3)}${t}${i}`,
           };
         }),
-        totalValueCents: order.totalValueCents,
+        totalValueCents: order.totalValueCents + order.loyaltyPointsPayableValueInCents,
         taxValueCents: order.taxValueCents,
         bookingFeeValueCents: order.bookingFeeValueCents,
         salesChannel: req.OptionalClientClass ?? "WWW",

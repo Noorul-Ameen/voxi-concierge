@@ -23,7 +23,7 @@ export type PolicyConfig = {
 
 export const DEFAULT_POLICY: PolicyConfig = {
   cutoffMinutes: 30,
-  refundMethods: ["VOX_CREDIT", "SHARE_POINTS"],
+  refundMethods: ["VOX_CREDIT", "ORIGINAL_PAYMENT"],
   refundBookingFee: true,
   refundConcessions: true,
   sharePointsPerFils: 1 / SHARE_POINT_VALUE_CENTS,
@@ -50,6 +50,12 @@ export type BookingSnapshot = {
   bookingFeeValueCents: number;
   totalValueCents: number;
   refundedValueCents: number;
+  payments?: {
+    PaymentTenderCategory: string;
+    PaymentValueCents: number;
+    CardNumber?: string;
+    CardNumberMasked?: string;
+  }[];
 };
 
 export type EligibilityResult = {
@@ -70,6 +76,8 @@ export type EligibilityResult = {
     amountCents: number;
     points?: number;
     eta: string;
+    validityDays?: number;
+    cardLast4?: string;
   }[];
   swapAllowed: boolean;
   notes: string[];
@@ -83,7 +91,7 @@ export function evaluateCancellation(
 ): EligibilityResult {
   const reasons: string[] = [];
   const notes: string[] = [];
-  const minutes = Math.round(
+  const minutes = Math.floor(
     (new Date(`${b.showtime}Z`).getTime() - new Date(`${nowLocalIso}Z`).getTime()) / 60000,
   );
   const empty = { ticketsCents: 0, concessionsCents: 0, bookingFeeCents: 0, totalCents: 0 };
@@ -147,18 +155,34 @@ export function evaluateCancellation(
   const bookingFeeCents = policy.refundBookingFee
     ? Math.round((b.bookingFeeValueCents * selected.length) / Math.max(1, b.tickets.length))
     : 0;
-  const totalCents = ticketsCents + concessionsCents + bookingFeeCents;
+  const totalCents = Math.max(
+    0,
+    Math.min(ticketsCents + concessionsCents + bookingFeeCents, b.totalValueCents - b.refundedValueCents),
+  );
+  if (!totalCents)
+    return fail("BOOKING_NOT_ELIGIBLE", "There is no remaining refundable payment on this booking.");
   if (!full) notes.push("Partial cancellation: food & drinks stay on the booking and remain valid.");
   if (!policy.refundBookingFee) notes.push("Booking fees are non-refundable.");
 
   const methods: EligibilityResult["refundMethods"] = [];
   const allowed = b.hasMember ? policy.refundMethods : policy.guestRefundMethods;
+  const cardIdentities = new Set(
+    (b.payments ?? []).map((p) => String(p.CardNumber ?? p.CardNumberMasked ?? "").replace(/\s/g, "")),
+  );
+  const sameOriginalCard =
+    b.payments?.length &&
+    b.payments.every((p) =>
+      ["CREDIT", "CREDITCARD", "APPLEPAY", "GOOGLEPAY"].includes(p.PaymentTenderCategory),
+    ) &&
+    cardIdentities.size === 1 &&
+    !cardIdentities.has("");
   for (const m of allowed) {
     if (m === "VOX_CREDIT")
       methods.push({
         method: m,
         amountCents: totalCents,
         eta: "within 30 minutes to your VOX Wallet (valid 90 days)",
+        validityDays: 90,
       });
     if (m === "SHARE_POINTS")
       methods.push({
@@ -167,16 +191,25 @@ export function evaluateCancellation(
         points: Math.round(totalCents * policy.sharePointsPerFils * 10) / 10,
         eta: "instantly to your SHARE account",
       });
-    if (m === "ORIGINAL_PAYMENT")
+    if (m === "ORIGINAL_PAYMENT" && sameOriginalCard)
       methods.push({
         method: m,
         amountCents: totalCents,
-        eta: "5–10 working days to the original payment method",
+        eta: "5–10 days to the same original card",
+        cardLast4:
+          String(b.payments?.[0]?.CardNumber ?? b.payments?.[0]?.CardNumberMasked ?? "")
+            .replace(/\D/g, "")
+            .slice(-4) || undefined,
       });
   }
   if (!b.hasMember)
     notes.push(
-      "This booking is not linked to a registered account, so VOX credit is not available; the refund goes back to the original payment method via Customer Care, or you can swap to another session of the same ticket type.",
+      "This booking is not linked to a registered account, so VOX wallet credit is unavailable. Only the supported original payment route can be offered.",
+    );
+  if (!methods.length)
+    return fail(
+      "BOOKING_NOT_ELIGIBLE",
+      "This payment combination needs Customer Care to confirm the correct refund destination.",
     );
   return {
     eligible: true,
@@ -205,7 +238,7 @@ export function evaluateSwap(
 ) {
   const base = evaluateCancellation(b, nowLocalIso, undefined, policy);
   if (!base.eligible) return { allowed: false, reasons: base.reasons, differenceCents: 0, code: base.code };
-  const targetMinutes = Math.round(
+  const targetMinutes = Math.floor(
     (new Date(`${target.showtime}Z`).getTime() - new Date(`${nowLocalIso}Z`).getTime()) / 60000,
   );
   if (targetMinutes < policy.cutoffMinutes)

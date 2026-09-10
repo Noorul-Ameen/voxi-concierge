@@ -28,11 +28,15 @@ const base: BookingSnapshot = {
   bookingFeeValueCents: 500,
   totalValueCents: 14000,
   refundedValueCents: 0,
+  payments: [{ PaymentTenderCategory: "CREDIT", PaymentValueCents: 14000, CardNumberMasked: "XXXX1111" }],
 };
 
 describe("cancellation policy (uae.voxcinemas.com/refunds)", () => {
   it("quotes SHARE refunds in the same units as payment and balance conversion", () => {
-    const quote = evaluateCancellation(base, "2026-09-10T12:00:00");
+    const quote = evaluateCancellation(base, "2026-09-10T12:00:00", undefined, {
+      ...DEFAULT_POLICY,
+      refundMethods: ["SHARE_POINTS"],
+    });
     const points = quote.refundMethods.find((method) => method.method === "SHARE_POINTS")!.points!;
     expect(points).toBe(1400); // AED 140 at 10 points per AED
     expect(points).toBe(centsToPoints(quote.amounts.totalCents));
@@ -43,7 +47,7 @@ describe("cancellation policy (uae.voxcinemas.com/refunds)", () => {
     const e = evaluateCancellation(base, "2026-09-10T12:00:00");
     expect(e.eligible).toBe(true);
     expect(e.amounts.totalCents).toBe(14000);
-    expect(e.refundMethods.map((m) => m.method)).toEqual(["VOX_CREDIT", "SHARE_POINTS"]);
+    expect(e.refundMethods.map((m) => m.method)).toEqual(["VOX_CREDIT", "ORIGINAL_PAYMENT"]);
   });
   it("blocks inside the 30-minute cut-off", () => {
     const e = evaluateCancellation(base, "2026-09-10T19:45:00");
@@ -191,4 +195,44 @@ describe("spoken dates", () => {
     expect(normaliseFilmLanguage("ta")).toBe("Tamil");
     expect(normaliseFilmLanguage("Hindi")).toBe("Hindi");
   });
+});
+
+it("offers only supported destinations, with exact card and wallet terms before consent", () => {
+  const quote = evaluateCancellation(base, "2026-09-10T12:00:00");
+  expect(quote.refundMethods).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ method: "VOX_CREDIT", validityDays: 90 }),
+      expect.objectContaining({
+        method: "ORIGINAL_PAYMENT",
+        cardLast4: "1111",
+        eta: "5–10 days to the same original card",
+      }),
+    ]),
+  );
+  for (const payments of [
+    [{ PaymentTenderCategory: "EWALLET", PaymentValueCents: 14000 }],
+    [
+      { PaymentTenderCategory: "CREDIT", PaymentValueCents: 7000, CardNumberMasked: "XXXX1111" },
+      { PaymentTenderCategory: "CREDIT", PaymentValueCents: 7000, CardNumberMasked: "XXXX2222" },
+    ],
+  ])
+    expect(
+      evaluateCancellation({ ...base, payments }, "2026-09-10T12:00:00").refundMethods.map((m) => m.method),
+    ).toEqual(["VOX_CREDIT"]);
+  expect(
+    evaluateCancellation(
+      {
+        ...base,
+        hasMember: false,
+        payments: [{ PaymentTenderCategory: "LOYALTY", PaymentValueCents: 14000 }],
+      },
+      "2026-09-10T12:00:00",
+    ).eligible,
+  ).toBe(false);
+});
+it("does not round a 29-minute-and-one-second window up or refund more than the unrefunded paid amount", () => {
+  expect(evaluateCancellation(base, "2026-09-10T19:30:01").eligible).toBe(false);
+  expect(
+    evaluateCancellation({ ...base, refundedValueCents: 13900 }, "2026-09-10T12:00:00").amounts.totalCents,
+  ).toBe(100);
 });

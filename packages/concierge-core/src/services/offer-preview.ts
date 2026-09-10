@@ -34,6 +34,14 @@ export function previewOffer(
         "Offer eligibility has not been confirmed.",
     };
   const previous = (order.AppliedOffers ?? []) as { offerId: string; type: string }[];
+  if (
+    (offer.type === "bank" || offer.rules.bankBins?.length) &&
+    Number(order.LoyaltyPointsPayableValueInCents ?? 0) > 0
+  )
+    return {
+      previewUnavailableReason:
+        "A bank-card offer cannot be combined with VOX credit or SHARE Points. Confirm the payment method before comparing this offer.",
+    };
   if (previous.some((applied) => applied.offerId === offer.id))
     return { previewUnavailableReason: "This offer is already applied to the current total." };
   if (

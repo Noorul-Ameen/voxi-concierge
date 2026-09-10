@@ -8,7 +8,7 @@ import { type BookingHistory, type CustomerProfile, type Customer, type Lang, ty
 import { isRtl, t } from "../lib/i18n";
 import { type CardActions, Cards, Feedback, seatRange } from "./Cards";
 import { type Loc, LocationBar } from "./LocationBar";
-import { AccountPanel } from "./AccountPanel";
+import { ACCOUNT_ACTIVITY_EVENT, AUTH_CHANGE_SIGNAL, notifyPageAuthChange, pageSession, usePageSession, type PageSessionRuntime } from "../lib/page-session";
 import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, directSeatMapFeedback, holdSeconds, isCurrentHold, recordUserActivity, renderVerifiedSeatMap, verifyHoldNotice, type HoldNoticeSnapshot, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
 
 
@@ -33,9 +33,10 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     sessionRef.current = next;
     setSession(next);
   }, []);
-  // ---------- sign-in (page header "Log in" and the widget's own link open the same sheet) ----------
+  // The page owns account presentation; this runtime preserves the existing voice/link ordering.
   const [customer, setCustomer] = useState<Customer | null>(null);
-  const [authOpen, setAuthOpen] = useState(false);
+  const { open: authOpen } = usePageSession();
+  const setAuthOpen = (value: boolean) => value ? pageSession.requestAccount() : pageSession.close();
   const [authBusy, setAuthBusy] = useState(false);
   const [authErr, setAuthErr] = useState<string | null>(null);
   const [profile, setProfile] = useState<CustomerProfile | null>(null);
@@ -56,20 +57,26 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   };
   useEffect(() => {
     const openIt = () => {
-      setOpen(true);
       setAuthOpen(true);
     };
     const logoutIt = () => void doLogout();
-    const openOnly = () => setOpen(true);
+    const accountActivity = () => handleUserActivity();
+    const openOnly = (event: Event) => {
+      setOpen(true);
+      const message = (event as CustomEvent<{ message?: unknown }>).detail?.message;
+      if (typeof message === "string" && message.trim()) setInput(message.trim().slice(0, 500));
+    };
     window.addEventListener("voxi:login", openIt);
     window.addEventListener("voxi:profile", openIt);
     window.addEventListener("voxi:logout", logoutIt);
     window.addEventListener("voxi:open", openOnly);
+    window.addEventListener(ACCOUNT_ACTIVITY_EVENT, accountActivity);
     return () => {
       window.removeEventListener("voxi:login", openIt);
       window.removeEventListener("voxi:profile", openIt);
       window.removeEventListener("voxi:logout", logoutIt);
       window.removeEventListener("voxi:open", openOnly);
+      window.removeEventListener(ACCOUNT_ACTIVITY_EVENT, accountActivity);
     };
   }); // eslint-disable-line react-hooks/exhaustive-deps
   const doLogin = async (email: string, password: string) => {
@@ -82,7 +89,9 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       await restoreRef.current;
       await pendingLinkRef.current;
       await endingSessionRef.current;
+      if (epoch !== authEpochRef.current) return;
       const s = sessionRef.current ?? (await createSession({ language: langRef.current, modality: "text" }));
+      if (epoch !== authEpochRef.current) return;
       if (!sessionRef.current) commitSession(s);
       const r = await widgetLogin(s, email, password);
       if (epoch !== authEpochRef.current) return;
@@ -91,17 +100,28 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         return;
       }
       const next = { ...s, token: r.token ?? s.token, isLoggedIn: true, dynamicVariables: r.dynamicVariables ?? s.dynamicVariables };
+      if (customer?.id !== r.customer.id) {
+        setProfile(null); setHistory([]); setProfileLoading(true);
+        pageSession.update({ customer: r.customer, profile: null, history: [], loading: true });
+      }
       commitSession(next);
       setSessionExpired(false);
-      if (customer && customer.id !== r.customer.id) { setItems([]); commitOrder(null); }
+      if (customer && customer.id !== r.customer.id) {
+        ++connectionAttemptRef.current; startingRef.current = false; switchingRef.current = true;
+        try { await conversation.endSession(); } catch { /* Server identity already changed. */ } finally { switchingRef.current = false; }
+        if (epoch !== authEpochRef.current) return;
+        setItems([]); commitOrder(null); setMode("idle");
+        pendingAckRef.current.clear(); completedActionsRef.current.clear(); ackQueueRef.current = [];
+      }
       setCustomer(r.customer);
       void refreshProfile(next);
       onAuth?.(r.customer);
       setAuthOpen(false);
-      push({ kind: "note", text: lang === "ar" ? `تم تسجيل الدخول باسم ${r.customer.firstName}` : `Signed in as ${r.customer.firstName}` });
+      notifyPageAuthChange();
+      push({ kind: "note", text: lang === "ar" ? "تم تسجيل الدخول" : "Signed in" });
       if (statusRef.current === "connected")
         conversation.sendContextualUpdate(
-          `The guest has just signed in as ${r.customer.firstName} ${r.customer.lastName} (SHARE ${r.customer.tier}, member ${r.customer.memberId ?? ""}). Treat them as logged in from now on: call get_session_context for their details.`,
+          "The page sign-in succeeded. Refresh get_session_context before using account or booking information. Continue the guest's existing request without repeating questions or reading their profile aloud.",
         );
     } catch {
       setAuthErr(lang === "ar" ? "تعذر تسجيل الدخول. حاول مرة أخرى." : "Could not sign in. Please try again.");
@@ -130,6 +150,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       setCustomer(null); setProfile(null); setHistory([]); setProfileLoading(false); commitOrder(null); setItems([]); setAuthOpen(false); setMode("idle");
       pendingAckRef.current.clear(); completedActionsRef.current.clear(); ackQueueRef.current = [];
       onAuth?.(null);
+      notifyPageAuthChange();
     } catch { setAuthErr(lang === "ar" ? "تعذر تسجيل الخروج. حاول مرة أخرى." : "Could not sign out. Please try again."); }
     finally { authBusyRef.current = false; setAuthBusy(false); }
   };
@@ -145,6 +166,12 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     orderRef.current = value;
     setOrder(value);
   };
+  const accountRuntime = useRef<PageSessionRuntime>({ login: doLogin, logout: doLogout });
+  accountRuntime.current = { login: doLogin, logout: doLogout };
+  useEffect(() => pageSession.attach({ login: (email, password) => accountRuntime.current.login(email, password), logout: () => accountRuntime.current.logout() }), []);
+  useEffect(() => {
+    pageSession.update({ customer, profile, history, loading: profileLoading, busy: authBusy, error: authErr, language: lang });
+  }, [customer, profile, history, profileLoading, authBusy, authErr, lang]);
   const [muted, setMuted] = useState(false);
   const [holdLeft, setHoldLeft] = useState<number | null>(null); // seconds
   const warnedRef = useRef<{ two?: string; short?: string; expired?: string }>({});
@@ -188,7 +215,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const bodyRef = useRef<HTMLDivElement>(null);
   const statusRef = useRef<string>("disconnected"); // live connection status for callbacks that outlive a render
   const push = useCallback((it: ItemBody) => {
-    if (it.kind === "cards" && it.ui.type === "login") { setAuthOpen(true); setOpen(true); return; }
+    if (it.kind === "cards" && it.ui.type === "login") { pageSession.requestLogin(); return; }
     setItems((xs) => appendTranscript(xs, { ...it, id: nid() } as Item));
   }, []);
   const acknowledge = (context: string) => {
@@ -328,6 +355,22 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     });
     endingSessionRef.current = ending;
   };
+
+  useEffect(() => {
+    const onAccountSignal = (event: StorageEvent) => {
+      if (event.key !== AUTH_CHANGE_SIGNAL) return;
+      const current = sessionRef.current;
+      const epoch = authEpochRef.current;
+      if (!current || authBusyRef.current) return;
+      void getState(current).then(() => {
+        if (sessionRef.current?.token === current.token && epoch === authEpochRef.current && current.isLoggedIn) void refreshProfile(current);
+      }).catch((error) => {
+        if (isAuthorizationError(error) && !authBusyRef.current && sessionRef.current?.token === current.token && epoch === authEpochRef.current) expireSession(current);
+      });
+    };
+    window.addEventListener("storage", onAccountSignal);
+    return () => window.removeEventListener("storage", onAccountSignal);
+  }, []);
 
   // link ElevenLabs conversation id ↔ concierge conversation
   useEffect(() => {
@@ -676,7 +719,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           push({ kind: "note", text: mapFeedback.text, polite: true });
           if (mapFeedback.context) acknowledge(mapFeedback.context);
         }
-        const meaningful = ["seat.select", "payment.token", "booking.select", "order.recover"].includes(String(cmd.type));
+        const meaningful = ["seat.select", "payment.token", "booking.select", "proposal.preview", "proposal.accept", "refund.choose", "order.recover"].includes(String(cmd.type));
         if (meaningful && result.action && ["queued", "running"].includes(result.action.status)) {
           const completed = completedActionsRef.current.get(result.action.actionId);
           if (completed) acknowledge(actionContext(completed.type, { ok: completed.status === "succeeded", action: completed, error: completed.error?.message }));
@@ -689,6 +732,19 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       selection: (selection) => {
         activityRef.current.lastUserAt = Date.now();
         acknowledge(JSON.stringify({ draftSelection: { kind: selection.kind, label: selection.label, cardLast4: selection.cardLast4 }, applied: false }));
+      },
+      decision: (decision) => {
+        void (async () => {
+          const epoch = authEpochRef.current;
+          if (statusRef.current !== "connected") await start("text");
+          for (let i = 0; i < 66 && statusRef.current !== "connected" && epoch === authEpochRef.current; i++) await new Promise((resolve) => setTimeout(resolve, 300));
+          if (epoch !== authEpochRef.current || statusRef.current !== "connected") return;
+          if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
+          const updates = ackQueueRef.current.splice(0);
+          if (updates.length) conversation.sendContextualUpdate(updates.join("; "));
+          conversation.sendContextualUpdate(JSON.stringify({ customerDecision: decision, instruction: "This decision applies only to the exact confirmationId on the selected card. Use the corresponding confirmation tool only if confirmed is true. Never substitute another pending confirmation or read internal IDs aloud." }));
+          say(decision.confirmed ? (langRef.current === "ar" ? "نعم، أؤكد هذا الاختيار. تابع." : "Yes, I confirm this choice. Go ahead.") : (langRef.current === "ar" ? "لا، توقف من فضلك." : "No, please don't."));
+        })();
       },
       openLink: (url) => window.open(url, "_blank", "noopener"),
       playTrailer: (id) => window.open(`https://www.youtube.com/watch?v=${id}`, "_blank", "noopener"),
@@ -727,9 +783,9 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
 
   if (!open)
     return (
-      <button className="launcher" dir={dir} onClick={() => setOpen(true)} aria-label={t(lang, "askVoxi")}>
+      <button className="cinema-launcher" dir={dir} onClick={() => setOpen(true)} aria-label={t(lang, "askVoxi")}>
         <span className={`orb ${voiceState}`} />
-        <span className="lbl">{t(lang, "askVoxi")}</span>
+        <span className="launcher-copy">{t(lang, "askVoxi")}</span>
         {unread ? <span className="unread">{unread}</span> : null}
       </button>
     );
@@ -747,9 +803,9 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
             {humanMode ? `${t(lang, "human")}${humanMode.agentName ? ` · ${humanMode.agentName}` : ""}` : statusText || t(lang, "subtitle")}
           </small>
         </div>
-        <button className="iconbtn auth" onClick={() => setAuthOpen(true)} title={customer ? (lang === "ar" ? "حسابي" : "My account") : lang === "ar" ? "تسجيل الدخول" : "Sign in"}>
-          {customer ? customer.firstName : lang === "ar" ? "تسجيل الدخول" : "Log in"}
-        </button>
+        {customer ? <span className="signed-in-status" role="status">{lang === "ar" ? "تم الدخول" : "Signed in"}</span> : <button className="iconbtn auth" onClick={() => setAuthOpen(true)} title={lang === "ar" ? "تسجيل الدخول على الصفحة" : "Sign in on this page"}>
+          {lang === "ar" ? "تسجيل الدخول" : "Sign in"}
+        </button>}
         <div className="langtoggle" role="group" aria-label="language" title={`events: ${sseStatus}`}>
           <button className={lang === "en" ? "on" : ""} onClick={() => void changeLanguage("en", true)}>
             EN
@@ -772,7 +828,6 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       </div>
 
       <LocationBar lang={lang} loc={loc} onChange={changeLoc} />
-      {authOpen ? <AccountPanel lang={lang} customer={customer} profile={profile} history={history} loading={profileLoading} busy={authBusy} error={authErr} onLogin={doLogin} onLogout={doLogout} onClose={() => setAuthOpen(false)} /> : null}
 
       <div className="widget-body" ref={bodyRef}>
         {sessionExpired ? <div className="sysnote" role="alert">
@@ -791,7 +846,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         {!sessionExpired && mode === "idle" && !connected && items.every((i) => i.kind === "note") ? (
           <div className="start">
             <div className="hero-orb"><i /><i /><i /></div>
-            <h3>{lang === "ar" ? "مساعد فوكس سينما الافتراضي" : "VOX Cinemas Virtual Assistant"}</h3>
+            <h3>{lang === "ar" ? "فيلمك القادم يبدأ هنا" : "Your next great movie starts here"}</h3>
             <p>{lang === "ar" ? "ما نوع الفيلم الذي ودك تشوفه؟" : "What are you in the mood to watch?"}</p>
             <div className="startbtns">
               <button className="btn primary big" onClick={() => start("voice")}>
@@ -871,18 +926,18 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
               <i key={i} style={{ height: `${Math.max(14, Math.round((conversation.isSpeaking ? 40 + 30 * Math.abs(Math.sin((Date.now() / 160 + i) % Math.PI)) : 14 + level * 70 * (1 - Math.abs(i - 4) / 5)) ))}%` }} />
             ))}
           </div>
-          <span className="vs-text">{muted ? (lang === "ar" ? "مكتوم" : "Muted") : conversation.isSpeaking ? t(lang, "speaking") : t(lang, "listening")}</span>
+          <span className="vs-text">{conversation.isSpeaking ? t(lang, "speaking") : muted ? (lang === "ar" ? "الميكروفون مغلق" : "Mic off") : t(lang, "listening")}</span>
           <button
             className={`btn ghost small mute ${muted ? "on" : ""}`}
             onClick={() => {
               const next = !muted;
               setMuted(next);
-              conversation.setVolume({ volume: next ? 0 : 1 });
             }}
-            title={muted ? (lang === "ar" ? "إلغاء الكتم" : "Unmute") : lang === "ar" ? "كتم الصوت" : "Mute"}
+            title={muted ? (lang === "ar" ? "تشغيل الميكروفون" : "Turn microphone on") : lang === "ar" ? "كتم الميكروفون فقط" : "Mute microphone only"}
             aria-pressed={muted}
           >
-            {muted ? "🔇" : "🔊"} {muted ? (lang === "ar" ? "إلغاء الكتم" : "Unmute") : lang === "ar" ? "كتم" : "Mute"}
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" />{muted ? <path d="m3 3 18 18" /> : null}</svg>
+            {muted ? (lang === "ar" ? "الميكروفون مغلق" : "Mic off") : lang === "ar" ? "الميكروفون يعمل" : "Mic on"}
           </button>
         </div>
       ) : null}
@@ -917,7 +972,6 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           </button>
         </div>
       </div>
-      <div className="powered">VOX Cinemas · <span>{lang === "ar" ? "المساعد الافتراضي" : "Virtual Assistant"}</span></div>
     </div>
   );
 }

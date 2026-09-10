@@ -1,10 +1,10 @@
 import { DomainError, ErrorCodes } from "@voxi/contracts";
 import { prefixedId } from "@voxi/db";
-import { type Offer, describeBenefit } from "@voxi/domain";
+import { type Offer, balanceMethod, describeBenefit, isCardOffer } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
-import { enqueue, idem, toRef } from "../actions/ledger.js";
+import { enqueue, findByKey, idem, toRef } from "../actions/ledger.js";
 import { assertCheckoutSnapshot, checkoutSnapshot, pendingBasketActions } from "../services/checkout.js";
-import { createConfirmation } from "../services/confirmations.js";
+import { consumeConfirmation, createConfirmation } from "../services/confirmations.js";
 import { updateConversation } from "../services/conversation.js";
 import { fmtDateTime, joinList, money, seatLabels, t } from "../services/format.js";
 import { type OfferPreview, previewOffer } from "../services/offer-preview.js";
@@ -89,6 +89,7 @@ export async function savedCardOfferHint(
   cinemaId: string,
   ticketCount: number,
   customer: Record<string, any>,
+  requestedOfferId?: string,
 ): Promise<OfferHint | null> {
   const cards = (customer.savedCards ?? []) as {
     token: string;
@@ -107,6 +108,7 @@ export async function savedCardOfferHint(
     })
     .catch(() => ({ offers: [] as Record<string, any>[] }));
   for (const o of offers) {
+    if (requestedOfferId && o.id !== requestedOfferId) continue;
     const bins: string[] = o.rules?.bankBins ?? [];
     const card = cards.find((c) => bins.some((b) => c.first6.startsWith(b)));
     if (!card) continue;
@@ -249,6 +251,59 @@ export async function reviewAndPay(
     }
   }
   let method = input.method;
+  if (balanceMethod(method) && !ctx.conversation.memberId)
+    return err(
+      ErrorCodes.LOGIN_REQUIRED,
+      t(
+        ctx.lang,
+        "Please sign in on the page to use VOX credit or SHARE Points.",
+        "يرجى تسجيل الدخول من الصفحة لاستخدام رصيد VOX أو نقاط SHARE.",
+      ),
+    );
+  const conflictingOffers = (r.Order.AppliedOffers ?? []).filter(isCardOffer);
+  if (balanceMethod(method) && conflictingOffers.length) {
+    const { Preview: preview } = await ctx.vista.previewOfferRemoval(
+      input.userSessionId,
+      conflictingOffers.map((o: any) => o.offerId),
+    );
+    const summary = {
+      ...preview,
+      userSessionId: input.userSessionId,
+      remove: true,
+      nextPaymentMethod: method,
+      expectedTotalCents: preview.totalAfterCents,
+    };
+    const spoken = t(
+      ctx.lang,
+      `The bank-card offer cannot be used with ${method === "VOX_CREDIT" ? "VOX credit" : "SHARE Points"}. Removing it changes the total from ${money(preview.currentTotalCents, ctx.lang)} to ${money(preview.totalAfterCents, ctx.lang)}. Shall I remove it and switch?`,
+      `لا يمكن الجمع بين عرض البطاقة و${method === "VOX_CREDIT" ? "رصيد فوكس" : "نقاط شير"}. إزالة العرض تغيّر الإجمالي من ${money(preview.currentTotalCents, ctx.lang)} إلى ${money(preview.totalAfterCents, ctx.lang)}. هل أزيله وأغيّر طريقة الدفع؟`,
+    );
+    const confirmation = await createConfirmation(ctx.db, {
+      conversationId: ctx.conversation.id,
+      actionType: "apply_offer",
+      resourceKey: `order:${input.userSessionId}`,
+      summary,
+      spokenSummary: spoken,
+      ttlSeconds: ctx.cfg.confirmationTtlSeconds,
+      validateBeforeCreate: async () =>
+        assertCheckoutSnapshot((await ctx.vista.getOrder(input.userSessionId)).Order!, {
+          checkoutSnapshot: checkoutSnapshot(r.Order!),
+          amountCents: r.Order!.TotalValueCents,
+        }),
+    });
+    return ok({ needs: "payment_switch_confirmation", confirmationId: confirmation.id, summary }, spoken, {
+      type: "payment_switch",
+      items: [summary],
+      meta: { confirmationId: confirmation.id, userSessionId: input.userSessionId },
+      actions: [
+        {
+          label: t(ctx.lang, "Remove offer and switch", "إزالة العرض وتغيير الدفع"),
+          value: `confirm:${confirmation.id}`,
+        },
+        { label: t(ctx.lang, "Keep bank offer", "الاحتفاظ بعرض البنك"), value: "abort" },
+      ],
+    });
+  }
   if (method === "SAVED_CARD" && !savedCards.length) method = "CARD";
   const sheetMethods = ["CARD", "SAVED_CARD", "APPLE_PAY", "SAMSUNG_PAY", "GOOGLE_PAY"];
   const usesSheet = sheetMethods.includes(method);
@@ -910,6 +965,48 @@ export const orderingTools: Pick<
   },
 
   async apply_offer(ctx, input) {
+    if (input.remove) {
+      if (!input.confirmed || !input.confirmationId)
+        return err(
+          ErrorCodes.CONFIRMATION_REQUIRED,
+          "Review the payment-method switch and confirm its new total before removing the offer.",
+        );
+      const key = idem(ctx.conversation.id, input.idempotencyKey ?? `remove_offer:${input.confirmationId}`);
+      const existing = await findByKey(ctx.db, key);
+      if (existing) return ok({ action: toRef(existing), created: false });
+      const conf = await consumeConfirmation(ctx.db, {
+        id: input.confirmationId,
+        conversationId: ctx.conversation.id,
+        actionType: "apply_offer",
+        resourceKey: `order:${input.userSessionId}`,
+      });
+      if (!conf.summary.remove)
+        return err(ErrorCodes.CONFIRMATION_REQUIRED, "This confirmation does not authorize offer removal.");
+      return enqueueOrderAction(
+        ctx,
+        "apply_offer",
+        input.userSessionId,
+        { ...conf.summary, confirmationId: conf.id },
+        input.idempotencyKey ?? `remove_offer:${input.confirmationId}`,
+        t(ctx.lang, "Changing the payment method after your confirmation.", "أغيّر طريقة الدفع بعد تأكيدك."),
+      );
+    }
+    let cardBin = input.cardBin;
+    if (!cardBin) {
+      const order = (await ctx.vista.getOrder(input.userSessionId)).Order;
+      const customer = await loadCustomer(ctx);
+      if (order && customer)
+        cardBin = (
+          await savedCardOfferHint(
+            ctx,
+            `${order.CinemaId}-${order.Sessions?.[0]?.SessionId}`,
+            order.CinemaId,
+            order.Sessions?.[0]?.Tickets?.length ?? 0,
+            customer,
+            input.offerId,
+          )
+        )?.cardBin;
+    }
     const key =
       input.idempotencyKey ??
       `apply_offer:${input.userSessionId}:${input.offerId ?? input.promoCode ?? ""}:${input.cardBin ?? ""}:${await orderVersion(ctx, input.userSessionId)}`;
@@ -920,7 +1017,7 @@ export const orderingTools: Pick<
       {
         offerId: input.offerId,
         promoCode: input.promoCode,
-        cardBin: input.cardBin,
+        cardBin,
         memberId: ctx.conversation.memberId,
       },
       key,
@@ -930,7 +1027,12 @@ export const orderingTools: Pick<
   },
 
   async redeem_points(ctx, input) {
-    const memberId = input.memberId ?? ctx.conversation.memberId;
+    const memberId = ctx.conversation.memberId;
+    if (input.memberId && input.memberId !== memberId)
+      return err(ErrorCodes.LOGIN_REQUIRED, "Only the signed-in member's points can be used.");
+    const basket = (await ctx.vista.getOrder(input.userSessionId)).Order;
+    if (basket?.AppliedOffers?.some(isCardOffer))
+      return reviewAndPay(ctx, { userSessionId: input.userSessionId, method: "SHARE_POINTS" }, {});
     if (!memberId)
       return err(
         ErrorCodes.LOGIN_REQUIRED,

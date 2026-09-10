@@ -175,3 +175,40 @@ it("refuses edits at the deadline and only gives a new order a fresh hold", asyn
     new Date(expiry).getTime() + app.cfg.order.expiryMinutes * 60_000,
   );
 });
+
+it("preserves the original deadline when an active booking proposal replaces an order, and rejects expired replacement", async () => {
+  const oldId = `original-${crypto.randomUUID()}`;
+  orderIds.push(oldId);
+  const original = await app.post("/Ticketing/Order/tickets", {
+    UserSessionId: oldId,
+    CinemaId: cinemaId,
+    SessionId: sessionId,
+    TicketTypes: [{ TicketTypeCode: ticketCode, Qty: 1 }],
+    ConversationId: "proposal-conversation",
+  });
+  expect(original.json.Result).toBe(0);
+  vi.setSystemTime(startedAt + 120_000);
+  const newId = `replacement-${crypto.randomUUID()}`;
+  orderIds.push(newId);
+  const replaced = await app.post("/Ticketing/Order/tickets", {
+    UserSessionId: newId,
+    CinemaId: cinemaId,
+    SessionId: sessionId,
+    TicketTypes: [{ TicketTypeCode: ticketCode, Qty: 1 }],
+    ConversationId: "proposal-conversation",
+    PreviousOrderId: oldId,
+  });
+  expect(replaced.json.Result).toBe(0);
+  expect(replaced.json.Order.ExpiryDateUtc).toBe(original.json.Order.ExpiryDateUtc);
+  vi.setSystemTime(new Date(original.json.Order.ExpiryDateUtc).getTime() + 1);
+  const expired = await app.post("/Ticketing/Order/tickets", {
+    UserSessionId: `expired-${crypto.randomUUID()}`,
+    CinemaId: cinemaId,
+    SessionId: sessionId,
+    TicketTypes: [{ TicketTypeCode: ticketCode, Qty: 1 }],
+    ConversationId: "proposal-conversation",
+    PreviousOrderId: oldId,
+  });
+  expect(expired.json.Result).not.toBe(0);
+  expect(expired.json.ErrorDescription).toMatch(/expired/i);
+});

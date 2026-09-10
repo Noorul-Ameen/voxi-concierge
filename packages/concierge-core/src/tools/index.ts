@@ -2,6 +2,7 @@ import { TOOL_REGISTRY, type ToolName } from "@voxi/contracts";
 import { bookingTools } from "./bookings.js";
 import { cinemaTools } from "./cinemas.js";
 import { customerTools } from "./customer.js";
+import { investigationTools } from "./investigation.js";
 import { movieTools } from "./movies.js";
 import { offerTools, orderingTools } from "./ordering.js";
 import { quickTools } from "./quick.js";
@@ -15,6 +16,7 @@ export const toolHandlers: ToolHandlers = {
   ...offerTools,
   ...customerTools,
   ...quickTools,
+  ...investigationTools,
 };
 
 /** Validate input against the contract, run the handler, normalise errors. */

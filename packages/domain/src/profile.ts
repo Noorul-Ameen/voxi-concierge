@@ -6,6 +6,7 @@ export type ProfileVisit = {
   cinemaId: string;
   showtime: string;
   seatPreference?: string | null;
+  experience?: string | null;
 };
 export type TimingPreference = { from: string; to: string; around: string; sampleCount: number };
 export type InferredProfile = {
@@ -14,6 +15,7 @@ export type InferredProfile = {
   weekday: TimingPreference | null;
   weekend: TimingPreference | null;
   seatPreference: SeatPreference | null;
+  preferredExperience?: string | null;
   historyCount: number;
   timeZone: string;
   weekendDays: number[];
@@ -91,6 +93,7 @@ export function inferCustomerProfile(
   return {
     movieLanguage: dominant(visits.map((v) => v.language)),
     cinemaId: dominant(visits.map((v) => v.cinemaId)),
+    preferredExperience: dominant(visits.map((v) => v.experience)),
     weekday: timing("weekday"),
     weekend: timing("weekend"),
     seatPreference: ["front", "middle", "back", "aisle"].includes(seat ?? "")

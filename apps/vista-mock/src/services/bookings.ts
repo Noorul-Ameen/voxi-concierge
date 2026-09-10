@@ -4,6 +4,7 @@ import { centsToPoints } from "@voxi/domain";
 /** Booking search / refund / cancel (Vista RESTBooking.svc-style). Refunds are transactional and idempotent by reference. */
 import { and, desc, eq, or, sql } from "drizzle-orm";
 import { RC, VistaError, loadSeatState, withSessionLock } from "./orders.js";
+import { expireWalletCredits, refundCreditExpiry } from "./wallet.js";
 
 export type BookingSearch = {
   BookingId?: string;
@@ -34,7 +35,12 @@ export async function searchBookings(db: Db, q: BookingSearch) {
   if (q.CinemaId) conds.push(eq(S.bookings.cinemaId, q.CinemaId));
   if (!conds.length)
     throw new VistaError(RC.GENERAL, RC.BOOKING_NOT_FOUND, "Provide a booking id, email, phone or member id");
-  const where = q.BookingId || q.BookingNumber ? or(...conds) : and(...conds);
+  const where = and(
+    q.BookingId || q.BookingNumber ? or(...conds) : and(...conds),
+    q.UpcomingOnly && !q.BookingId && !q.BookingNumber
+      ? sql`${S.bookings.source} <> 'demo-archived'`
+      : undefined,
+  );
   const rows = await db
     .select()
     .from(S.bookings)
@@ -69,6 +75,7 @@ export type RefundReq = {
   InitiatedBy?: string;
   ConversationId?: string;
   ExpectedVersion?: number;
+  ExpectedAmountCents?: number;
   AlsoCancel?: boolean; // cancel the booking (default true for full refunds)
 };
 
@@ -80,6 +87,11 @@ export async function refundBooking(db: Db, req: RefundReq) {
   const reference = req.Reference ?? `RF${shortId(8)}`;
   const existing = (await db.select().from(S.refunds).where(eq(S.refunds.reference, reference)))[0];
   if (existing) {
+    if (
+      existing.bookingId !== req.BookingId ||
+      (req.ExpectedAmountCents != null && req.ExpectedAmountCents !== existing.amountCents)
+    )
+      throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Refund reference belongs to another request");
     const b = await getBooking(db, req.BookingId);
     return { refund: existing, booking: b, idempotent: true };
   }
@@ -106,7 +118,31 @@ export async function refundBooking(db: Db, req: RefundReq) {
     (req.RefundBookingFee ?? true)
       ? Math.round((booking.bookingFeeValueCents * targets.length) / Math.max(1, booking.tickets.length))
       : 0;
-  const amount = ticketsCents + concCents + feeCents;
+  const amount = Math.max(
+    0,
+    Math.min(ticketsCents + concCents + feeCents, booking.totalValueCents - booking.refundedValueCents),
+  );
+  if (!amount || (req.ExpectedAmountCents != null && amount !== req.ExpectedAmountCents))
+    throw new VistaError(
+      RC.GENERAL,
+      RC.INVALID_STATE,
+      "The refund amount changed; review it again before confirming",
+    );
+  const originalCards = new Set(
+    booking.payments.map((p) => String(p.CardNumberMasked ?? "").replace(/\s/g, "")),
+  );
+  if (
+    req.RefundTenderCategory === "CREDIT" &&
+    (!booking.payments.length ||
+      originalCards.size !== 1 ||
+      originalCards.has("") ||
+      booking.payments.some((p) => !["CREDIT", "APPLEPAY", "GOOGLEPAY"].includes(p.PaymentTenderCategory)))
+  )
+    throw new VistaError(
+      RC.GENERAL,
+      RC.BOOKING_NOT_REFUNDABLE,
+      "This payment cannot be refunded entirely to a card; choose a supported destination",
+    );
   const memberId = booking.customer.MemberId;
   if ((req.RefundTenderCategory === "EWALLET" || req.RefundTenderCategory === "LOYALTY") && !memberId)
     throw new VistaError(
@@ -147,6 +183,7 @@ export async function refundBooking(db: Db, req: RefundReq) {
     }
     // credit wallet / points
     if (memberId && (req.RefundTenderCategory === "EWALLET" || req.RefundTenderCategory === "LOYALTY")) {
+      await expireWalletCredits(tx, memberId);
       const acct = (
         await tx.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, memberId))
       )[0];
@@ -165,6 +202,8 @@ export async function refundBooking(db: Db, req: RefundReq) {
           memberId,
           balanceType: "VOX_REWARDS",
           delta: amount,
+          expiresAt: refundCreditExpiry(),
+          remainingValueCents: amount,
           reason: `Refund booking ${booking.vistaBookingId}`,
           reference,
         });

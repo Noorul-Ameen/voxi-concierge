@@ -12,9 +12,12 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { Concierge } from "./components/Concierge";
-import { configureApiBase, type Customer, type Lang } from "./lib/api";
+import { PageAccountDialog } from "./components/PageAccountDialog";
+import { configureApiBase, type Lang } from "./lib/api";
+import { notifyPageAccountActivity, pageSession } from "./lib/page-session";
 import css from "./styles.css?inline";
 import stateCss from "./concierge-state.css?inline";
+import accountCss from "./page-account.css?inline";
 
 const script = document.currentScript as HTMLScriptElement | null;
 const scriptOrigin = (() => {
@@ -63,42 +66,115 @@ function mount() {
   const app = ReactDOM.createRoot(root);
   const knownHost = location.hostname === "voxi.kris-pradip.workers.dev";
   const loginSelector = window.VoxiConfig?.hostLoginSelector ?? (knownHost ? "#loginBtn" : undefined);
-  const closeHostLogin = () => { if (knownHost) document.querySelector<HTMLButtonElement>("#loginClose")?.click(); };
-  const openAccount = (event: Event) => {
-    if (!loginSelector) return;
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    let matches = false;
-    try { matches = !!target.closest(loginSelector) || (knownHost && event.type === "submit" && target.id === "siteLoginForm"); } catch { return; }
-    if (!matches) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    closeHostLogin();
-    window.dispatchEvent(new CustomEvent("voxi:login"));
+  const getLoginButton = () => {
+    try { return loginSelector ? document.querySelector<HTMLElement>(loginSelector) : null; } catch { return null; }
   };
-  const onAuth = (customer: Customer | null) => {
-    if (!loginSelector) return;
-    let button: Element | null = null;
-    try { button = document.querySelector(loginSelector); } catch { return; }
-    if (button) {
-      const ar = window.VoxiConfig?.lang === "ar";
-      button.textContent = customer ? customer.firstName : ar ? "تسجيل الدخول" : "Sign in";
-      button.setAttribute("aria-label", customer ? ar ? "حسابك في فوكس" : "Your VOX profile" : ar ? "تسجيل الدخول" : "Sign in");
+  const nativeForm = knownHost ? document.querySelector<HTMLFormElement>("#siteLoginForm") : null;
+  const hasNativeLogin = !!(nativeForm && getLoginButton());
+  const identifier = nativeForm?.querySelector<HTMLInputElement>("#siteLoginIdentifier");
+  const password = nativeForm?.querySelector<HTMLInputElement>("#siteLoginPin");
+  if (identifier && password) {
+    identifier.type = "email"; identifier.autocomplete = "username";
+    password.autocomplete = "current-password";
+    for (const field of [identifier, password]) {
+      for (const constraint of ["pattern", "minlength", "maxlength", "inputmode"]) field.removeAttribute(constraint);
     }
-  };
-  if (loginSelector) {
-    document.addEventListener("click", openAccount, true);
-    document.addEventListener("submit", openAccount, true);
+    password.maxLength = 256;
+    const emailLabel = nativeForm?.querySelector<HTMLLabelElement>('label[for="siteLoginIdentifier"]');
+    const passwordLabel = nativeForm?.querySelector<HTMLLabelElement>('label[for="siteLoginPin"]');
+    const ar = window.VoxiConfig?.lang === "ar";
+    if (emailLabel) emailLabel.textContent = ar ? "البريد الإلكتروني" : "Email";
+    if (passwordLabel) passwordLabel.textContent = ar ? "كلمة المرور" : "Password";
+    identifier.placeholder = ar ? "البريد الإلكتروني" : "Email";
+    password.placeholder = ar ? "كلمة المرور" : "Password";
   }
-  app.render(React.createElement(Concierge, { initialLang: window.VoxiConfig?.lang ?? "en", initialOpen: window.VoxiConfig?.open ?? false, onAuth }));
+  // The page account surface is a separate DOM root, never a card inside the assistant.
+  const accountHost = document.createElement("div");
+  accountHost.id = "voxi-page-account-host";
+  document.body.appendChild(accountHost);
+  const accountShadow = accountHost.attachShadow({ mode: "open" });
+  const accountStyle = document.createElement("style");
+  accountStyle.textContent = `${css.replace(/:root/g, ":host")}\n${accountCss}\n:host { all: initial; font-family: var(--font); color: var(--ink); }`;
+  const accountRoot = document.createElement("div");
+  accountShadow.append(accountStyle, accountRoot);
+  const accountApp = ReactDOM.createRoot(accountRoot);
+  let closingNative = false;
+  let wasOpen = false;
+  const closeNativeLogin = () => {
+    if (!hasNativeLogin || closingNative) return;
+    closingNative = true;
+    if (password) password.value = "";
+    document.querySelector<HTMLButtonElement>("#loginClose")?.click();
+    closingNative = false;
+  };
+  const renderAccount = () => {
+    const state = pageSession.getSnapshot();
+    const ar = state.language === "ar";
+    const button = getLoginButton();
+    if (button) {
+      button.textContent = state.customer ? state.customer.firstName : ar ? "تسجيل الدخول" : "Sign in";
+      button.setAttribute("aria-label", state.customer ? ar ? "حسابك في فوكس" : "Your VOX account" : ar ? "تسجيل الدخول" : "Sign in");
+    }
+    const error = nativeForm?.querySelector<HTMLElement>("#siteLoginError");
+    if (error) { error.textContent = state.error ?? ""; error.hidden = !state.error; error.setAttribute("role", "alert"); }
+    const submit = nativeForm?.querySelector<HTMLButtonElement>("#siteLoginSubmit");
+    if (submit) submit.disabled = state.busy || !state.ready;
+    const shouldCloseNative = wasOpen && !state.open;
+    wasOpen = state.open;
+    if (shouldCloseNative) closeNativeLogin();
+    accountApp.render(React.createElement(PageAccountDialog, { lang: state.language, enabled: !hasNativeLogin || !!state.customer }));
+  };
+  const unsubscribeAccount = pageSession.subscribe(renderAccount);
+  pageSession.presentWith(() => {
+    if (hasNativeLogin && !pageSession.getSnapshot().customer) getLoginButton()?.click();
+  });
+  const pageClick = (event: Event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || closingNative) return;
+    if (hasNativeLogin && (target.closest("#loginClose") || target.id === "loginModal")) pageSession.close();
+    const button = getLoginButton();
+    if (!button || !button.contains(target)) return;
+    notifyPageAccountActivity();
+    if (hasNativeLogin && !pageSession.getSnapshot().customer) {
+      pageSession.update({ open: true, error: null });
+      return; // Let the page open its own existing login form.
+    }
+    event.preventDefault(); event.stopImmediatePropagation();
+    pageSession.requestAccount();
+  };
+  const pageSubmit = (event: Event) => {
+    if (!nativeForm || event.target !== nativeForm) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    notifyPageAccountActivity();
+    if (pageSession.getSnapshot().busy) return;
+    const identifier = nativeForm.querySelector<HTMLInputElement>("#siteLoginIdentifier");
+    const pin = nativeForm.querySelector<HTMLInputElement>("#siteLoginPin");
+    if (!identifier || !pin || !nativeForm.reportValidity()) return;
+    // Direct callback only: credentials never enter conversation messages or public events.
+    void pageSession.login(identifier.value.trim(), pin.value).finally(() => { pin.value = ""; });
+  };
+  const pageActivity = (event: Event) => {
+    if (event.target instanceof Node && nativeForm?.contains(event.target)) notifyPageAccountActivity();
+    if (hasNativeLogin && event instanceof KeyboardEvent && event.key === "Escape") pageSession.close();
+  };
+  document.addEventListener("click", pageClick, true);
+  document.addEventListener("submit", pageSubmit, true);
+  document.addEventListener("input", pageActivity, true);
+  document.addEventListener("keydown", pageActivity, true);
+  renderAccount();
+  app.render(React.createElement(Concierge, { initialLang: window.VoxiConfig?.lang ?? "en", initialOpen: window.VoxiConfig?.open ?? false }));
   window.Voxi = {
     open: () => window.dispatchEvent(new CustomEvent("voxi:open")),
     login: () => window.dispatchEvent(new CustomEvent("voxi:login")),
     logout: () => window.dispatchEvent(new CustomEvent("voxi:logout")),
     profile: () => window.dispatchEvent(new CustomEvent("voxi:profile")),
     unmount: () => {
-      document.removeEventListener("click", openAccount, true);
-      document.removeEventListener("submit", openAccount, true);
+      document.removeEventListener("click", pageClick, true);
+      document.removeEventListener("submit", pageSubmit, true);
+      document.removeEventListener("input", pageActivity, true);
+      document.removeEventListener("keydown", pageActivity, true);
+      unsubscribeAccount(); pageSession.presentWith(null);
+      closeNativeLogin(); accountApp.unmount(); accountHost.remove();
       app.unmount();
       host.remove();
     },

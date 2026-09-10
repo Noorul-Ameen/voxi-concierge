@@ -219,7 +219,12 @@ export class VistaClient {
 
   // ---------- Data ----------
   ticketTypes(cinemaId: string, sessionId: string) {
-    return this.request<{ ResponseCode: number; Tickets: Record<string, any>[]; ErrorDescription?: string }>(
+    return this.request<{
+      ResponseCode: number;
+      Tickets: Record<string, any>[];
+      BookingFeeCentsPerTicket?: number;
+      ErrorDescription?: string;
+    }>(
       "GET",
       `/Data/Cinemas/${cinemaId}/sessions/${sessionId}/tickets?salesChannel=${this.cfg.salesChannel ?? "WWW"}`,
       undefined,
@@ -263,6 +268,7 @@ export class VistaClient {
     SkipAutoAllocation?: boolean;
     SeatPreference?: string;
     ConversationId?: string;
+    PreviousOrderId?: string;
   }) {
     return this.request<{ Order: Record<string, any>; AvailableSeats: number } & V1Envelope>(
       "POST",
@@ -327,6 +333,9 @@ export class VistaClient {
     CardBin?: string;
     MemberId?: string;
     Remove?: boolean;
+    OfferIds?: string[];
+    ExpectedVersion?: number;
+    ExpectedTotalCents?: number;
   }) {
     return this.request<
       {
@@ -344,6 +353,23 @@ export class VistaClient {
     return this.request<
       { Order: Record<string, any>; Redeemed: { Type: string; Amount: number } } & V1Envelope
     >("POST", "/Ticketing/Order/loyalty-redeem", req);
+  }
+  previewOfferRemoval(userSessionId: string, offerIds: string[]) {
+    return this.request<
+      {
+        Preview: {
+          currentTotalCents: number;
+          totalAfterCents: number;
+          removedOfferIds: string[];
+          expectedVersion: number;
+          bookingFeeCents: number;
+          expiresAtUtc: string;
+        };
+      } & V1Envelope
+    >("POST", "/Ticketing/Order/offers/preview-removal", {
+      UserSessionId: userSessionId,
+      OfferIds: offerIds,
+    });
   }
   completeOrder(req: {
     UserSessionId: string;
@@ -403,6 +429,7 @@ export class VistaClient {
     );
   }
   refundBooking(req: {
+    ExpectedAmountCents?: number;
     BookingId: string;
     RefundTenderCategory: "EWALLET" | "LOYALTY" | "CREDIT";
     TicketIds?: string[];
@@ -417,6 +444,28 @@ export class VistaClient {
     return this.request<
       { Refund: Record<string, any>; Booking: Record<string, any>; Idempotent: boolean } & V1Envelope
     >("POST", "/RESTBooking.svc/booking/refund", req);
+  }
+  exchangeBooking(req: {
+    BookingId: string;
+    TargetCinemaId: string;
+    TargetSessionId: string;
+    ExpectedVersion: number;
+    ExpectedTotalCents: number;
+    ExpectedDifferenceCents: number;
+    Seats: { Row: string; Number: string; TicketTypeCode: string }[];
+    PaymentMethod: string;
+    RefundMethod: string;
+    Reference: string;
+    ConversationId: string;
+  }) {
+    return this.request<
+      {
+        Booking: Record<string, any>;
+        DifferenceCents: number;
+        Settlement: Record<string, unknown>;
+        Idempotent: boolean;
+      } & V1Envelope
+    >("POST", "/RESTBooking.svc/booking/exchange", req);
   }
   cancelBooking(req: {
     BookingId: string;
