@@ -1,4 +1,4 @@
-import { nowLocalIso } from "@voxi/db";
+import { addDaysIso, nowLocalIso } from "@voxi/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startHarness } from "./harness.js";
 
@@ -589,8 +589,17 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
 
   it("quick_book: an unavailable time returns up to three alternatives instead of 'no showtimes'", async () => {
     const c = conv("qb-alt");
-    const show = await pickShow(c, "Mall of the Emirates");
-    if (!show) return;
+    // Keep 03:30 in the future so this tests an unavailable time, not an already-started show.
+    const tomorrow = addDaysIso(nowLocalIso(), 1).slice(0, 10);
+    const sessions = await h.tool("search_sessions", c, {
+      cinemaName: "Mall of the Emirates",
+      experience: "Standard",
+      date: tomorrow,
+      limit: 60,
+    });
+    expect(sessions.ok).toBe(true);
+    const show = sessions.data.sessions.find((s: any) => s.date === tomorrow && s.seatsAvailable > 12);
+    expect(show, "Expected a bookable Standard show at Mall of the Emirates tomorrow").toBeDefined();
     const r = await h.tool("quick_book", c, {
       title: show.filmTitle,
       cinemaName: "Mall of the Emirates",
