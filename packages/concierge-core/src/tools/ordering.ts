@@ -1,11 +1,13 @@
-import { ErrorCodes } from "@voxi/contracts";
+import { DomainError, ErrorCodes } from "@voxi/contracts";
 import { prefixedId } from "@voxi/db";
-import { describeBenefit } from "@voxi/domain";
+import { type Offer, describeBenefit } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 import { enqueue, idem, toRef } from "../actions/ledger.js";
+import { assertCheckoutSnapshot, checkoutSnapshot, pendingBasketActions } from "../services/checkout.js";
 import { createConfirmation } from "../services/confirmations.js";
 import { updateConversation } from "../services/conversation.js";
 import { fmtDateTime, joinList, money, seatLabels, t } from "../services/format.js";
+import { type OfferPreview, previewOffer } from "../services/offer-preview.js";
 import { loadCustomer } from "./customer.js";
 import { experienceLabel } from "./movies.js";
 import { type ToolCtx, type ToolHandlers, err, ok } from "./types.js";
@@ -15,63 +17,8 @@ function adultsOnly(rating: string | undefined) {
   return /^(15|18|21)\+?$/.test((rating ?? "").trim());
 }
 
-export type VistaOrder = Record<string, any>;
-
-export function orderSummary(o: VistaOrder, lang: "en" | "ar", nowLocal: string, cinemaName?: string) {
-  const sess = o.Sessions?.[0];
-  const tickets = (sess?.Tickets ?? []) as any[];
-  const concessions = (o.Concessions ?? []) as any[];
-  return {
-    userSessionId: o.UserSessionId,
-    state: o.State,
-    cinemaId: o.CinemaId,
-    cinemaName,
-    sessionId: sess?.SessionId != null ? String(sess.SessionId) : undefined,
-    filmTitle: sess ? (lang === "ar" && sess.AltFilmTitle ? sess.AltFilmTitle : sess.FilmTitle) : undefined,
-    showtime: sess?.ShowingRealDateTimeOffset?.slice(0, 19),
-    showtimeLabel: sess?.ShowingRealDateTimeOffset
-      ? fmtDateTime(sess.ShowingRealDateTimeOffset.slice(0, 19), lang, nowLocal)
-      : undefined,
-    experience: sess?.Experience,
-    screenName: sess?.ScreenName,
-    tickets: tickets.map((t) => ({
-      id: t.Id,
-      description: t.Description,
-      seat: t.SeatData,
-      priceCents: t.PriceCents,
-      discountCents: t.DiscountPriceCents,
-      finalCents: t.FinalPriceCents,
-      deal: t.DealDescription,
-    })),
-    seats: seatLabels(tickets),
-    seatsAllocated: !!sess?.SeatsAllocated,
-    concessions: concessions.map((c) => ({
-      id: c.Id,
-      itemId: c.ItemId,
-      description: c.Description,
-      quantity: c.Quantity,
-      unitCents: c.UnitPriceCents ?? c.PriceCents,
-      finalCents: c.FinalPriceCents,
-      modifiers: (c.Modifiers ?? []).map((m: any) => m.Description),
-    })),
-    offers: (o.AppliedOffers ?? []).map((a: any) => ({
-      id: a.offerId,
-      title: a.title,
-      discountCents: a.discountCents,
-      type: a.type,
-    })),
-    subtotalCents:
-      tickets.reduce((a, t) => a + t.PriceCents, 0) +
-      concessions.reduce((a, c) => a + (c.UnitPriceCents ?? c.PriceCents) * c.Quantity, 0),
-    discountCents: o.DiscountValueCents ?? 0,
-    loyaltyRedeemedCents: o.LoyaltyPointsPayableValueInCents ?? 0,
-    bookingFeeCents: o.BookingFeeValueCents ?? 0,
-    taxCents: o.TaxValueCents ?? 0,
-    totalCents: o.TotalValueCents ?? 0,
-    total: money(o.TotalValueCents ?? 0, lang),
-    expiresAtUtc: o.ExpiryDateUtc,
-  };
-}
+export { orderSummary, type VistaOrder } from "../services/order-state.js";
+import { type VistaOrder, buildBookingState, orderSummary } from "../services/order-state.js";
 
 /**
  * Order edits are idempotent per order *version*: the same request repeated while nothing changed is deduplicated
@@ -192,6 +139,23 @@ export async function reviewAndPay(
   input: { userSessionId: string; method: string; customer?: { name: string; email: string; phone: string } },
   extra: { offerHint?: OfferHint; fnbOnly?: boolean },
 ) {
+  const pending = await pendingBasketActions(
+    ctx.db,
+    `order:${input.userSessionId}`,
+    ctx.checkoutMutationActionId,
+    ctx.conversation.id,
+  );
+  if (pending.length)
+    return err(
+      ErrorCodes.ORDER_INVALID_STATE,
+      t(
+        ctx.lang,
+        "Your booking changes are still being applied. Check the pending action result, then review the completed basket before payment.",
+        "تغييرات الحجز قيد التنفيذ. تحقق من نتيجة الإجراء، ثم راجع الطلب المكتمل قبل الدفع.",
+      ),
+      false,
+      { needs: "pending_basket", pendingActions: pending.map(toRef) },
+    );
   const r = await ctx.vista.getOrder(input.userSessionId);
   if (!r.Order)
     return err(
@@ -200,15 +164,42 @@ export async function reviewAndPay(
     );
   const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cinemaName(ctx, r.Order.CinemaId));
   const fnbOnly = extra.fnbOnly || (!s.tickets.length && s.concessions.length > 0);
-  if (s.state === "expired")
+  if (["paid", "cancelled"].includes(s.state))
     return err(
-      ErrorCodes.ORDER_EXPIRED,
-      t(
-        ctx.lang,
-        "The seat hold expired — I'll get those seats back.",
-        "انتهى الحجز المؤقت للمقاعد — سأستعيدها.",
-      ),
+      ErrorCodes.ORDER_INVALID_STATE,
+      t(ctx.lang, "That order is already closed.", "هذا الطلب مغلق بالفعل."),
     );
+  if (s.state === "expired" || (s.expiresAtUtc && new Date(s.expiresAtUtc).getTime() <= Date.now()))
+    return {
+      ...err(
+        ErrorCodes.ORDER_EXPIRED,
+        t(
+          ctx.lang,
+          "That hold expired. Shall I check and hold available seats again?",
+          "انتهى الحجز المؤقت. هل أتحقق وأحجز المقاعد المتاحة مجدداً؟",
+        ),
+        false,
+        {
+          expired: true,
+          active: false,
+          userSessionId: input.userSessionId,
+          needs: "recovery_confirmation",
+          summary: s,
+          bookingState: buildBookingState(s),
+        },
+      ),
+      ui: {
+        type: "order" as const,
+        items: [s],
+        meta: { userSessionId: input.userSessionId, expired: true, stage: "expired" },
+        actions: [
+          {
+            label: t(ctx.lang, "Check and hold seats again", "تحقق واحجز المقاعد مجدداً"),
+            value: "recover:confirm",
+          },
+        ],
+      },
+    };
   if (!fnbOnly && !s.seatsAllocated)
     return err(
       ErrorCodes.ORDER_INVALID_STATE,
@@ -218,7 +209,8 @@ export async function reviewAndPay(
         "لم يتم اختيار المقاعد بعد. هل أختار الأفضل المتاح؟",
       ),
     );
-  let customer = input.customer;
+  const signedIn = ctx.conversation.isLoggedIn;
+  let customer = signedIn ? undefined : input.customer;
   let savedCards: {
     token: string;
     brand: string;
@@ -230,8 +222,18 @@ export async function reviewAndPay(
   }[] = [];
   let wallet: { sharePoints: number; sharePointsValueCents: number; voxCreditCents: number } | undefined;
   const c = ctx.conversation.customerId ? await loadCustomer(ctx) : null;
+  if (signedIn && !c)
+    return err(
+      ErrorCodes.LOGIN_REQUIRED,
+      t(
+        ctx.lang,
+        "I couldn't verify your account details. Please sign in again before payment.",
+        "تعذر التحقق من بيانات حسابك. يرجى تسجيل الدخول مجدداً قبل الدفع.",
+      ),
+    );
   if (c) {
-    customer ??= { name: `${c.firstName} ${c.lastName}`, email: c.email, phone: c.phone };
+    // Member checkout identity always comes from the verified profile, never a tool argument.
+    customer = { name: `${c.firstName} ${c.lastName}`.trim(), email: c.email, phone: c.phone };
     savedCards = (c.savedCards ?? []) as typeof savedCards;
     if (ctx.conversation.memberId) {
       const bal = await ctx.vista
@@ -325,6 +327,7 @@ export async function reviewAndPay(
     userSessionId: input.userSessionId,
     method,
     amountCents: s.totalCents,
+    checkoutSnapshot: checkoutSnapshot(r.Order),
     customer: customer ?? { name: "", email: "", phone: "" },
     memberId: ctx.conversation.memberId ?? undefined,
     customerId: ctx.conversation.customerId ?? undefined,
@@ -349,14 +352,34 @@ export async function reviewAndPay(
         `${s.total} — ${items}, paying with ${method === "VOX_CREDIT" ? "VOX credit" : "Share Points"}. Shall I proceed?`,
         `${s.total} — ${items}، الدفع بـ${method === "VOX_CREDIT" ? "رصيد فوكس" : "نقاط شير"}. هل أتابع؟`,
       );
-  const conf = await createConfirmation(ctx.db, {
-    conversationId: ctx.conversation.id,
-    actionType: "pay_order",
-    resourceKey: `order:${input.userSessionId}`,
-    summary,
-    spokenSummary: spoken,
-    ttlSeconds: ctx.cfg.confirmationTtlSeconds,
-  });
+  let conf: Awaited<ReturnType<typeof createConfirmation>>;
+  try {
+    conf = await createConfirmation(ctx.db, {
+      conversationId: ctx.conversation.id,
+      actionType: "pay_order",
+      resourceKey: `order:${input.userSessionId}`,
+      summary,
+      spokenSummary: spoken,
+      ttlSeconds: ctx.cfg.confirmationTtlSeconds,
+      excludeBasketActionId: ctx.checkoutMutationActionId,
+      validateBeforeCreate: async () => {
+        const latest = await ctx.vista.getOrder(input.userSessionId);
+        assertCheckoutSnapshot(latest.Order ?? {}, summary);
+      },
+    });
+  } catch (error) {
+    if (!(error instanceof DomainError)) throw error;
+    return err(
+      error.code,
+      t(
+        ctx.lang,
+        error.message,
+        "تغيّر الحجز أو أن تعديلاته ما زالت قيد التنفيذ. راجع الطلب المكتمل وأكّد الدفع مجدداً.",
+      ),
+      false,
+      { ...((error.detail as Record<string, unknown>) ?? {}), needs: "review_updated_basket" },
+    );
+  }
   return ok(
     {
       confirmationId: conf.id,
@@ -936,14 +959,23 @@ export const orderingTools: Pick<
         t(ctx.lang, "There's no active order. Shall we start one?", "لا يوجد طلب نشط. هل نبدأ واحداً؟"),
       );
     const s = orderSummary(r.Order, ctx.lang, ctx.nowLocal, await cinemaName(ctx, r.Order.CinemaId));
-    if (s.state === "expired")
+    if (buildBookingState(s).requiresFreshHold)
       return err(
         ErrorCodes.ORDER_EXPIRED,
         t(
           ctx.lang,
-          "That order expired because it wasn't completed in time — seats were released. I can start again quickly.",
-          "انتهت صلاحية الطلب لعدم إكماله في الوقت المحدد — تم تحرير المقاعد. يمكنني البدء من جديد بسرعة.",
+          "That hold expired and the seats were released. Shall I check and hold available seats again?",
+          "انتهى الحجز المؤقت وتم تحرير المقاعد. هل أتحقق وأحجز المقاعد المتاحة مجدداً؟",
         ),
+        false,
+        {
+          active: false,
+          expired: true,
+          userSessionId: input.userSessionId,
+          needs: "recovery_confirmation",
+          summary: s,
+          bookingState: buildBookingState(s),
+        },
       );
     const speech = t(
       ctx.lang,
@@ -1053,14 +1085,16 @@ async function orderExperience(ctx: ToolCtx): Promise<string | undefined> {
 
 export const offerTools: Pick<ToolHandlers, "list_offers" | "check_offer_eligibility"> = {
   async list_offers(ctx, input) {
-    const memberId = input.memberId ?? ctx.conversation.memberId ?? undefined;
+    const memberId = ctx.conversation.memberId ?? undefined;
     const sessionKey =
       input.sessionKey ?? (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey;
     // ticket count from the active order so "buy 1 get 1" is judged against what is actually in the basket
     let ticketCount: number | undefined;
+    let currentOrder: VistaOrder | null = null;
     const usid = activeOrder(ctx);
     if (usid) {
       const o = await ctx.vista.getOrder(usid).catch(() => null);
+      currentOrder = o?.Order ?? null;
       const tk = o?.Order?.Sessions?.[0]?.Tickets as unknown[] | undefined;
       if (tk?.length) ticketCount = tk.length;
     }
@@ -1085,39 +1119,73 @@ export const offerTools: Pick<ToolHandlers, "list_offers" | "check_offer_eligibi
       : [];
     const brandName = (b: string) =>
       b === "MASTERCARD" ? "Mastercard" : b === "VISA" ? "Visa" : b === "AMEX" ? "Amex" : "card";
-    const cards = offers.slice(0, input.limit).map((o) => {
-      const match = savedCards.find((c) =>
-        (o.rules?.bankBins ?? []).some((b: string) => c.first6.startsWith(b)),
-      );
-      return {
-        offerId: o.id,
-        title: ctx.lang === "ar" && o.titleAlt ? o.titleAlt : o.title,
-        titleEn: o.title,
-        description: ctx.lang === "ar" && o.shortDescriptionAlt ? o.shortDescriptionAlt : o.shortDescription,
-        benefit: describeBenefit(o.benefit, ctx.lang),
-        benefitType: o.benefit?.type,
-        type: o.type,
-        imageUrl: o.imageUrl,
-        terms: o.terms,
-        howToRedeem: o.howToRedeem,
-        eligible: o.eligibility?.eligible,
-        requires: o.eligibility?.requires ?? [],
-        reasons: o.eligibility?.reasons ?? [],
-        remainingBudget: o.remainingBudget,
-        validDays: o.rules?.days,
-        experiences: o.rules?.experiences,
-        bankName: o.rules?.bankName,
-        monthlyLimit: o.rules?.monthlyLimit,
-        membersOnly: !!o.rules?.membersOnly,
-        savedCard: match
-          ? {
-              brand: match.brand,
-              last4: match.last4,
-              label: `${brandName(match.brand)} ending ${match.last4}`,
-            }
-          : undefined,
-      };
-    });
+    const cards = await Promise.all(
+      offers.slice(0, input.limit).map(async (o) => {
+        const match = savedCards.find((c) =>
+          (o.rules?.bankBins ?? []).some((b: string) => c.first6.startsWith(b)),
+        );
+        const eligibility = await ctx.vista
+          .offerEligibility(o.id, {
+            sessionKey,
+            cinemaId: input.cinemaId ?? currentOrder?.CinemaId,
+            memberId,
+            cardBin: cardBin ?? match?.first6,
+            ticketCount,
+            ticketTypeCodes: currentOrder?.Sessions?.[0]?.Tickets?.map(
+              (ticket: { TicketTypeCode: string }) => ticket.TicketTypeCode,
+            ),
+          })
+          .catch(
+            () => o.eligibility as { eligible: boolean; reasons: string[]; requires: string[] } | undefined,
+          );
+        const actualSessionKey =
+          currentOrder?.Sessions?.[0]?.SessionId != null
+            ? `${currentOrder.CinemaId}-${currentOrder.Sessions[0].SessionId}`
+            : undefined;
+        const basketMatches =
+          (!input.cinemaId || input.cinemaId === currentOrder?.CinemaId) &&
+          (!sessionKey || sessionKey === actualSessionKey);
+        const preview = previewOffer(
+          o as Offer,
+          basketMatches ? currentOrder : null,
+          eligibility ?? {
+            eligible: false,
+            reasons: ["Offer eligibility could not be checked."],
+            requires: [],
+          },
+        );
+        return {
+          ...preview,
+          offerId: o.id,
+          title: ctx.lang === "ar" && o.titleAlt ? o.titleAlt : o.title,
+          titleEn: o.title,
+          description:
+            ctx.lang === "ar" && o.shortDescriptionAlt ? o.shortDescriptionAlt : o.shortDescription,
+          benefit: describeBenefit(o.benefit, ctx.lang),
+          benefitType: o.benefit?.type,
+          type: o.type,
+          imageUrl: o.imageUrl,
+          terms: o.terms,
+          howToRedeem: o.howToRedeem,
+          eligible: eligibility?.eligible,
+          requires: eligibility?.requires ?? [],
+          reasons: eligibility?.reasons ?? [],
+          remainingBudget: o.remainingBudget,
+          validDays: o.rules?.days,
+          experiences: o.rules?.experiences,
+          bankName: o.rules?.bankName,
+          monthlyLimit: o.rules?.monthlyLimit,
+          membersOnly: !!o.rules?.membersOnly,
+          savedCard: match
+            ? {
+                brand: match.brand,
+                last4: match.last4,
+                label: `${brandName(match.brand)} ending ${match.last4}`,
+              }
+            : undefined,
+        };
+      }),
+    );
     const isGuest = !ctx.conversation.customerId;
     if (!cards.length)
       return ok(
@@ -1133,31 +1201,36 @@ export const offerTools: Pick<ToolHandlers, "list_offers" | "check_offer_eligibi
         { name: "offers_info", status: "completed" },
       );
     const usable = cards.filter((c) => c.eligible || c.requires.length);
-    const withCard = cards.filter((c) => c.savedCard);
-    const bankNote = cards.some((c) => c.type === "bank")
-      ? isGuest
+    const withCard = cards.filter((c) => c.savedCard && c.eligible);
+    const bankNote =
+      isGuest && cards.some((c) => c.membersOnly)
         ? t(
             ctx.lang,
-            " Bank offers need a VOX account — Log in or create an account to view eligible offers and earn Share Points.",
-            " تتطلب عروض البنوك حساب فوكس — سجّل الدخول أو أنشئ حساباً لعرض العروض المؤهلة وكسب نقاط شير.",
+            " Some of these offers require a VOX account. Sign in to check your eligibility.",
+            " تتطلب بعض هذه العروض حساب فوكس. سجّل الدخول للتحقق من أهليتك.",
           )
-        : t(
-            ctx.lang,
-            " Buy-one-get-one offers need exactly 2 tickets and must be paid with that bank's card; bank-offer tickets are non-refundable.",
-            " عروض اشترِ واحدة واحصل على الثانية تتطلب تذكرتين بالضبط والدفع ببطاقة البنك نفسه؛ تذاكر عروض البنوك غير قابلة للاسترداد.",
-          )
-      : "";
+        : "";
     const speech = t(
       ctx.lang,
       `${input.bank || cardBin ? `For ${input.bank ?? "that card"} there ${cards.length === 1 ? "is 1 offer" : `are ${cards.length} offers`}` : `There are ${cards.length} offers${sessionKey ? " for this showtime" : ""}`}: ${joinList(
-        usable.slice(0, 3).map((c) => `${c.titleEn} (${c.benefit})`),
+        usable
+          .slice(0, 3)
+          .map(
+            (c) =>
+              `${c.titleEn} (${c.discountCents != null && c.discountCents > 0 ? `save ${money(c.discountCents, ctx.lang)}, total ${money(c.totalAfterOfferCents!, ctx.lang)}` : c.benefit})`,
+          ),
       )}${cards.length > 3 ? " and more on screen" : ""}.${
         withCard.length
           ? ` You have a saved ${withCard[0]!.savedCard!.label} that qualifies for ${withCard[0]!.titleEn} — would you like to use it?`
           : ""
       }${bankNote} Want me to apply one?`,
       `يوجد ${cards.length} عروض: ${joinList(
-        usable.slice(0, 3).map((c) => `${c.title} (${c.benefit})`),
+        usable
+          .slice(0, 3)
+          .map(
+            (c) =>
+              `${c.title} (${c.discountCents != null && c.discountCents > 0 ? `وفّر ${money(c.discountCents, "ar")}، الإجمالي ${money(c.totalAfterOfferCents!, "ar")}` : c.benefit})`,
+          ),
         "ar",
       )}.${withCard.length ? ` لديك بطاقة ${withCard[0]!.savedCard!.label} محفوظة مؤهلة لعرض ${withCard[0]!.title} — هل تريد استخدامها؟` : ""}${bankNote} هل أطبق أحدها؟`,
     );
@@ -1179,17 +1252,44 @@ export const offerTools: Pick<ToolHandlers, "list_offers" | "check_offer_eligibi
     );
   },
   async check_offer_eligibility(ctx, input) {
+    const orderId = activeOrder(ctx);
+    const order = orderId ? (await ctx.vista.getOrder(orderId).catch(() => null))?.Order : null;
+    const actualSessionKey =
+      order?.Sessions?.[0]?.SessionId != null
+        ? `${order.CinemaId}-${order.Sessions[0].SessionId}`
+        : undefined;
+    const sessionKey = input.sessionKey ?? actualSessionKey;
+    const memberId = ctx.conversation.memberId ?? undefined;
+    const { offers } = await ctx.vista.offers({ sessionKey, memberId }).catch(() => ({ offers: [] }));
+    const offer = offers.find((candidate) => candidate.id === input.offerId);
+    const customer = ctx.conversation.customerId
+      ? await ctx.vista.customer(ctx.conversation.customerId).catch(() => null)
+      : null;
+    const savedCard = customer?.savedCards?.find((card: { first6: string }) =>
+      offer?.rules?.bankBins?.some((bin: string) => card.first6.startsWith(bin)),
+    );
     const r = await ctx.vista.offerEligibility(input.offerId, {
-      sessionKey: input.sessionKey,
-      memberId: input.memberId ?? ctx.conversation.memberId,
-      cardBin: input.cardBin,
-      ticketCount: input.ticketCount,
+      sessionKey,
+      memberId,
+      cardBin: input.cardBin ?? savedCard?.first6,
+      ticketCount: order?.Sessions?.[0]?.Tickets?.length ?? input.ticketCount,
     });
+    const preview: OfferPreview = offer
+      ? previewOffer(
+          offer as Offer,
+          !input.sessionKey || input.sessionKey === actualSessionKey ? order : null,
+          r,
+        )
+      : { previewUnavailableReason: "Offer pricing details are unavailable." };
     const speech = r.eligible
       ? t(
           ctx.lang,
-          "Yes, that offer applies. Shall I add it to the order?",
-          "نعم، هذا العرض ينطبق. هل أضيفه إلى الطلب؟",
+          preview.discountCents != null && preview.discountCents > 0
+            ? `That saves ${money(preview.discountCents, ctx.lang)}, bringing the total to ${money(preview.totalAfterOfferCents!, ctx.lang)}. Shall I apply it?`
+            : "Yes, that offer applies. Shall I add it to the order?",
+          preview.discountCents != null && preview.discountCents > 0
+            ? `ستوفّر ${money(preview.discountCents, "ar")} ويصبح الإجمالي ${money(preview.totalAfterOfferCents!, "ar")}. هل أطبّقه؟`
+            : "نعم، هذا العرض ينطبق. هل أضيفه إلى الطلب؟",
         )
       : r.requires.length
         ? t(
@@ -1207,7 +1307,7 @@ export const offerTools: Pick<ToolHandlers, "list_offers" | "check_offer_eligibi
             )}.`,
           )
         : t(ctx.lang, `Unfortunately not: ${r.reasons.join("; ")}.`, `للأسف لا: ${r.reasons.join("؛ ")}.`);
-    return ok({ ...r }, speech);
+    return ok({ ...r, ...preview }, speech);
   },
 };
 

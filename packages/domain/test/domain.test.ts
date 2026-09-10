@@ -4,9 +4,11 @@ import {
   DEFAULT_POLICY,
   applyBenefit,
   bestMatch,
+  centsToPoints,
   evaluateCancellation,
   evaluateOffer,
   evaluateSwap,
+  pointsToCents,
   similarity,
 } from "../src/index.js";
 
@@ -29,6 +31,14 @@ const base: BookingSnapshot = {
 };
 
 describe("cancellation policy (uae.voxcinemas.com/refunds)", () => {
+  it("quotes SHARE refunds in the same units as payment and balance conversion", () => {
+    const quote = evaluateCancellation(base, "2026-09-10T12:00:00");
+    const points = quote.refundMethods.find((method) => method.method === "SHARE_POINTS")!.points!;
+    expect(points).toBe(1400); // AED 140 at 10 points per AED
+    expect(points).toBe(centsToPoints(quote.amounts.totalCents));
+    expect(pointsToCents(points)).toBe(quote.amounts.totalCents);
+    expect(centsToPoints(1058)).toBe(105.8);
+  });
   it("eligible well before showtime; refunds tickets + F&B + fee", () => {
     const e = evaluateCancellation(base, "2026-09-10T12:00:00");
     expect(e.eligible).toBe(true);

@@ -11,6 +11,8 @@ export type ToolCtx = AppContext & {
   nowLocal: string; // cinema-local ISO
   toolCallId: string;
   correlationId: string;
+  /** Internal inline mutation currently preparing its own completed basket. Never supplied by a tool. */
+  checkoutMutationActionId?: string;
 };
 
 export type ToolResult = {

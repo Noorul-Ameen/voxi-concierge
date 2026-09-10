@@ -1,6 +1,6 @@
 # 10 — VOX Brand House (reference)
 
-Source: `VOX BRAND HOUSE_FINAL PPT_100124.pptx` (one-slide brand house, dated 10 Jan 2024), shared by Noorul on 8 Sep 2026 to keep on file for Voxi's tone, copy and design decisions. Transcribed here so the agent prompt, widget copy and demo material can be checked against it.
+Source: `VOX BRAND HOUSE_FINAL PPT_100124.pptx` (one-slide brand house, dated 10 Jan 2024), shared by Noorul on 8 Sep 2026 to keep on file for the VOX Cinemas Virtual Assistant's tone, copy and design decisions. Transcribed here so the agent prompt, widget copy and demo material can be checked against it.
 
 ## Why
 - **Founding purpose:** We exist to capture hearts through the magic of big screen.
@@ -24,6 +24,6 @@ Source: `VOX BRAND HOUSE_FINAL PPT_100124.pptx` (one-slide brand house, dated 10
 ## Who — brand muse: "The Enthusiasts"
 "I am a movie and cinema fanatic! I like to get completely immersed in the cinema experience — from the moment I hear about the latest movie, to seeing my heroes on the big screen. I plan my cinema visit well in advance, specifically choosing the best cinema audiovisual experience, time and date. I take pride in friends/family coming to me for movie recommendations. My leisure time is sacred to me — I want to share it with like-minded people, watching a wide variety of new movies that I love! But I get disappointed when cinema venues fail to pay attention to getting the details right — like allowing others to be disruptive during the movie (too loud/rowdy teens, babies crying), not getting the popcorn right, or screening only mainstream movies — this really spoils my whole cinema experience!"
 
-## How this maps to Voxi (for later use)
+## How this maps to the VOX Cinemas Virtual Assistant
 - Vocabulary already in the agent prompt that matches the house: customers are **guests**; conversational, friendly, bilingual tone; "what's happening" framing suits the recommendation and offers journeys.
 - Candidate refinements if the tone is revisited: a light touch of playfulness in greetings/closings; lean on F&B pride (popcorn) in the food journey; position recommendations as *experiences* (MAX, IMAX, GOLD, KIDS) not only titles.

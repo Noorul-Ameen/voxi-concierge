@@ -10,6 +10,7 @@ import { schema as S } from "@voxi/db";
  */
 import { desc, gte, sql } from "drizzle-orm";
 import { Hono } from "hono";
+import { bookingFunnel } from "./reporting-funnel.js";
 
 const DUBAI_OFFSET_MS = 4 * 3600 * 1000;
 const localDay = (d: Date) => new Date(d.getTime() + DUBAI_OFFSET_MS).toISOString().slice(0, 10);
@@ -156,30 +157,7 @@ export function reportingRoutes(app: AppContext) {
       for (const tp of cv.topics ?? []) topics[tp] = (topics[tp] ?? 0) + 1;
     }
 
-    // ---- booking funnel from the action ledger (distinct conversations reaching each step)
-    const stepConvs = (type: string) =>
-      new Set(actions.filter((a) => a.type === type && a.status === "succeeded").map((a) => a.conversationId))
-        .size;
-    // a conversation "started a booking" if it logged the journey or ran any order step (so later steps never exceed it)
-    const orderSteps = new Set([
-      "start_order",
-      "add_tickets",
-      "select_seats",
-      "add_concessions",
-      "apply_offer",
-      "pay_order",
-    ]);
-    const started = new Set<string>(
-      actions.filter((a) => orderSteps.has(a.type) && a.status === "succeeded").map((a) => a.conversationId),
-    );
-    for (const x of convs) if ((x.journeys ?? []).some((j) => j.name === "guided_booking")) started.add(x.id);
-    const bookingStarted = started.size;
-    const funnel = [
-      { step: "Booking started", n: bookingStarted },
-      { step: "Tickets added", n: stepConvs("add_tickets") },
-      { step: "Seats chosen", n: stepConvs("select_seats") },
-      { step: "Paid", n: stepConvs("pay_order") },
-    ];
+    const funnel = bookingFunnel(actions, convs);
 
     // ---- action latency & reliability per type
     const byType: Record<string, { count: number; succeeded: number; failed: number; latencies: number[] }> =

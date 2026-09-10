@@ -3,13 +3,15 @@ export type Lang = "en" | "ar";
 declare global {
   interface Window {
     /** Set by the embed loader (or a host page) before the widget mounts: `{ apiBase: "https://…/api" }`. */
-    VoxiConfig?: { apiBase?: string; lang?: Lang; open?: boolean; theme?: string; vars?: Record<string, string> };
+    VoxiConfig?: { apiBase?: string; lang?: Lang; open?: boolean; theme?: string; vars?: Record<string, string>; hostLoginSelector?: string };
   }
 }
-export const API_BASE = (typeof window !== "undefined" && window.VoxiConfig?.apiBase) || (import.meta.env.VITE_API_BASE as string | undefined) || "/api";
+export let API_BASE = (typeof window !== "undefined" && window.VoxiConfig?.apiBase) || (import.meta.env.VITE_API_BASE as string | undefined) || "/api";
+/** The embed resolves script attributes after imports have evaluated. */
+export function configureApiBase(value: string) { API_BASE = value.replace(/\/$/, ""); }
 
 export type UiHint = { type: string; title?: string; items: Record<string, any>[]; actions?: { label: string; value: string; style?: string }[]; meta?: Record<string, any> };
-export type WidgetEvent =
+export type WidgetEvent = (
   | { type: "ui.render"; seq: number; ui: UiHint }
   | { type: "action.queued"; seq: number; action: ActionRef }
   | { type: "action.completed"; seq: number; action: ActionRef; ui?: UiHint }
@@ -17,7 +19,7 @@ export type WidgetEvent =
   | { type: "transfer.status"; seq: number; transferId: string; status: string; agentName?: string }
   | { type: "human.message"; seq: number; transferId: string; text: string; agentName?: string }
   | { type: "language.changed"; seq: number; language: Lang }
-  | { type: "heartbeat"; seq: number; at: string };
+  | { type: "heartbeat"; seq: number; at: string }) & { eventId?: string };
 export type ActionRef = { actionId: string; type: string; status: string; result?: Record<string, any>; error?: { code: string; message: string } };
 
 export type Session = { conversationId: string; token: string; language: Lang; mode: "bot" | "human"; isLoggedIn: boolean; agentId: string; dynamicVariables: Record<string, string> };
@@ -27,8 +29,9 @@ async function json<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
-export async function createSession(input: { language: Lang; modality: "voice" | "text"; conversationId?: string }): Promise<Session> {
-  return json(await fetch(`${API_BASE}/widget/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...input, channel: "web" }) }));
+export async function createSession(input: { language: Lang; modality: "voice" | "text"; conversationId?: string; token?: string }): Promise<Session> {
+  const { token, ...body } = input;
+  return json(await fetch(`${API_BASE}/widget/session`, { method: "POST", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify({ ...body, channel: "web" }) }));
 }
 
 export async function linkConversation(session: Session, elevenLabsConversationId: string): Promise<Session> {
@@ -36,9 +39,10 @@ export async function linkConversation(session: Session, elevenLabsConversationI
   return r.conversationId && r.token ? { ...session, conversationId: r.conversationId, token: r.token } : session;
 }
 
-export async function sendCommand(session: Session, cmd: Record<string, unknown>): Promise<{ ok: boolean; action?: ActionRef; error?: string }> {
+export type CommandResult = { ok: boolean; data?: Record<string, any>; ui?: UiHint; speech?: string; action?: ActionRef; error?: string };
+export async function sendCommand(session: Session, cmd: Record<string, unknown>): Promise<CommandResult> {
   const res = await fetch(`${API_BASE}/widget/command`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${session.token}` }, body: JSON.stringify(cmd) });
-  return (await res.json()) as { ok: boolean; action?: ActionRef; error?: string };
+  return (await res.json()) as CommandResult;
 }
 
 export async function getState(session: Session) {
@@ -116,9 +120,16 @@ export async function devTool(session: Session, name: string, input: Record<stri
   return (await res.json()) as { ok: boolean; speech?: string; error?: { message: string }; data?: any };
 }
 
-export type Customer = { id: string; firstName: string; lastName: string; memberId: string | null; tier: string; sharePoints: number; voxCreditCents: number };
-export async function widgetLogin(session: Session, identifier: string, pin: string): Promise<{ ok: boolean; error?: string; token?: string; customer?: Customer; dynamicVariables?: Record<string, string> }> {
-  const r = await fetch(`${API_BASE}/widget/login`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${session.token}` }, body: JSON.stringify({ identifier, pin }) });
+export type ViewingTime = { from: string; to: string; around: string; sampleCount: number };
+export type CustomerProfile = { movieLanguage: string | null; cinemaId: string | null; cinemaName: string | null; weekday: ViewingTime | null; weekend: ViewingTime | null; seatPreference: "front" | "middle" | "back" | "aisle" | null; historyCount: number; timeZone: string; weekendDays: number[] };
+export type BookingHistory = { filmTitle: string; language: string; cinemaId?: string; cinemaName?: string; showtime: string; experience?: string; ticketCount: number; spendCents: number; seatPreference?: string; dayType?: "weekday" | "weekend"; synthetic?: boolean };
+export type Customer = { id: string; firstName: string; lastName: string; email?: string; memberId: string | null; tier: string; sharePoints: number; voxCreditCents: number; voxRewardsCents?: number; savedCards?: { brand?: string; masked?: string; last4?: string; label?: string; default?: boolean }[]; profile?: CustomerProfile };
+export async function getCustomerProfile(session: Session): Promise<{ customer: Customer; profile: CustomerProfile | null; history: BookingHistory[] }> {
+  const result = await json<{ customer: Customer; profile?: CustomerProfile; history?: BookingHistory[] }>(await fetch(`${API_BASE}/widget/profile`, { headers: { authorization: `Bearer ${session.token}` } }));
+  return { customer: result.customer, profile: result.profile ?? result.customer.profile ?? null, history: result.history ?? [] };
+}
+export async function widgetLogin(session: Session, email: string, password: string): Promise<{ ok: boolean; error?: string; token?: string; customer?: Customer; dynamicVariables?: Record<string, string> }> {
+  const r = await fetch(`${API_BASE}/widget/login`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${session.token}` }, body: JSON.stringify({ email, password }) });
   return (await r.json()) as { ok: boolean; error?: string; token?: string; customer?: Customer; dynamicVariables?: Record<string, string> };
 }
 export async function widgetLogout(session: Session): Promise<{ ok: boolean; token?: string; dynamicVariables?: Record<string, string> }> {

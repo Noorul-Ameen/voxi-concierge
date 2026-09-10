@@ -11,6 +11,7 @@ import { existsSync } from "node:fs";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { centsToPoints } from "@voxi/domain";
 import { sql } from "drizzle-orm";
 import { createDb } from "../client.js";
 import * as s from "../schema/index.js";
@@ -27,6 +28,8 @@ import {
 } from "./catalog.js";
 import { LAYOUTS, layoutForExperience } from "./layouts.js";
 import { type BookingScenario, PERSONAS } from "./personas.js";
+import { updateDemoProfiles } from "./profile-update.js";
+import { refreshDemoSchedule } from "./refresh-demo-schedule.js";
 import { EXPERIENCE_CODE, EXPERIENCE_NAME_AR, addDaysIso, addMinutesIso, nowLocalIso, prng } from "./util.js";
 
 type Dataset = {
@@ -561,20 +564,36 @@ async function main() {
     for (const sc of p.bookings) {
       let sess = pickSession(sc, p.preferences.cinemas ?? [p.homeCinemaId]);
       if (!sess) {
-        // synthesise a session that starts in 20 minutes (cut-off demo) by cloning a real one
+        // Only the explicit cutoff scenario starts in 20 minutes; other demo bookings need time to be managed.
         const base =
           allSessions.find(
             (r) =>
               r.cinemaId === (sc.cinemaId ?? p.homeCinemaId) &&
               r.experience === (sc.experience ?? "Standard"),
           ) ?? allSessions[0]!;
+        const fallbackShowtime = addMinutesIso(
+          nowLocal,
+          sc.when === "soon" ? 20 : sc.when === "past" ? -1440 : 1440,
+        );
         sess = {
           ...base,
           sessionId: `SW${String(9000 + bookingRows.length)}`,
-          showtime: new Date(`${addMinutesIso(nowLocal, 20)}Z`),
-          sessionBusinessDate: nowLocal.slice(0, 10),
+          showtime: new Date(`${fallbackShowtime}Z`),
+          sessionBusinessDate: fallbackShowtime.slice(0, 10),
         };
         await db.insert(s.sessions).values(sess).onConflictDoNothing();
+        if (sc.when !== "soon" && sc.when !== "past") {
+          const later = addMinutesIso(fallbackShowtime, 1440);
+          await db
+            .insert(s.sessions)
+            .values({
+              ...sess,
+              sessionId: `SW${String(9800 + bookingRows.length)}`,
+              showtime: new Date(`${later}Z`),
+              sessionBusinessDate: later.slice(0, 10),
+            })
+            .onConflictDoNothing();
+        }
       }
       const film = data.films.find((f) => f.hoCode === sess.hoCode)!;
       const cinema = data.cinemas.find((c) => c.id === sess.cinemaId)!;
@@ -715,7 +734,7 @@ async function main() {
                 : {
                     PaymentTenderCategory: "LOYALTY",
                     PaymentValueCents: total,
-                    PointsRedeemed: total,
+                    PointsRedeemed: centsToPoints(total),
                     Reference: `PTS${transNo}`,
                   },
         ],
@@ -878,11 +897,15 @@ async function main() {
       set: { contentMarkdown: ageDoc, updatedAt: new Date() },
     });
 
+  await updateDemoProfiles(db);
+  const schedule = await refreshDemoSchedule(db);
+  if (schedule.enabled)
+    log(`synthetic demo schedule: added ${schedule.inserted} sessions for the next ${schedule.days} days`);
   log("done");
   await close();
 }
 
-main().catch((e) => {
+await main().catch((e) => {
   console.error(e);
   process.exit(1);
 });

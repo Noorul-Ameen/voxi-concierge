@@ -1,30 +1,35 @@
-# 06 — Live environment (deployed 3 Sep 2026)
+# 06 — Deployment identifiers and configuration
 
-| Component | Where | URL / id |
-|---|---|---|
-| Demo site (widget + dashboard) | Railway `web` | **https://voxi-demo.up.railway.app** (dashboard at `/dashboard`) — renamed from `web-production-f54a1.up.railway.app` on 7 Sep 2026; the old link no longer resolves |
-| Concierge API | Railway `concierge-api` | https://concierge-api-production-3d90.up.railway.app (`/healthz`, `/openapi.json`) |
-| Vista mock, worker, Postgres | Railway (private network only) | `vista-mock.railway.internal:4010`, `postgres.railway.internal:5432` |
-| Railway project | workspace "noorul-ameen's Projects" | project `voxi-concierge` (id `52e8f8a4-19fd-41a1-8978-6c60ee8f930a`) |
-| Source | GitHub | https://github.com/Noorul-Ameen/voxi-concierge (`main` auto-deploys) |
-| ElevenLabs agent | EU-residency workspace | `agent_1001m1m6rghcfsr8nrpj5x08g16e` — 44 webhook tools + 12 client tools (`infra/elevenlabs-tool-ids.json`), 11 KB docs, RAG (multilingual e5), EN default (flash v2) + AR preset (flash v2.5) |
+These identifiers belong to the existing VOX Cinemas Virtual Assistant deployment. They do not imply the current enhancement candidate has already been promoted. Record the final Railway revisions and ElevenLabs version with the [current enhancement acceptance record](13-concierge-enhancements.md).
 
-## Embedding the widget elsewhere
-`https://voxi-demo.up.railway.app/embed/voxi.js` is a drop-in script (see README "Embed the widget on any page"; live example at `/embed/demo.html`). Add the embedding page's hostname to the ElevenLabs agent allowlist first. The API already allows any origin (CORS `*`) and the embed calls it through the web service's `/api` proxy, so nothing else needs configuring.
+| Component | Hosting / identifier |
+|---|---|
+| Shared widget and standalone demo | [Railway web](https://voxi-demo.up.railway.app), dashboard at `/dashboard` |
+| Embedded website | [Cloudflare host](https://voxi.kris-pradip.workers.dev/), using the same Railway-built widget |
+| Concierge API | `https://concierge-api-production-3d90.up.railway.app`; health `/healthz`, contract `/openapi.json` |
+| Vista mock / Postgres | Railway private service network; inspect the environment for the current host/credentials |
+| Railway project | `voxi-concierge`, ID `52e8f8a4-19fd-41a1-8978-6c60ee8f930a` |
+| Source | [GitHub repository](https://github.com/Noorul-Ameen/voxi-concierge); inspect branch/deployment source before promotion |
+| ElevenLabs agent | EU-residency workspace, `agent_1001m1m6rghcfsr8nrpj5x08g16e` |
+| Agent tools | 44 server + 12 client contracts; use the actual attached IDs for the candidate version |
 
-## Things that are specific to this deployment
-- **EU data residency**: the agent lives in the EU workspace, so the widget must open its socket to `api.eu.residency.elevenlabs.io`. The API exposes this as `wsOrigin` on `/widget/signed-url` (from `ELEVENLABS_BASE_URL`), and the widget maps it to the React SDK's `serverLocation`. The global host answers "agent not found" for this agent.
-- **English TTS model**: ElevenLabs requires `eleven_flash_v2` (or turbo v2) for an English-default agent; the Arabic language preset overrides to `eleven_flash_v2_5`.
-- **Tool auth**: tools send `x-voxi-key` = `TOOL_HMAC_SECRET` (set on Railway). Rotate by changing the Railway variable and re-running the deploy script (or editing the 39 tools' header).
-- **Seat hold**: `VISTA_MOCK_ORDER_EXPIRY_MINUTES=6` on vista-mock (simulates Vista's timer; the concierge reads the same variable for the spoken value).
-- **Seeding**: `bootstrap.js` runs before every `concierge-api` deploy — migrations always, seed only when the catalogue is empty. To reset demo data before a demo: set `SEED_FORCE=true` on `concierge-api`, redeploy, then remove it.
-- **Region**: Railway default (US-West). Tool round-trips measured from Dubai: 170–390 ms. Moving to Railway's EU region (Amsterdam) is a per-service setting in the dashboard and would shave ~100 ms.
-- **Plan**: the Railway workspace is on Trial — upgrade to Hobby before demo day so the services are not paused.
+## Current operating requirements
 
-## Not yet configured (optional)
-- ElevenLabs **post-call webhook** → `https://concierge-api-production-3d90.up.railway.app/webhooks/elevenlabs` with secret `ELEVENLABS_WEBHOOK_SECRET` (Railway variable). Set in the ElevenLabs console under Agents → Settings → Post-call webhook (needs workspace admin). Until then the dashboard is fed by the concierge's own event log, which already covers tool calls, actions, journeys, transfers, complaints and feedback; the webhook adds ElevenLabs' transcript, sentiment and evaluation results.
-- `ELEVENLABS_API_KEY` on Railway enables signed URLs (private agent) — currently the agent is public with an origin allowlist: `voxi-demo.up.railway.app`, `web-production-f54a1.up.railway.app`, `elevenlabs.io` (agent → Security → Allowlist). **If the web domain ever changes, add the new hostname there first** — otherwise the widget fails with "Host … is not allowed to connect to this agent" (this happened after the 7 Sep rename and was fixed the same day).
-- Genesys Open Messaging (`HANDOVER_ADAPTER=genesys`, `GENESYS_*`) — simulated adapter is active.
+- The widget uses the EU-residency origin from `ELEVENLABS_BASE_URL` through `/widget/signed-url`. Signed URLs and origin rules must match the actual target agent; do not infer them from older allowlist notes.
+- Preserve the verified live Gemini 3.6 Flash / temperature 0 / minimal reasoning and v3 conversational expressive/speculative voice configuration. Existing-agent synchronization patches prompt/tool IDs only. The old flash-v2 requirement below was superseded.
+- Tool calls use the configured `x-voxi-key`/HMAC credentials. Do not expose these in source, browser diagnostics, exports or documentation.
+- The shared embed remains `/embed/voxi.js`; technical global/asset/package names retain compatibility while visible copy uses VOX Cinemas Virtual Assistant.
+- Provision the three email/password accounts through private environment variables. The secure widget is the only credential-entry path. Guest booking remains available.
+- Read seat expiry from the actual backend order. Three minutes closes the conversation only; no local expiry reset or automatic re-hold is allowed.
+- Normal bootstrap applies migrations and bounded demo-profile updates. Full seeding is destructive to demo tables and is not a routine deployment step; leave `SEED_FORCE` disabled.
+- Synthetic future schedule refresh requires both `VISTA_PROVIDER=mock` and `DEMO_SCHEDULE_REFRESH=true`. Keep it disabled for real provider integration.
+- Re-read provider service regions, plan status, attached KB IDs, security/privacy configuration and post-call webhook before promotion. Earlier claims about US-West, trial status, a fixed 11-document KB or a specific allowlist are not current configuration evidence.
+
+The simulated human-handover adapter remains separate from a configured real Genesys integration. The checkout is simulated; no money is taken.
+
+## Historical deployment notes
+
+The entries below are retained as dated implementation history. Their old test results, login behavior, names and configuration are not current acceptance evidence.
 
 ## Real-site alignment (4 Sep 2026)
 Commit `9b6ca87` aligned the demo's structures with what a logged-in member sees on uae.voxcinemas.com (reference: `docs/07-real-site-reference.md`): seat tiers and per-area pricing, the real Deira F&B menu with images, the Review & Pay sheet (bank offers, SHARE redeem at 10 pts = 1 AED, VAT info, saved cards / ADCB TouchPoints / new card / Apple Pay), and the receipt/e-ticket card. Production was reseeded by setting `SEED_FORCE=true` on concierge-api for one deploy (then removed); conversation history was kept. The ElevenLabs agent prompt was updated and a new KB document `voxi/checkout-payments-and-receipts` (id `hSlmfgAfDCIairgU3rUc`) attached.

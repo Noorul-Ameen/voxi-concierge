@@ -1,3 +1,5 @@
+import { SHARE_POINT_VALUE_CENTS } from "./offers.js";
+
 /**
  * Cancellation & refund policy (VOX UAE, uae.voxcinemas.com/refunds), reproducing the ValidateBooking
  * rules previously implemented in SAP ByD:
@@ -14,7 +16,7 @@ export type PolicyConfig = {
   refundMethods: ("VOX_CREDIT" | "SHARE_POINTS" | "ORIGINAL_PAYMENT")[];
   refundBookingFee: boolean; // VOX policy: "full amount plus any associated booking fee"
   refundConcessions: boolean; // F&B refundable unless activated
-  sharePointsPerFils: number; // 1 point = 1 fils → 100 points per AED
+  sharePointsPerFils: number; // 10 points = AED 1 → 0.1 point per fils
   allowPartial: boolean;
   guestRefundMethods: ("ORIGINAL_PAYMENT" | "VOX_CREDIT")[]; // guests have no wallet → original payment (call-centre) only
 };
@@ -24,7 +26,7 @@ export const DEFAULT_POLICY: PolicyConfig = {
   refundMethods: ["VOX_CREDIT", "SHARE_POINTS"],
   refundBookingFee: true,
   refundConcessions: true,
-  sharePointsPerFils: 1,
+  sharePointsPerFils: 1 / SHARE_POINT_VALUE_CENTS,
   allowPartial: true,
   guestRefundMethods: ["ORIGINAL_PAYMENT"],
 };
@@ -162,7 +164,7 @@ export function evaluateCancellation(
       methods.push({
         method: m,
         amountCents: totalCents,
-        points: totalCents * policy.sharePointsPerFils,
+        points: Math.round(totalCents * policy.sharePointsPerFils * 10) / 10,
         eta: "instantly to your SHARE account",
       });
     if (m === "ORIGINAL_PAYMENT")

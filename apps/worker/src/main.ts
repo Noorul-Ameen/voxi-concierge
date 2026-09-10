@@ -33,9 +33,24 @@ async function loop(slot: number) {
         continue;
       }
       inFlight++;
+      let renewing = false;
+      const renewal = setInterval(async () => {
+        if (renewing) return;
+        renewing = true;
+        try {
+          if (!(await ledger.renewLease(db, action)))
+            ctx.log.warn({ actionId: action.id }, "action lease ownership lost");
+        } catch (err) {
+          ctx.log.error({ err, actionId: action.id }, "action lease renewal failed");
+        } finally {
+          renewing = false;
+        }
+      }, 30000);
+      renewal.unref();
       try {
         await executeAction(ctx, catalog, action);
       } finally {
+        clearInterval(renewal);
         inFlight--;
       }
     } catch (e) {

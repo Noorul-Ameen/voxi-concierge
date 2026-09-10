@@ -18,11 +18,11 @@ export function Demo() {
   }, []);
   const ar = lang === "ar";
   return (
-    <div className="backdrop">
+    <div className="backdrop vox-assistant-root" data-voxi-theme="navy">
       <header className="topbar">
         <div className="brand">
-          <div className="logo">V</div>
-          <span>VOX CINEMAS</span>
+          <div className="logo">VOX</div>
+          <span>CINEMAS</span>
         </div>
         <nav>
           <Link to="/" className="active">
@@ -33,8 +33,8 @@ export function Demo() {
             {ar ? "English" : "العربية"}
           </a>
           {customer ? (
-            <a href="#" className="login" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("voxi:logout")); }}>
-              {ar ? `مرحباً ${customer.firstName} · خروج` : `Hi ${customer.firstName} · Log out`}
+            <a href="#" className="login" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("voxi:profile")); }}>
+              {customer.firstName}
             </a>
           ) : (
             <a href="#" className="login" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent("voxi:login")); }}>
@@ -44,12 +44,14 @@ export function Demo() {
         </nav>
       </header>
       <section className="hero">
+        <span className="eyebrow">{ar ? "ليلتك السينمائية، على ذوقك" : "YOUR KIND OF MOVIE NIGHT"}</span>
         <h1>{ar ? <>مساعد فوكس سينما <em>الافتراضي</em></> : <>VOX Cinemas <em>Virtual Assistant</em></>}</h1>
-        <p>{ar ? "اسأل بالصوت أو الكتابة: مواعيد العرض، الحجز واختيار المقاعد، الإلغاء والاسترداد، العروض، المأكولات والمشروبات، والتحويل إلى موظف خدمة العملاء." : "Talk or type: showtimes, booking with seat selection, cancellations and refunds, offers, food & drinks, and a hand-over to Customer Care — in English or Arabic."}</p>
+        <p>{ar ? "فيلم يناسب ذوقك، مقاعد تحبها، وكل ما تحتاجه لأمسية رائعة. تحدث معنا أو اكتب لنبدأ." : "A film you'll love, seats that feel right, and everything for a great night out. Just tell us what you're in the mood for."}</p>
+        <button className="btn cta" type="button" onClick={() => window.dispatchEvent(new CustomEvent("voxi:open"))}>{ar ? "لنخطط لليلتك" : "Plan my movie night"} <span aria-hidden="true">↗</span></button>
         <div className="chips">
           {(ar
-            ? ["ما الذي يُعرض في مول الإمارات الليلة؟", "احجز تذكرتين لفيلم سبايدرمان في ماكس", "هل يمكن لطفل عمره 10 سنوات مشاهدة فيلم PG13؟", "أين السينما داخل ياس مول؟", "ما هي عروض البنوك اليوم؟"]
-            : ["What's on at Mall of the Emirates tonight?", "Book two MAX tickets for Spider-Man", "Can my 10-year-old watch a PG13 movie?", "Where is the cinema inside Yas Mall?", "Which bank offers are on today?"]
+            ? ["أفلام على ذوقك", "مقاعدك المعتادة", "عروض تناسبك"]
+            : ["Films for you", "Your usual seats", "Offers that fit"]
           ).map((c) => (
             <span key={c} className="chip">
               {c}
@@ -75,7 +77,7 @@ export function Demo() {
           <span><a href="https://uae.voxcinemas.com" target="_blank" rel="noreferrer">uae.voxcinemas.com</a></span>
         </div>
       </footer>
-      <Concierge initialLang={lang} onAuth={setCustomer} />
+      <Concierge initialLang={lang} onAuth={setCustomer} onLanguage={setLang} />
     </div>
   );
 }

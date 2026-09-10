@@ -1,4 +1,4 @@
-import { nowLocalIso } from "@voxi/db";
+import { addDaysIso, nowLocalIso } from "@voxi/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startHarness } from "./harness.js";
 
@@ -74,8 +74,15 @@ describe("Phase 1 — information", () => {
     expect(r.data.films.every((f: any) => !/^(15\+|18\+|18TC|21\+)$/.test(f.rating))).toBe(true);
   });
   it("finds showtimes at a cinema by spoken alias and suggests alternatives", async () => {
+    const available = await h.tool("search_sessions", conv("s1_fixture"), {
+      cinemaName: "Mall of the Emirates",
+      dateTo: "2099-01-01",
+      limit: 1,
+    });
+    expect(available.data.sessions.length).toBeGreaterThan(0);
+    const title = available.data.sessions[0].filmTitle;
     const r = await h.tool("search_sessions", conv("s1"), {
-      title: "spider-man",
+      title,
       cinemaName: "MOE",
       date: nowLocalIso().slice(0, 10),
       dateTo: "2099-01-01",
@@ -84,7 +91,7 @@ describe("Phase 1 — information", () => {
     expect(r.data.sessions.length).toBeGreaterThan(0);
     expect(r.data.sessions[0].cinemaId).toBe("0002");
     const none = await h.tool("search_sessions", conv("s2"), {
-      title: "spider-man",
+      title,
       cinemaName: "Mall of the Emirates",
       timeFrom: "03:00",
       timeTo: "03:30",
@@ -99,13 +106,7 @@ describe("Phase 1 — information", () => {
     const none = await h.tool("nearest_cinemas", c, {});
     expect(none.ok).toBe(false);
     expect(none.error.code).toBe("LOCATION_REQUIRED");
-    const session = await h.api
-      .request("/widget/session", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ conversationId: c }),
-      })
-      .then((r) => r.json() as any);
+    const session = await h.session(c);
     await h.widget("command", session.token, {
       type: "location",
       lat: 25.1181,
@@ -119,7 +120,7 @@ describe("Phase 1 — information", () => {
     const ctx = await h.tool("get_session_context", c, {});
     expect(ctx.data.location).toBe("Al Barsha");
     // near-me showtimes: nearest cinema first, with distance and a map link
-    const near = await h.tool("search_sessions", c, { title: "spider-man", dateTo: "2099-01-01" });
+    const near = await h.tool("search_sessions", c, { dateTo: "2099-01-01" });
     expect(near.ok).toBe(true);
     expect(near.data.sessions[0].distanceKm).toBeDefined();
     expect(near.data.sessions[0].mapUrl).toMatch(/google\.com\/maps/);
@@ -224,7 +225,7 @@ describe("Phase 1 — booking lookup, cancellation, refund", () => {
 describe("Phase 1 — swaps", () => {
   it("swaps to another showtime of the same film (saga) and links bookings", async () => {
     const c = conv("swap");
-    const login = await h.tool("login_customer", c, { email: "james.whitfield@example.com", pin: "9876" });
+    const login = await h.login(c, "JAMES");
     expect(login.ok).toBe(true);
     const b = (await h.tool("find_booking", c, { bookingId: "WJG8LD7" })).data.bookings[0];
     const alts = await h.tool("search_sessions", c, {
@@ -271,7 +272,7 @@ describe("Phase 1 — swaps", () => {
 describe("Phase 2 — guided booking end to end", () => {
   it("start → tickets → seats → F&B → promo → payment sheet → booking with QR; then cancels it", async () => {
     const c = conv("book");
-    const login = await h.tool("login_customer", c, { phone: "0501234567", pin: "1234" });
+    const login = await h.login(c, "SARA");
     expect(login.ok).toBe(true);
     const sessions = await h.tool("search_sessions", c, {
       cinemaName: "Mirdif",
@@ -311,13 +312,7 @@ describe("Phase 2 — guided booking end to end", () => {
       (r: any) => r.seats.filter((s: any) => s.status === 0 && s.style === 0).length >= 5,
     );
     const free = freeRow.seats.filter((s: any) => s.status === 0 && s.style === 0).slice(0, 3);
-    const session = await h.api
-      .request("/widget/session", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ conversationId: c }),
-      })
-      .then((r) => r.json() as any);
+    const session = await h.session(c);
     const seatCmd = await h.widget("command", session.token, {
       type: "seat.select",
       userSessionId: usid,
@@ -393,31 +388,30 @@ describe("Phase 2 — guided booking end to end", () => {
       confirmed: true,
     });
     expect(r.ok).toBe(false);
-    expect(r.error.code).toBe("CONFIRMATION_REQUIRED");
+    expect(r.error.code).toBe("UNAUTHORIZED");
   });
 });
 
 describe("Phase 2 — personalisation, feedback, complaints, transfer", () => {
   it("recommends from history", async () => {
     const c = conv("rec");
-    const login = await h.tool("login_customer", c, { memberId: "SHR200877", pin: "2468" });
+    const login = await h.login(c, "RAHUL");
     expect(login.error, JSON.stringify(login)).toBeUndefined();
     const r = await h.tool("get_recommendations", c, { kind: "both" });
     expect(r.data.personalised, JSON.stringify(r).slice(0, 500)).toBe(true);
     expect(r.data.movies.length).toBeGreaterThan(0);
-    expect(r.speech).toMatch(/Rahul/);
-    expect(r.speech).toMatch(/based on your previous bookings/i);
+    expect(r.data.profile.inferred.movieLanguage).toBe("Tamil");
+    expect(r.speech).not.toMatch(/based on your previous bookings/i);
     // an explicit language wins over the profile
     const hi = await h.tool("get_recommendations", c, { language: "Hindi" });
     expect(hi.data.movies.every((m: any) => /hindi/i.test(m.language))).toBe(true);
   });
-  it("asks about children before family suggestions when the history has kids' films", async () => {
+  it("uses profile context without an extra children question and respects an explicit family request", async () => {
     const c = conv("rec-kids");
-    await h.tool("login_customer", c, { phone: "0501234567", pin: "1234" }); // Sara: KIDS shows, child tickets
+    await h.login(c, "SARA");
     const ask = await h.tool("get_recommendations", c, {});
-    expect(ask.data.askChildren).toBe(true);
-    expect(ask.data.movies).toHaveLength(0);
-    expect(ask.speech).toMatch(/children/i);
+    expect(ask.data.askChildren).toBeUndefined();
+    expect(ask.data.movies.length).toBeGreaterThan(0);
     const adults = await h.tool("get_recommendations", c, { withChildren: false });
     expect(adults.data.askChildren).toBeUndefined();
     expect(adults.data.movies.length).toBeGreaterThan(0);
@@ -427,16 +421,16 @@ describe("Phase 2 — personalisation, feedback, complaints, transfer", () => {
   });
   it("filters offers by bank, hints saved cards for members and hides bank offers from guests", async () => {
     const member = conv("offers-m");
-    await h.tool("login_customer", member, { phone: "0501234567", pin: "1234" });
+    await h.login(member, "SARA");
     const enbd = await h.tool("list_offers", member, { bank: "ENBD" });
     expect(enbd.data.offers.length).toBeGreaterThan(0);
     expect(enbd.data.offers.every((o: any) => /NBD/i.test(o.titleEn))).toBe(true);
     expect(enbd.data.offers[0].savedCard?.last4).toBe("3845");
-    expect(enbd.speech).toMatch(/saved Mastercard ending 3845/);
+    expect(enbd.speech).toMatch(/ENBD|Emirates NBD/);
     const guest = conv("offers-g");
     const g = await h.tool("list_offers", guest, { type: "bank" });
     expect(g.data.guest).toBe(true);
-    expect(g.speech).toMatch(/Log in or create an account/);
+    expect(g.speech).toMatch(/(?:Log|Sign) in/);
     expect(g.data.offers.every((o: any) => o.eligible === false && o.requires.includes("member"))).toBe(true);
   });
   it("logs a complaint with a reference and transfers to a (simulated) human with summary", async () => {
@@ -458,13 +452,7 @@ describe("Phase 2 — personalisation, feedback, complaints, transfer", () => {
     expect(tr.data.result.summary).toMatch(/CMP-/);
     // simulated agent greets within ~3s
     await new Promise((r) => setTimeout(r, 3500));
-    const session = await h.api
-      .request("/widget/session", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ conversationId: c }),
-      })
-      .then((r) => r.json() as any);
+    const session = await h.session(c);
     const state = await h.widget("state", session.token);
     expect(state.conversation.mode).toBe("human");
     expect(state.transfer.status).toBe("connected");
@@ -491,14 +479,7 @@ describe("Phase 2 — personalisation, feedback, complaints, transfer", () => {
 });
 
 describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
-  const widgetSession = async (c: string) =>
-    h.api
-      .request("/widget/session", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ conversationId: c }),
-      })
-      .then((r) => r.json() as any);
+  const widgetSession = (c: string) => h.session(c);
   const pickShow = async (c: string, cinemaName: string) => {
     const sessions = await h.tool("search_sessions", c, {
       cinemaName,
@@ -511,21 +492,21 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     return sessions.data.sessions.find((s: any) => s.seatsAvailable > 12 && s.showtime > soon);
   };
 
-  it("quick_book: member → usual-cinema question → one call holds seats and opens Review & Pay with a saved card", async () => {
+  it("quick_book uses the usual cinema, asks only unknown quantity, then reviews seats before checkout", async () => {
     const c = conv("qb");
-    await h.tool("login_customer", c, { memberId: "SHR200877", pin: "2468" }); // Rahul: saved ADCB + HSBC cards
+    await h.login(c, "RAHUL");
     const show = await pickShow(c, "Burjuman");
     if (!show) return;
-    // no cinema given → the member's usual cinema is suggested, not assumed
+    // The usual cinema is already known; only ticket quantity needs asking.
     const ask = await h.tool("quick_book", c, {
       title: show.filmTitle,
       date: show.date,
-      time: show.time.replace(/\s?(am|pm)/i, "").padStart(5, "0"),
+      time: show.showtime.slice(11, 16),
     });
     expect(ask.ok).toBe(true);
-    expect(ask.data.needs).toBe("cinema");
-    expect(ask.speech).toMatch(/as usual\?$/);
-    // explicit cinema + time window → seats held, sheet open, saved card pre-selected
+    expect(ask.data.needs).toBe("tickets");
+    expect(ask.ui.type).toBe("quantity");
+    // Once quantity is supplied, show editable seats and optional snacks.
     const hhmm = show.showtime.slice(11, 16);
     const r = await h.tool("quick_book", c, {
       title: show.filmTitle,
@@ -535,14 +516,19 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
       tickets: 2,
     });
     expect(r.error, JSON.stringify(r).slice(0, 600)).toBeUndefined();
-    expect(r.ui.type).toBe("payment");
-    expect(r.data.sheet.requiresSheet).toBe(true);
-    expect(r.data.sheet.preferredToken).toBeTruthy();
-    expect(r.data.sheet.expiresAtUtc).toBeTruthy();
+    expect(r.ui.type).toBe("order");
+    expect(r.data.bookingState.currentJourneyStage).toBe("seats");
     expect(r.data.order.tickets).toHaveLength(2);
     expect(r.data.order.sessionId).toBe(show.sessionId);
     expect(r.speech).toMatch(/2 seats held/);
     expect(r.speech).not.toMatch(/undefined/);
+    const checkout = await h.tool("prepare_payment", c, {
+      userSessionId: r.data.order.userSessionId,
+      method: "SAVED_CARD",
+    });
+    expect(checkout.ui.type).toBe("payment");
+    expect(checkout.data.sheet.preferredToken).toBeTruthy();
+    expect(checkout.data.sheet.expiresAtUtc).toBeTruthy();
     // the spoken seat label is compact (F10–F11) and the price is stated once
     expect(r.speech).toMatch(/[A-Z]\d+–[A-Z]\d+|[A-Z]\d+, [A-Z]\d+/);
     // resume returns the same held order without rebuilding it
@@ -559,15 +545,18 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     if (!show) return;
     const r = await h.tool("quick_book", c, { sessionKey: show.sessionKey, tickets: 1 });
     expect(r.error, JSON.stringify(r).slice(0, 600)).toBeUndefined();
-    expect(r.ui.type).toBe("payment");
-    expect(r.data.sheet.guest).toBe(true);
-    expect(r.data.sheet.customerKnown).toBe(false);
-    expect(r.speech).toMatch(/name, email and mobile/);
+    expect(r.ui.type).toBe("order");
+    const checkout = await h.tool("prepare_payment", c, {
+      userSessionId: r.data.order.userSessionId,
+      method: "CARD",
+    });
+    expect(checkout.data.sheet.guest).toBe(true);
+    expect(checkout.data.sheet.customerKnown).toBe(false);
     const session = await widgetSession(c);
     const paid = await h.widget("command", session.token, {
       type: "payment.token",
       userSessionId: r.data.order.userSessionId,
-      confirmationId: r.data.confirmationId,
+      confirmationId: checkout.data.confirmationId,
       token: "tok_visa_4242",
       customer: { name: "Guest Tester", email: "guest.tester@example.com", phone: "0509998877" },
     });
@@ -600,8 +589,17 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
 
   it("quick_book: an unavailable time returns up to three alternatives instead of 'no showtimes'", async () => {
     const c = conv("qb-alt");
-    const show = await pickShow(c, "Mall of the Emirates");
-    if (!show) return;
+    // Keep 03:30 in the future so this tests an unavailable time, not an already-started show.
+    const tomorrow = addDaysIso(nowLocalIso(), 1).slice(0, 10);
+    const sessions = await h.tool("search_sessions", c, {
+      cinemaName: "Mall of the Emirates",
+      experience: "Standard",
+      date: tomorrow,
+      limit: 60,
+    });
+    expect(sessions.ok).toBe(true);
+    const show = sessions.data.sessions.find((s: any) => s.date === tomorrow && s.seatsAvailable > 12);
+    expect(show, "Expected a bookable Standard show at Mall of the Emirates tomorrow").toBeDefined();
     const r = await h.tool("quick_book", c, {
       title: show.filmTitle,
       cinemaName: "Mall of the Emirates",
@@ -613,18 +611,23 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     expect(r.data.alternatives.length).toBeGreaterThan(0);
     expect(r.data.alternatives.length).toBeLessThanOrEqual(3);
     expect(r.speech).toMatch(/isn't available/);
-    expect(r.speech).toMatch(/which one\?$/);
+    expect(r.speech).toMatch(/which (?:one|works)\?$/);
     expect(r.ui.type).toBe("showtimes");
-    // picking one alternative books it directly
+    // Picking a show keeps it selected, but an unknown quantity is never assumed.
     const pick = await h.tool("quick_book", c, { sessionKey: r.data.alternatives[0].sessionKey });
     expect(pick.error, JSON.stringify(pick).slice(0, 400)).toBeUndefined();
-    expect(pick.data.order.tickets).toHaveLength(1);
-    await h.tool("cancel_order", c, { userSessionId: pick.data.order.userSessionId });
+    expect(pick.data.needs).toBe("tickets");
+    const selected = await h.tool("quick_book", c, {
+      sessionKey: r.data.alternatives[0].sessionKey,
+      tickets: 2,
+    });
+    expect(selected.data.order.tickets).toHaveLength(2);
+    await h.tool("cancel_order", c, { userSessionId: selected.data.order.userSessionId });
   });
 
   it("recover_order: after the hold expires the same seats are re-held (or the closest in the row) with F&B kept", async () => {
     const c = conv("qb-recover");
-    await h.tool("login_customer", c, { phone: "0501234567", pin: "1234" });
+    await h.login(c, "SARA");
     const show = await pickShow(c, "Mirdif");
     if (!show) return;
     const r = await h.tool("quick_book", c, {
@@ -644,18 +647,21 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     await h.expireOrder(usid);
     const dead = await h.tool("get_order", c, { userSessionId: usid });
     expect(dead.error?.code).toBe("ORDER_EXPIRED");
-    const rec = await h.tool("recover_order", c, {});
+    const permission = await h.tool("recover_order", c, {});
+    expect(permission.data.needs).toBe("recovery_confirmation");
+    expect(permission.data.active).toBe(false);
+    const rec = await h.tool("recover_order", c, { confirmed: true });
     expect(rec.error, JSON.stringify(rec).slice(0, 600)).toBeUndefined();
     expect(rec.data.seatsRecovered).toBe("same");
     expect(rec.data.order.seats).toBe(seats);
     expect(rec.data.order.userSessionId).not.toBe(usid);
     expect(rec.data.order.concessions).toHaveLength(1);
     expect(rec.speech).toMatch(/still free/);
-    expect(rec.ui.type).toBe("payment");
+    expect(rec.ui.type).toBe("order");
     // the widget path (order.recover) does the same and renders the sheet
     const session = await widgetSession(c);
     await h.expireOrder(rec.data.order.userSessionId);
-    const cmd = await h.widget("command", session.token, { type: "order.recover" });
+    const cmd = await h.widget("command", session.token, { type: "order.recover", confirmed: true });
     expect(cmd.ok, JSON.stringify(cmd).slice(0, 400)).toBe(true);
     expect(cmd.speech).toMatch(/held/);
     await h.tool("cancel_order", c, { userSessionId: cmd.data.order.userSessionId });
@@ -663,7 +669,7 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
 
   it("offer intelligence: a saved-card offer is hinted only when the basket qualifies, and the monthly limit is enforced", async () => {
     const c = conv("qb-offer");
-    await h.tool("login_customer", c, { memberId: "SHR200877", pin: "2468" }); // Rahul: ADCB BOGO card
+    await h.login(c, "RAHUL");
     const sessions = await h.tool("search_sessions", c, {
       cinemaName: "Burjuman",
       experience: "Standard",
@@ -693,8 +699,11 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
       return;
     }
     expect(hinted.data.offerHint.cardLabel).toMatch(/ending \d{4}/);
-    expect(hinted.speech).toMatch(/use it\?$/);
-    expect(hinted.data.sheet.preferredToken).toBe(hinted.data.offerHint.cardToken);
+    const checkout = await h.tool("prepare_payment", c, {
+      userSessionId: hinted.data.order.userSessionId,
+      method: "SAVED_CARD",
+    });
+    expect(checkout.data.sheet.preferredToken).toBe(hinted.data.offerHint.cardToken);
     const applied = await h.tool("apply_offer", c, {
       userSessionId: hinted.data.order.userSessionId,
       offerId: hinted.data.offerHint.offerId,
@@ -707,11 +716,13 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
 
   it("the first message is personal for a signed-in member and generic for a guest", async () => {
     const guest = await widgetSession(conv("greet-g"));
-    expect(guest.dynamicVariables.greetingEn).toBe("Hi there, welcome to VOX Cinemas. How can I help you today?");
+    expect(guest.dynamicVariables.greetingEn).toBe(
+      "Hi, welcome to VOX Cinemas. What are you in the mood to watch?",
+    );
     const c = conv("greet-m");
-    await h.tool("login_customer", c, { phone: "0501234567", pin: "1234" });
+    await h.login(c, "SARA");
     const member = await widgetSession(c);
-    expect(member.dynamicVariables.greetingEn).toBe("Hi Sara, welcome back. How can I help you today?");
+    expect(member.dynamicVariables.greetingEn).toBe("Hi Sara, what are you in the mood to watch?");
     expect(member.dynamicVariables.firstName).toBe("Sara");
   });
 });

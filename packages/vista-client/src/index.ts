@@ -297,6 +297,7 @@ export class VistaClient {
     UserSessionId: string;
     CinemaId: string;
     Concessions: { ItemId: string; Quantity: number; Modifiers?: string[] }[];
+    Replace?: boolean;
     /** food-only order for a paid booking: the show it is collected for */
     SessionId?: string;
   }) {
@@ -346,6 +347,8 @@ export class VistaClient {
   }
   completeOrder(req: {
     UserSessionId: string;
+    /** Simulator/adapter compare-and-pay guard for the reviewed order version. */
+    ExpectedVersion?: number;
     CustomerEmail: string;
     CustomerName: string;
     CustomerPhone: string;
@@ -443,12 +446,14 @@ export class VistaClient {
   }
 
   // ---------- Loyalty ----------
-  validateMember(req: { MemberId?: string; Email?: string; Phone?: string; Pin?: string }) {
-    return this.request<{ Member: Record<string, any>; LoyaltySessionToken: string } & V1Envelope>(
-      "POST",
-      "/RESTLoyalty.svc/member/validate",
-      req,
-    );
+  validateMember(req: { Email: string; Password: string }) {
+    return this.request<
+      {
+        Member: Record<string, any>;
+        LoyaltySessionToken: string;
+        Authentication?: { Method: string; Verified: boolean; Version: number };
+      } & V1Envelope
+    >("POST", "/RESTLoyalty.svc/member/validate", req);
   }
   balances(memberId: string) {
     return this.request<

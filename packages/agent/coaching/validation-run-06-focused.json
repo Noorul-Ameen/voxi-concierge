@@ -1,0 +1,162 @@
+{
+  "suite_id": "suite_4101m241wdkxezsrz16h21hqtb0d",
+  "branch_id": "agtbrch_8901m23z1fgxeaaszaj6dw7a47bh",
+  "version_id": "agtvrsn_9201m241w4kxfcas3qtpgt6025c6",
+  "repeat_count": 1,
+  "counts": {
+    "passed": 1
+  },
+  "tests": [
+    {
+      "name": "VOX Enhancement 08 — Usual middle seats remain changeable (v6)",
+      "id": "test_1301m241w6bff548hp474nwv9s86",
+      "status": "passed",
+      "evaluation": {
+        "result": "success",
+        "rationale": {
+          "messages": [
+            "Criterion 1: quick_book was called with tickets=2, title='A Sea Story', cinemaName='MOE', time='19:00'. No seatPreference was included, allowing the backend to infer Sara's usual seats from authenticated history. This satisfies the criteria.",
+            "Criterion 2: Agent described F8 and F9 as held middle seats and noted they can be changed. When asked for the seat map, render_seat_map was actually called with the correct sessionKey and userSessionId, returning success. All criteria met.",
+            "Criterion 3: No seat change occurred without guest choosing it. No premium price was claimed. No payment was processed. The guest explicitly said not to process payment and the agent complied. Criteria fully met.",
+            "Criterion 4: Snacks were suggested once after seats were held (salted popcorn offer). After the guest inspected the seat map and kept the same seats, the agent did not pitch snacks again. Criteria met.",
+            "Criterion 5: All tool calls returned successful results with no UNEXPECTED_SIMULATION_TOOL or no-matching-mock errors. Required behaviors (quick_book, render_seat_map) were actually performed via tool calls, not merely promised.",
+            "Criterion 6: All facts (seats, price, cinema, film title) came from tool results. No IDs, emails, or phone numbers were fabricated. No passwords or payment credentials were requested or spoken. No booking confirmation was invented.",
+            "The simulated user ended the conversation."
+          ],
+          "summary": "Evaluation succeeded"
+        }
+      },
+      "transcript": [
+        {
+          "role": "agent",
+          "message": "Hi Sara, how can I help?",
+          "tool_calls": [],
+          "tool_results": []
+        },
+        {
+          "role": "user",
+          "message": "Hey, can you book two tickets for A Sea Story at Mall of the Emirates tonight at 7? Use my usual seats.",
+          "tool_calls": [],
+          "tool_results": []
+        },
+        {
+          "role": "agent",
+          "message": "Checking showtimes and holding your usual seats now.",
+          "tool_calls": [],
+          "tool_results": []
+        },
+        {
+          "role": "agent",
+          "tool_calls": [
+            {
+              "name": "quick_book",
+              "arguments": {
+                "title": "A Sea Story",
+                "date": "tonight",
+                "system__message_to_speak": "Checking showtimes and holding your usual seats now.",
+                "time": "19:00",
+                "tickets": 2,
+                "cinemaName": "MOE"
+              }
+            }
+          ],
+          "tool_results": []
+        },
+        {
+          "role": "agent",
+          "tool_calls": [],
+          "tool_results": [
+            {
+              "name": "quick_book",
+              "result": "{\"ok\":true,\"data\":{\"userSessionId\":\"fixture_order\",\"sessionKey\":\"0002-FIX_FIX_ARABIC_20300603_1900\",\"order\":{\"userSessionId\":\"fixture_order\",\"cinemaId\":\"0002\",\"cinemaName\":\"Mall of the Emirates\",\"sessionId\":\"FIX_FIX_ARABIC_20300603_1900\",\"filmTitle\":\"حكاية البحر\",\"showtime\":\"2030-06-03T19:00:00\",\"tickets\":[{\"id\":\"fixture_ticket_1\",\"description\":\"Adult\",\"seat\":\"F8\",\"priceCents\":5000,\"discountCents\":0,\"finalCents\":5000},{\"id\":\"fixture_ticket_2\",\"description\":\"Adult\",\"seat\":\"F9\",\"priceCents\":5000,\"discountCents\":0,\"finalCents\":5000}],\"seats\":\"F8, F9\",\"concessions\":[],\"offers\":[],\"totalCents\":10000,\"taxCents\":476,\"expiresAtUtc\":\"2030-06-03T12:47:00.000Z\",\"state\":\"tickets\",\"seatsAllocated\":true,\"experience\":\"Standard\",\"screenName\":\"Screen 1\",\"total\":\"AED 100.00\",\"subtotalCents\":10000,\"discountCents\":0,\"loyaltyRedeemedCents\":0,\"bookingFeeCents\":0},\"bookingState\":{\"userSessionId\":\"fixture_order\",\"selectedMovie\":\"حكاية البحر\",\"selectedCinema\":\"0002\",\"selectedShowtime\":\"2030-06-03T19:00:00\",\"ticketQuantity\":2,\"selectedSeats\":\"F8, F9\",\"foodCart\":[],\"seatHoldExpiry\":\"2030-06-03T12:47:00.000Z\",\"currentJourneyStage\":\"seats\",\"cinemaName\":\"Mall of the Emirates\",\"offers\":[],\"totalCents\":10000,\"requiresFreshHold\":false}},\"speech\":\"F8 and F9 are held in the middle; you can change them here.\",\"ui\":{\"type\":\"order\",\"title\":\"Your booking\",\"items\":[{\"userSessionId\":\"fixture_order\",\"cinemaId\":\"0002\",\"cinemaName\":\"Mall of the Emirates\",\"sessionId\":\"FIX_FIX_ARABIC_20300603_1900\",\"filmTitle\":\"حكاية البحر\",\"showtime\":\"2030-06-03T19:00:00\",\"tickets\":[{\"id\":\"fixture_ticket_1\",\"description\":\"Adult\",\"seat\":\"F8\",\"priceCents\":5000,\"discountCents\":0,\"finalCents\":5000},{\"id\":\"fixture_ticket_2\",\"description\":\"Adult\",\"seat\":\"F9\",\"priceCents\":5000,\"discountCents\":0,\"finalCents\":5000}],\"seats\":\"F8, F9\",\"concessions\":[],\"offers\":[],\"totalCents\":10000,\"taxCents\":476,\"expiresAtUtc\":\"2030-06-03T12:47:00.000Z\",\"state\":\"tickets\",\"seatsAllocated\":true,\"experience\":\"Standard\",\"screenName\":\"Screen 1\",\"total\":\"AED 100.00\",\"subtotalCents\":10000,\"discountCents\":0,\"loyaltyRedeemedCents\":0,\"bookingFeeCents\":0}],\"meta\":{\"userSessionId\":\"fixture_order\",\"sessionKey\":\"0002-FIX_FIX_ARABIC_20300603_1900\",\"expiresAtUtc\":\"2030-06-03T12:47:00.000Z\",\"stage\":\"seats\"},\"actions\":[{\"label\":\"Change seats\",\"value\":\"seats:open\"},{\"label\":\"Add snacks\",\"value\":\"fnb:suggest\"},{\"label\":\"Continue to payment\",\"value\":\"pay:start\",\"style\":\"primary\"}]}}",
+              "is_error": false
+            }
+          ]
+        },
+        {
+          "role": "agent",
+          "tool_calls": [
+            {
+              "name": "suggest_fnb",
+              "arguments": {
+                "cinemaId": "0002"
+              }
+            }
+          ],
+          "tool_results": []
+        },
+        {
+          "role": "agent",
+          "tool_calls": [],
+          "tool_results": [
+            {
+              "name": "suggest_fnb",
+              "result": "{\"ok\":true,\"data\":{\"items\":[{\"itemId\":\"FIX_POPCORN\",\"name\":\"Salted popcorn\",\"description\":\"Salted popcorn\",\"priceCents\":2000,\"tab\":\"Popcorn\"}],\"cinemaId\":\"0002\",\"userSessionId\":\"fixture_order\"},\"speech\":\"Would you like popcorn, or skip snacks?\",\"ui\":{\"type\":\"menu\",\"items\":[{\"itemId\":\"FIX_POPCORN\",\"name\":\"Salted popcorn\",\"description\":\"Salted popcorn\",\"priceCents\":2000,\"tab\":\"Popcorn\"}],\"actions\":[{\"label\":\"Skip snacks\",\"value\":\"pay:start\"}]}}",
+              "is_error": false
+            }
+          ]
+        },
+        {
+          "role": "agent",
+          "message": "I have held seats F eight and F nine in the middle for A Sea Story at Mall of the Emirates tonight at seven, for a total of one hundred dirhams. You can easily change your seats on screen. Would you like to add some salted popcorn, or skip snacks?",
+          "tool_calls": [],
+          "tool_results": []
+        },
+        {
+          "role": "user",
+          "message": "Can I see the seat map before I decide whether to keep those?",
+          "tool_calls": [],
+          "tool_results": []
+        },
+        {
+          "role": "agent",
+          "message": "Opening the seat map for you.",
+          "tool_calls": [],
+          "tool_results": []
+        },
+        {
+          "role": "agent",
+          "tool_calls": [
+            {
+              "name": "render_seat_map",
+              "arguments": {
+                "sessionKey": "0002-FIX_FIX_ARABIC_20300603_1900",
+                "userSessionId": "fixture_order"
+              }
+            }
+          ],
+          "tool_results": []
+        },
+        {
+          "role": "agent",
+          "tool_calls": [],
+          "tool_results": [
+            {
+              "name": "render_seat_map",
+              "result": "{\"ok\":true,\"rendered\":true,\"message\":\"The live seat map is on screen.\"}",
+              "is_error": false
+            }
+          ]
+        },
+        {
+          "role": "agent",
+          "message": "The interactive seat map is now open on your screen. Take a look and let me know if you would like to keep seats F eight and F nine or pick different ones.",
+          "tool_calls": [],
+          "tool_results": []
+        },
+        {
+          "role": "user",
+          "message": "I'll keep these for now, but don't process any payment yet.",
+          "tool_calls": [],
+          "tool_results": []
+        },
+        {
+          "role": "agent",
+          "message": "Understood, I have kept your seats F eight and F nine without processing payment. Let me know when you are ready to proceed or if you need anything else!",
+          "tool_calls": [],
+          "tool_results": []
+        }
+      ]
+    }
+  ]
+}

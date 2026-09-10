@@ -294,13 +294,13 @@ export function Dashboard() {
     const lines = [head.join(","), ...convs.map((c) => [c.id, c.startedAt, c.durationSeconds ?? "", c.language, c.modality, c.channel, c.outcome ?? c.status, c.isLoggedIn, (c.journeys ?? []).map((j: any) => `${j.name}:${j.status}`).join("|"), (c.topics ?? []).join("|")].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(","))];
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
-    a.download = `voxi-conversations-${f.days}d.csv`;
+    a.download = `vox-assistant-conversations-${f.days}d.csv`;
     a.click();
   };
 
   const header = (
     <header className="topbar">
-      <div className="brand"><div className="logo">V</div><span>VOXI INSIGHTS</span></div>
+      <div className="brand"><div className="logo">VOX</div><span>VIRTUAL ASSISTANT INSIGHTS</span></div>
       <nav><Link to="/">Demo</Link><Link to="/dashboard" className="active">Dashboard</Link></nav>
     </header>
   );

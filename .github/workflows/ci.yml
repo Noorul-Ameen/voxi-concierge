@@ -6,12 +6,13 @@ jobs:
     services:
       postgres:
         image: postgres:16-alpine
-        env: { POSTGRES_USER: voxi, POSTGRES_PASSWORD: voxi, POSTGRES_DB: voxi }
+        env: { POSTGRES_USER: voxi, POSTGRES_PASSWORD: voxi, POSTGRES_DB: voxi_test }
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U voxi" --health-interval 5s --health-timeout 3s --health-retries 20
     env:
-      DATABASE_URL: postgres://voxi:voxi@localhost:5432/voxi
+      DATABASE_URL: postgres://voxi:voxi@localhost:5432/voxi_test
+      DEMO_SCHEDULE_TEST: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

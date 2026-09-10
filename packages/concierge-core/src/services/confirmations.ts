@@ -7,6 +7,8 @@ import { schema as S, prefixedId } from "@voxi/db";
  * cite its id within the TTL. A confirmation can be consumed once.
  */
 import { and, eq, gt, isNull } from "drizzle-orm";
+import { assertNoPendingBasketEdits } from "./checkout.js";
+import { resolveLinkedConversation } from "./relink.js";
 
 export async function createConfirmation(
   db: Db,
@@ -17,22 +19,35 @@ export async function createConfirmation(
     summary: Record<string, unknown>;
     spokenSummary: string;
     ttlSeconds: number;
+    excludeBasketActionId?: string;
+    validateBeforeCreate?: () => Promise<void>;
   },
 ) {
   const id = prefixedId("cnf", 10);
-  const [row] = await db
-    .insert(S.pendingConfirmations)
-    .values({
-      id,
-      conversationId: input.conversationId,
-      actionType: input.actionType,
-      resourceKey: input.resourceKey,
-      summary: input.summary,
-      spokenSummary: input.spokenSummary,
-      expiresAt: new Date(Date.now() + input.ttlSeconds * 1000),
-    })
-    .returning();
-  return row!;
+  return db.transaction(async (tx) => {
+    const current = await resolveLinkedConversation(tx, input.conversationId, true);
+    if (input.actionType === "pay_order")
+      await assertNoPendingBasketEdits(
+        tx,
+        input.resourceKey,
+        input.excludeBasketActionId,
+        current?.id ?? input.conversationId,
+      );
+    await input.validateBeforeCreate?.();
+    const [row] = await tx
+      .insert(S.pendingConfirmations)
+      .values({
+        id,
+        conversationId: current?.id ?? input.conversationId,
+        actionType: input.actionType,
+        resourceKey: input.resourceKey,
+        summary: input.summary,
+        spokenSummary: input.spokenSummary,
+        expiresAt: new Date(Date.now() + input.ttlSeconds * 1000),
+      })
+      .returning();
+    return row!;
+  });
 }
 
 /** Validate + consume atomically (single UPDATE with predicates so two concurrent consumers cannot both succeed). */
@@ -48,6 +63,7 @@ export async function consumeConfirmation(
         eq(S.pendingConfirmations.id, input.id),
         eq(S.pendingConfirmations.conversationId, input.conversationId),
         eq(S.pendingConfirmations.actionType, input.actionType),
+        input.resourceKey ? eq(S.pendingConfirmations.resourceKey, input.resourceKey) : undefined,
         isNull(S.pendingConfirmations.consumedAt),
         gt(S.pendingConfirmations.expiresAt, new Date()),
       ),
@@ -62,6 +78,11 @@ export async function consumeConfirmation(
         ErrorCodes.CONFIRMATION_REQUIRED,
         "No confirmation found. Call the prepare step first and read the summary to the customer.",
       );
+    if (input.resourceKey && any.resourceKey !== input.resourceKey)
+      throw new DomainError(
+        ErrorCodes.CONFIRMATION_REQUIRED,
+        "Confirmation was prepared for a different booking/order.",
+      );
     if (any.consumedAt)
       throw new DomainError(ErrorCodes.CONFIRMATION_REQUIRED, "This confirmation was already used.");
     if (any.expiresAt <= new Date())
@@ -74,11 +95,6 @@ export async function consumeConfirmation(
       "Confirmation does not match this conversation or action.",
     );
   }
-  if (input.resourceKey && row.resourceKey !== input.resourceKey)
-    throw new DomainError(
-      ErrorCodes.CONFIRMATION_REQUIRED,
-      "Confirmation was prepared for a different booking/order.",
-    );
   return row;
 }
 

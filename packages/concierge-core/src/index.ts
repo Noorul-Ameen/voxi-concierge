@@ -4,6 +4,8 @@ export * as ledger from "./actions/ledger.js";
 export { executeAction } from "./actions/executor.js";
 export * from "./services/catalog.js";
 export * from "./services/conversation.js";
+export * from "./services/relink.js";
+export { buildBookingState } from "./services/order-state.js";
 export * from "./services/confirmations.js";
 export * as format from "./services/format.js";
 export * from "./tools/index.js";

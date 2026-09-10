@@ -2,24 +2,28 @@ import { z } from "zod";
 import { ActionRef, UiHint } from "./common.js";
 
 /** Server-sent events pushed to the widget over /events/{conversationId}. */
+const identity = { eventId: z.string().optional() };
 export const WidgetEvent = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("ui.render"), seq: z.number(), ui: UiHint }),
-  z.object({ type: z.literal("action.queued"), seq: z.number(), action: ActionRef }),
+  z.object({ type: z.literal("ui.render"), seq: z.number(), ...identity, ui: UiHint }),
+  z.object({ type: z.literal("action.queued"), seq: z.number(), ...identity, action: ActionRef }),
   z.object({
     type: z.literal("action.completed"),
     seq: z.number(),
+    ...identity,
     action: ActionRef,
     ui: UiHint.optional(),
   }),
   z.object({
     type: z.literal("order.updated"),
     seq: z.number(),
+    ...identity,
     userSessionId: z.string(),
     summary: z.record(z.unknown()),
   }),
   z.object({
     type: z.literal("transfer.status"),
     seq: z.number(),
+    ...identity,
     transferId: z.string(),
     status: z.string(),
     agentName: z.string().optional(),
@@ -27,17 +31,30 @@ export const WidgetEvent = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("human.message"),
     seq: z.number(),
+    ...identity,
     transferId: z.string(),
     text: z.string(),
     agentName: z.string().optional(),
   }),
-  z.object({ type: z.literal("language.changed"), seq: z.number(), language: z.enum(["en", "ar"]) }),
-  z.object({ type: z.literal("heartbeat"), seq: z.number(), at: z.string() }),
+  z.object({
+    type: z.literal("language.changed"),
+    seq: z.number(),
+    ...identity,
+    language: z.enum(["en", "ar"]),
+  }),
+  z.object({ type: z.literal("heartbeat"), seq: z.number(), ...identity, at: z.string() }),
 ]);
 export type WidgetEvent = z.infer<typeof WidgetEvent>;
 
 /** Messages the widget posts to the concierge (outside of the agent). */
 export const WidgetCommand = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("language"), language: z.enum(["en", "ar"]) }),
+  z.object({
+    type: z.literal("booking.select"),
+    sessionKey: z.string().min(1),
+    tickets: z.number().int().min(1).max(10).optional(),
+    idempotencyKey: z.string().max(120).optional(),
+  }),
   z.object({
     type: z.literal("seat.select"),
     userSessionId: z.string(),
@@ -51,8 +68,13 @@ export const WidgetCommand = z.discriminatedUnion("type", [
     /** guest details entered in the Review & Pay sheet */
     customer: z.object({ name: z.string(), email: z.string(), phone: z.string() }).optional(),
   }),
-  // the seat hold ran out while the guest was still in the widget: rebuild the order with the same/closest seats
-  z.object({ type: z.literal("order.recover"), userSessionId: z.string().optional() }),
+  // A new hold needs the customer's explicit confirmation; an expired timer never sends it automatically.
+  z.object({
+    type: z.literal("order.recover"),
+    userSessionId: z.string().optional(),
+    confirmed: z.boolean().optional(),
+    idempotencyKey: z.string().max(120).optional(),
+  }),
   // the widget's inactivity/timer watchdog asks the concierge to (re)render the current order
   z.object({ type: z.literal("order.state"), userSessionId: z.string().optional() }),
   z.object({

@@ -1,7 +1,6 @@
 /** ElevenLabs post-call webhook ingestion → transcripts, conversation outcome, topics. */
 import { createHmac, timingSafeEqual } from "node:crypto";
 import type { AppContext } from "@voxi/concierge-core";
-import { ensureConversation } from "@voxi/concierge-core";
 import { schema as S } from "@voxi/db";
 import { eq } from "drizzle-orm";
 
@@ -56,14 +55,23 @@ export async function ingestPostCall(app: AppContext, body: PostCall) {
   const d = body.data;
   const dyn = d.conversation_initiation_client_data?.dynamic_variables ?? {};
   const conversationId = d.conversation_id;
-  const conv = await ensureConversation(app.db, {
-    conversationId,
-    language: (dyn.language as "en" | "ar") ?? "en",
-    channel: dyn.channel ?? "web",
-    modality: "voice",
-    customerId: dyn.customerId || undefined,
-    memberId: dyn.memberId || undefined,
-  });
+  // Post-call reports belong to this exact completed provider conversation.
+  // Following a reconnect link here would let a delayed report reset the live
+  // conversation's language or modality using stale initiation variables.
+  await app.db
+    .insert(S.conversations)
+    .values({
+      id: conversationId,
+      language: dyn.language === "ar" ? "ar" : "en",
+      channel: dyn.channel ?? "web",
+      modality: "voice",
+      customerId: dyn.customerId || null,
+      memberId: dyn.memberId || null,
+      isLoggedIn: !!dyn.customerId,
+    })
+    .onConflictDoNothing();
+  const [conv] = await app.db.select().from(S.conversations).where(eq(S.conversations.id, conversationId));
+  if (!conv) throw new Error("Post-call conversation was not created");
   const turns = d.transcript
     .filter((t) => t.message)
     .map((t) => ({ role: t.role, text: t.message!, at: t.time_in_call_secs, toolCalls: t.tool_calls }));

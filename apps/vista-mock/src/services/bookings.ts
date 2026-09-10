@@ -116,6 +116,13 @@ export async function refundBooking(db: Db, req: RefundReq) {
     );
 
   return withSessionLock(db, booking.cinemaId, booking.sessionId, async (tx) => {
+    const repeated = (await tx.select().from(S.refunds).where(eq(S.refunds.reference, reference)))[0];
+    const fresh = (
+      await tx.select().from(S.bookings).where(eq(S.bookings.vistaBookingId, booking.vistaBookingId))
+    )[0];
+    if (repeated) return { refund: repeated, booking: fresh!, idempotent: true };
+    if (!fresh || fresh.version !== booking.version)
+      throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Booking changed concurrently");
     // release seats
     const { state } = await loadSeatState(tx, booking.cinemaId, booking.sessionId).catch(() => ({
       state: null as null | { seats: Record<string, { status: number }>; version: number },
@@ -174,7 +181,7 @@ export async function refundBooking(db: Db, req: RefundReq) {
           id: shortId(12),
           memberId,
           balanceType: "SHARE_POINTS",
-          delta: amount,
+          delta: centsToPoints(amount),
           reason: `Refund booking ${booking.vistaBookingId}`,
           reference,
         });

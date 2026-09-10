@@ -1,3 +1,6 @@
+import { randomBytes } from "node:crypto";
+import { schema as S, hashPassword } from "@voxi/db";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { testApp } from "./helpers.js";
 
@@ -10,6 +13,27 @@ afterAll(async () => {
 });
 
 describe("auth (Apigee)", () => {
+  it("attests password verification only after checking the member password", async () => {
+    const password = randomBytes(24).toString("base64url");
+    await t.db
+      .update(S.customers)
+      .set({ passwordHash: await hashPassword(password) })
+      .where(eq(S.customers.id, "cust_sara"));
+    const valid = await t.post("/RESTLoyalty.svc/member/validate", {
+      Email: "sara.almansoori@example.com",
+      Password: password,
+    });
+    expect(valid.json.Result).toBe(0);
+    expect(valid.json.Authentication).toEqual({ Method: "password", Verified: true, Version: 1 });
+    for (const credentials of [{ Password: `${password}-wrong` }, { Pin: "1234" }]) {
+      const denied = await t.post("/RESTLoyalty.svc/member/validate", {
+        Email: "sara.almansoori@example.com",
+        ...credentials,
+      });
+      expect(denied.json.Result).not.toBe(0);
+      expect(denied.json.Authentication).toBeUndefined();
+    }
+  });
   it("rejects missing api key with fault envelope", async () => {
     const res = await t.app.request("/vistatickets/vista/v2/OData/Cinemas");
     expect(res.status).toBe(401);

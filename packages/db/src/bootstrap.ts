@@ -31,3 +31,17 @@ if (histMode !== "off" && (histMode === "force" || Number(h) === 0)) {
 } else {
   console.log(`bootstrap: synthetic history present (${h} conversations); skipping`);
 }
+// A bounded profile upgrade, not the destructive catalogue seed. Passwords are provisioned through environment secrets.
+const profileDb = createDb(undefined, { max: 1 });
+try {
+  const { updateDemoProfiles } = await import("./seed/profile-update.js");
+  await updateDemoProfiles(profileDb.db);
+  const { refreshDemoSchedule } = await import("./seed/refresh-demo-schedule.js");
+  const schedule = await refreshDemoSchedule(profileDb.db);
+  if (schedule.enabled)
+    console.log(
+      `bootstrap: synthetic demo schedule added ${schedule.inserted} sessions for the next ${schedule.days} days`,
+    );
+} finally {
+  await profileDb.close();
+}

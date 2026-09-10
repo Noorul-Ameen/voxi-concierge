@@ -96,6 +96,45 @@ export async function startHarness() {
     });
     return (await res.json()) as any;
   };
+  const sessions = new Map<
+    string,
+    { conversationId: string; token: string; dynamicVariables?: Record<string, string>; [key: string]: any }
+  >();
+  const session = async (conversationId?: string) => {
+    if (conversationId && sessions.has(conversationId)) return sessions.get(conversationId)!;
+    const fresh = await api
+      .request("/widget/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      })
+      .then((r) => r.json() as any);
+    const linked =
+      conversationId && fresh.conversationId !== conversationId
+        ? await widget("link", fresh.token, { elevenLabsConversationId: conversationId })
+        : fresh;
+    if (!linked.token) throw new Error(`Test session could not be created: ${JSON.stringify(linked)}`);
+    const current = {
+      ...fresh,
+      ...linked,
+      dynamicVariables: { ...fresh.dynamicVariables, conversationId: linked.conversationId },
+    };
+    sessions.set(linked.conversationId, current);
+    return current;
+  };
+  const login = async (conversationId: string, persona: "SARA" | "RAHUL" | "JAMES") => {
+    const emails = {
+      SARA: "sara.almansoori@example.com",
+      RAHUL: "rahul.menon@example.com",
+      JAMES: "james.whitfield@example.com",
+    };
+    const current = await session(conversationId);
+    const password = process.env[`DEMO_${persona}_PASSWORD`];
+    if (!password) throw new Error(`Missing test credential DEMO_${persona}_PASSWORD`);
+    const result = await widget("login", current.token, { email: emails[persona], password });
+    if (result.ok) sessions.set(conversationId, { ...current, ...result, conversationId });
+    return result;
+  };
   const stop = async () => {
     running = false;
     await Promise.race([Promise.all([worker, housekeeping]), new Promise((r) => setTimeout(r, 1000))]);
@@ -110,5 +149,5 @@ export async function startHarness() {
       .set({ expiryAt: new Date(Date.now() - 1000) })
       .where(eq(S.orders.userSessionId, userSessionId));
   };
-  return { api, ctx, db, tool, widget, stop, catalog, expireOrder };
+  return { api, ctx, db, tool, widget, session, login, stop, catalog, expireOrder };
 }

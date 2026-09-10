@@ -1,5 +1,5 @@
 /**
- * Voxi agent-as-code: derives the ElevenLabs Agents configuration (server/webhook tools, client tools,
+ * VOX Cinemas Virtual Assistant configuration (server/webhook tools, client tools,
  * prompt, languages, analytics) from the shared contracts so the agent never drifts from the API.
  */
 import { readFileSync } from "node:fs";
@@ -123,6 +123,14 @@ const CONTEXT_PROPS: Record<string, Literal> = {
   channel: { type: "string", dynamic_variable: "channel" },
 };
 
+// Provider pre-tool speech is off for state reads and bookkeeping, so latency heuristics cannot narrate them.
+const SILENT_TOOLS = new Set<string>([
+  "get_session_context",
+  "get_action_result",
+  "log_journey",
+  "submit_feedback",
+]);
+
 /** Webhook (server) tool definitions — one per contract tool. */
 export function buildWebhookTools(opts: AgentBuildOptions) {
   const headers: Record<string, unknown> = {
@@ -138,25 +146,35 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
     const obj = prop as ObjectProp;
     const properties: Record<string, Prop> = {
       ...CONTEXT_PROPS,
-      language: {
+      ...obj.properties,
+    };
+    // A tool's language can mean Tamil/English/etc. Never replace its contract with the UI en/ar enum.
+    if (!Object.hasOwn(obj.properties, "language")) {
+      properties.language = {
         type: "string",
         description: "Language of the guest's last message: 'en' or 'ar'.",
         enum: ["en", "ar"],
-      },
-      ...obj.properties,
-    };
+      };
+    }
     const isWrite = def.kind === "write";
     return {
       type: "webhook" as const,
       name,
       description:
         def.description +
+        (SILENT_TOOLS.has(name)
+          ? " Call silently; never announce fetching context, polling, logging or recording. Acknowledge a completed customer action only once when relevant."
+          : "") +
         (isWrite
           ? " This performs an action; the response `speech` tells you the outcome. If data.action.status is queued/running, call get_action_result."
           : ""),
       response_timeout_secs: isWrite ? 20 : 15,
       execution_mode: "immediate" as const,
-      pre_tool_speech: isWrite ? ("force" as const) : ("auto" as const),
+      pre_tool_speech: SILENT_TOOLS.has(name)
+        ? ("off" as const)
+        : isWrite
+          ? ("force" as const)
+          : ("auto" as const),
       interruption_mode: isWrite ? ("disable_during_tool" as const) : ("allow" as const),
       tool_error_handling_mode: "passthrough" as const,
       api_schema: {
@@ -178,7 +196,7 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
 export function buildClientTools() {
   return Object.entries(CLIENT_TOOLS).map(([name, v]) => {
     const { prop } = zodToProp(v.params as unknown as z.ZodTypeAny);
-    const expectsResponse = ["request_location", "confirm_dialog"].includes(name);
+    const expectsResponse = ["request_location", "confirm_dialog", "render_seat_map"].includes(name);
     return {
       type: "client" as const,
       name,
@@ -194,6 +212,11 @@ export function systemPrompt(): string {
   return readFileSync(path.resolve(here, "../prompts/system.md"), "utf8");
 }
 
+/** Existing-agent sync changes behaviour only, preserving all live model, voice, privacy and KB settings. */
+export function buildAgentBehaviorPatch(toolIds: string[]) {
+  return { conversation_config: { agent: { prompt: { prompt: systemPrompt(), tool_ids: toolIds } } } };
+}
+
 export const FIRST_MESSAGE = {
   en: "Hi there, welcome to VOX Cinemas. How can I help you today?",
   ar: "أهلاً بك في فوكس سينما. كيف أساعدك اليوم؟",
@@ -202,7 +225,6 @@ export const FIRST_MESSAGE = {
 /** Words the TTS/ASR should treat as brand terms (pronunciation dictionary / keywords). */
 export const KEYWORDS = [
   "VOX",
-  "Voxi",
   "SHARE",
   "Share Points",
   "VOX credit",
@@ -240,27 +262,15 @@ export const KEYWORDS = [
 export function buildAgentConfig(opts: AgentBuildOptions) {
   const webhookTools = buildWebhookTools(opts);
   const clientTools = buildClientTools();
-  const systemTools = [
-    { type: "system", name: "end_call", description: "", params: { system_tool_type: "end_call" } },
-    {
-      type: "system",
-      name: "language_detection",
-      description: "Switch between English and Arabic when the guest changes language.",
-      params: { system_tool_type: "language_detection" },
-    },
-    { type: "system", name: "skip_turn", description: "", params: { system_tool_type: "skip_turn" } },
-  ];
   const promptCfg: Record<string, unknown> = {
     prompt: systemPrompt(),
-    llm: opts.llm ?? "gemini-2.5-flash",
-    temperature: 0.3,
+    llm: opts.llm ?? "gemini-3.6-flash",
+    reasoning_effort: "minimal",
+    temperature: 0,
+    enable_parallel_tool_calls: false,
     max_tokens: -1,
     tool_ids: opts.toolIds ?? [],
-    built_in_tools: {
-      end_call: systemTools[0],
-      language_detection: systemTools[1],
-      skip_turn: systemTools[2],
-    },
+    built_in_tools: {},
     knowledge_base: (opts.knowledgeBase ?? []).map((k) => ({
       type: k.type,
       id: k.id,
@@ -276,10 +286,10 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
     },
     custom_llm: null,
   };
-  if (opts.inlineTools) promptCfg.tools = [...webhookTools, ...clientTools, ...systemTools];
+  if (opts.inlineTools) promptCfg.tools = [...webhookTools, ...clientTools];
   return {
     name: opts.agentName ?? "VOX Cinemas Virtual Assistant (Phase 1 & 2 demo)",
-    tags: ["voxi", "vox-cinemas", "demo"],
+    tags: ["vox-cinemas", "demo"],
     conversation_config: {
       agent: {
         // The widget computes the greeting per guest ("Hi Sara, welcome back…" for members) and passes it as a
@@ -301,13 +311,17 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
       },
       language_presets: {
         ar: {
-          overrides: { agent: { first_message: "{{greetingAr}}", language: "ar" } },
-          first_message_translation: { source_hash: "voxi-ar", text: "{{greetingAr}}" },
+          overrides: {
+            agent: { first_message: "{{greetingAr}}" },
+            tts: { voice_id: opts.voiceIdAr ?? opts.voiceIdEn ?? "cgSgspJ2msm6clMCkdW9" },
+          },
+          first_message_translation: { source_hash: "vox-assistant-ar", text: "{{greetingAr}}" },
         },
       },
       tts: {
         voice_id: opts.voiceIdEn ?? "cgSgspJ2msm6clMCkdW9",
-        model_id: "eleven_flash_v2_5",
+        model_id: "eleven_v3_conversational",
+        expressive_mode: true,
         stability: 0.5,
         similarity_boost: 0.8,
         speed: 1.0,
@@ -316,12 +330,19 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
       },
       asr: {
         quality: "high",
-        provider: "elevenlabs",
+        provider: "scribe_realtime",
         user_input_audio_format: "pcm_16000",
         keywords: KEYWORDS,
       },
       // 3 minutes of silence before the call ends: a guest reading the seat map or the menu is not gone
-      turn: { turn_timeout: 8, silence_end_call_timeout: 180, mode: "turn" },
+      turn: {
+        turn_timeout: 8,
+        silence_end_call_timeout: 180,
+        mode: "turn",
+        turn_model: "turn_v3",
+        turn_eagerness: "normal",
+        speculative_turn: true,
+      },
       conversation: {
         max_duration_seconds: 1800,
         client_events: [
@@ -390,7 +411,7 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
       },
       privacy: {
         record_voice: true,
-        retention_days: 30,
+        retention_days: -1,
         delete_transcript_and_pii: false,
         delete_audio: false,
         zero_retention_mode: false,

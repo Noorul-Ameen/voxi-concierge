@@ -1,5 +1,7 @@
 # 11 — Booking experience v2: requirements, code review, open questions
 
+> Historical record from 9 September 2026. The later enhancement supersedes the default-one-ticket, automatic hold recovery, tickets-first payment and inactivity-nudge decisions below. Use [the current enhancement guide](13-concierge-enhancements.md), [runbook](02-runbook.md) and [demo script](04-demo-script.md) for current behavior. Original findings/results are preserved here as history.
+
 Source: feedback from Noorul, 9 Sep 2026 ("ask less, understand more, reuse context, jump ahead"). Sixteen points; status below is the *current* state found in the codebase before any change, followed by the questions that must be answered before implementation.
 
 ## What the code does today (review findings)

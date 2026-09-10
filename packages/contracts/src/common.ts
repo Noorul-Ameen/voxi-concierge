@@ -91,6 +91,7 @@ export const UiCardType = z.enum([
   "transfer",
   "recommendation",
   "loyalty",
+  "quantity",
 ]);
 
 export const UiHint = z.object({

@@ -1,3 +1,5 @@
+import { type Db, prefixedId } from "@voxi/db";
+import { enqueue } from "../actions/ledger.js";
 import type { HandoverPort, HandoverRequest, HandoverResult } from "./port.js";
 
 /**
@@ -6,6 +8,7 @@ import type { HandoverPort, HandoverRequest, HandoverResult } from "./port.js";
  */
 export class SimulatedHandover implements HandoverPort {
   readonly name = "simulated" as const;
+  constructor(private readonly db?: Db) {}
   private queue: {
     externalConversationId: string;
     transferId: string;
@@ -15,6 +18,20 @@ export class SimulatedHandover implements HandoverPort {
     at: number;
   }[] = [];
   private agents = ["Aisha", "Omar", "Priya"];
+  private async schedule(reply: (typeof this.queue)[number]) {
+    if (!this.db) {
+      this.queue.push(reply);
+      return;
+    }
+    await enqueue(this.db, null, {
+      conversationId: reply.conversationId,
+      type: "simulated_reply",
+      resourceKey: `transfer:${reply.transferId}`,
+      idempotencyKey: prefixedId("sim_reply", 16),
+      payload: reply,
+      requestedBy: "system",
+    });
+  }
   async start(req: HandoverRequest): Promise<HandoverResult> {
     const agentName = this.agents[Math.floor(Math.random() * this.agents.length)]!;
     const ext = `sim_${req.transferId}`;
@@ -22,7 +39,7 @@ export class SimulatedHandover implements HandoverPort {
       req.language === "ar"
         ? `مرحباً ${req.customer.name?.split(" ")[0] ?? ""}، معك ${agentName} من خدمة عملاء فوكس. اطلعت على ملخص محادثتك مع المساعد الافتراضي — كيف أساعدك؟`
         : `Hi ${req.customer.name?.split(" ")[0] ?? "there"}, this is ${agentName} from VOX Customer Care. I've read the summary from the virtual assistant — how can I help?`;
-    this.queue.push({
+    await this.schedule({
       externalConversationId: ext,
       transferId: req.transferId,
       conversationId: req.conversationId,
@@ -39,7 +56,7 @@ export class SimulatedHandover implements HandoverPort {
       : /thank|شكر/i.test(text)
         ? "You're welcome! Is there anything else I can help with?"
         : "Thanks — let me check that for you. One moment please.";
-    this.queue.push({
+    await this.schedule({
       externalConversationId: ext,
       transferId: meta.transferId,
       conversationId: meta.conversationId,

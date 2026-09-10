@@ -256,9 +256,14 @@ export const GetOrderInput = z.object({ userSessionId: z.string() });
 export const PreparePaymentInput = z.object({
   userSessionId: z.string(),
   method: PaymentMethod.describe(
-    "SAVED_CARD when the guest names a card they already have on file ('my saved Mastercard', 'the Visa ending 2211', 'my usual card'); CARD only for a new card; APPLE_PAY / SAMSUNG_PAY for wallets; VOX_CREDIT / SHARE_POINTS for members' balances.",
+    "SAVED_CARD when the customer requests a saved card ('my saved Mastercard', 'the Visa ending 2211', 'my usual card'). CARD opens general payment options when no method is chosen; an available saved card may be preselected and the customer chooses in the secure sheet. APPLE_PAY / SAMSUNG_PAY for wallets; VOX_CREDIT / SHARE_POINTS for members' balances. Opening the sheet does not authorize a charge.",
   ),
-  customer: z.object({ name: z.string(), email: z.string().email(), phone: z.string() }).optional(),
+  customer: z
+    .object({ name: z.string(), email: z.string().email(), phone: z.string() })
+    .optional()
+    .describe(
+      "Omit for signed-in members: checkout uses their verified profile. Guests enter contact details in the secure payment sheet; supply only details they explicitly provided, never guesses.",
+    ),
 });
 export const PayOrderInput = z.object({
   userSessionId: z.string(),
@@ -291,7 +296,7 @@ export const QuickBookInput = z.object({
     .boolean()
     .optional()
     .describe(
-      "true once the guest agreed to their usual cinema ('MOE as usual?' → yes). Omit on the first call so the tool can ask.",
+      "Legacy compatibility flag. An inferred usual cinema is used automatically unless the guest names another cinema.",
     ),
   date: dateStr
     .optional()
@@ -307,15 +312,27 @@ export const QuickBookInput = z.object({
     "Only when the guest asked for it (IMAX, MAX, GOLD…). Default Standard unless the profile prefers otherwise.",
   ),
   language: z.string().optional().describe("Film language when the guest specified one"),
-  tickets: z.number().int().min(1).max(10).default(1).describe("Adult tickets; default 1 when not stated"),
-  childTickets: z.number().int().min(0).max(10).default(0),
-  seatPreference: z.enum(["front", "middle", "back", "aisle", "any"]).optional(),
+  tickets: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Adult ticket count explicitly supplied by the guest; omit when unknown so the tool asks"),
+  childTickets: z.number().int().min(0).max(10).optional(),
+  seatPreference: z
+    .enum(["front", "middle", "back", "aisle", "any"])
+    .optional()
+    .describe(
+      "Omit for 'my usual seats'; the backend infers authenticated history. Set only an explicit front/middle/back/aisle/any choice from the guest or a verified current get_session_context result. Never guess.",
+    ),
   sessionKey: z
     .string()
     .optional()
     .describe(
       "Book this exact showtime (from a showtimes/alternatives card) — skips film/cinema/time resolution",
     ),
+  idempotencyKey: z.string().max(120).optional(),
 });
 
 export const RecoverOrderInput = z.object({
@@ -323,6 +340,13 @@ export const RecoverOrderInput = z.object({
     .string()
     .optional()
     .describe("The expired/active order; defaults to the conversation's order"),
+  confirmed: z
+    .boolean()
+    .optional()
+    .describe(
+      "true only after the guest explicitly agrees to create a new hold; never set automatically on expiry or resume",
+    ),
+  idempotencyKey: z.string().max(120).optional(),
 });
 
 export const ResumeOrderInput = z.object({});
@@ -335,25 +359,32 @@ export const SuggestFnbInput = z.object({
     .describe("Booking the food is for (after tickets are paid) — defaults to the booking just made"),
 });
 
-export const OrderFnbInput = z.object({
-  items: z
-    .array(
-      z.object({
-        itemId: z.string(),
-        quantity: z.number().int().min(1).max(10),
-        modifierIds: z.array(z.string()).optional(),
-      }),
-    )
-    .min(1),
-  bookingId: z
-    .string()
-    .optional()
-    .describe("Booking the food is for; defaults to the booking just made in this conversation"),
-  repeatUsual: z
-    .boolean()
-    .optional()
-    .describe("true when the guest said 'the same as last time' — items may then be omitted"),
-});
+export const OrderFnbInput = z
+  .object({
+    items: z
+      .array(
+        z.object({
+          itemId: z.string(),
+          quantity: z.number().int().min(1).max(10),
+          modifierIds: z.array(z.string()).optional(),
+        }),
+      )
+      .min(1)
+      .optional(),
+    bookingId: z
+      .string()
+      .optional()
+      .describe("Booking the food is for; defaults to the booking just made in this conversation"),
+    repeatUsual: z
+      .boolean()
+      .optional()
+      .describe("true when the guest said 'the same as last time' — items may then be omitted"),
+    idempotencyKey: z.string().max(120).optional(),
+  })
+  .refine((input) => !!input.items?.length || input.repeatUsual === true, {
+    message: "Choose food items or explicitly request the usual order",
+    path: ["items"],
+  });
 
 export const GetLoyaltyBalanceInput = z.object({
   memberId: z.string().optional(),
@@ -363,12 +394,8 @@ export const GetLoyaltyBalanceInput = z.object({
 // ---------- Phase 2: status, feedback, complaints, personalisation, transfer ----------
 
 export const GetSessionContextInput = z.object({});
-export const LoginCustomerInput = z.object({
-  email: z.string().optional(),
-  phone: z.string().optional(),
-  memberId: z.string().optional(),
-  pin: z.string().optional(),
-});
+// Authentication belongs to the secure widget form, never the voice/chat tool transcript.
+export const LoginCustomerInput = z.object({});
 export const ListMyBookingsInput = z.object({
   customerId: z.string().optional(),
   includePast: z.boolean().default(false),
@@ -401,15 +428,38 @@ export const GetRecommendationsInput = z.object({
     .boolean()
     .optional()
     .describe(
-      "Set only after the guest answered whether children are joining; true = include family films, false = adults only",
+      "Use only when already known or needed for a ticket/age decision; true includes family films. Do not add a children question to broad recommendations.",
     ),
   language: z
     .string()
     .optional()
     .describe("Film language the guest asked for (Tamil, Hindi, Arabic…) — overrides profile history"),
   cinemaId: z.string().optional(),
-  date: dateStr.optional(),
-  limit: z.number().int().min(1).max(8).default(4),
+  date: dateStr
+    .optional()
+    .describe(
+      "Requested date: today, tonight, tomorrow, a weekday or YYYY-MM-DD. Put relative words such as 'tonight' here, never in a clock field. Omit when the guest did not specify a date; the backend resolves its default in Dubai.",
+    ),
+  cinemaName: z
+    .string()
+    .optional()
+    .describe("Cinema explicitly named by the guest, overriding the inferred preferred cinema"),
+  time: timeStr
+    .optional()
+    .describe(
+      "Clock time only, in 24-hour HH:mm (for example 22:00). Set only when the guest supplied a clock time. Never send tonight, night, evening or another word. Omit when unspecified so backend history ranks the timing; put relative dates in date.",
+    ),
+  timeFrom: timeStr
+    .optional()
+    .describe(
+      "Start of an explicitly requested clock window, 24-hour HH:mm only (for example 16:00). Omit when no window start was specified; never send relative-date or time-of-day words.",
+    ),
+  timeTo: timeStr
+    .optional()
+    .describe(
+      "End of an explicitly requested clock window, 24-hour HH:mm only (for example 18:00). Omit when no window end was specified; never send relative-date or time-of-day words.",
+    ),
+  limit: z.number().int().min(1).max(8).default(1),
 });
 
 export const TransferToAgentInput = z.object({
@@ -552,37 +602,37 @@ export const TOOL_REGISTRY = {
     input: PreparePaymentInput,
     kind: "read",
     description:
-      "Create the payment summary the customer must confirm. For CARD / SAVED_CARD / APPLE_PAY / SAMSUNG_PAY it opens the secure Review & Pay sheet in the widget — the guest completes payment there and you do NOT call pay_order. For VOX_CREDIT / SHARE_POINTS read the summary, get a yes, then call pay_order with the confirmationId. Never read the confirmationId aloud.",
+      "Create a fresh payment summary only after all requested basket changes have finished. First resolve queued/running edits with get_action_result. If this returns needs:pending_basket or needs:review_updated_basket, check returned pendingActions, establish each change's outcome, explain failures, then call prepare_payment again for the actual updated basket; an earlier total or confirmation is not valid. For CARD / SAVED_CARD / APPLE_PAY / SAMSUNG_PAY it opens the secure Review & Pay sheet — the guest pays there; do NOT call pay_order. For VOX_CREDIT / SHARE_POINTS read the fresh summary, get confirmation, then call pay_order with that confirmationId. Never read the confirmationId aloud.",
   },
   quick_book: {
     input: QuickBookInput,
-    kind: "read",
+    kind: "write",
     description:
-      "ONE-SHOT BOOKING. Give it everything the guest said (movie, cinema, day, time, experience, ticket count, seat wish) and it finds the best showtime, starts the order, holds the best seats and opens Review & Pay — in one call. If a detail is missing it either uses the profile (usual cinema, preferred experience) or returns `needs` with what to ask. If the time isn't available it returns up to three alternatives to pick from (then call it again with the chosen sessionKey). Prefer this over start_order/add_tickets/select_seats whenever the guest wants to book.",
+      "Book using the guest's known choices; explicit choices override history. Before supplying profile-derived values, call get_session_context; otherwise omit them for backend inference. Omit seatPreference for 'my usual seats'. Unknown ticket count returns needs:tickets without holding seats. Once known, holds seats and shows an editable review with optional snacks before one payment. Unavailable shows return alternatives. Returns inline; repeated idempotencyKey replays the result.",
   },
   resume_order: {
     input: ResumeOrderInput,
     kind: "read",
     description:
-      "Continue a booking from earlier in this conversation or a previous visit: returns the order if it is still held (and re-opens Review & Pay), or automatically rebuilds it with the same or closest seats if the hold expired.",
+      "Inspect an earlier booking. A valid hold keeps its original expiry and is offered for continuation. An expired hold returns expired:true and fresh-booking choices; this tool never creates or renews a hold.",
   },
   recover_order: {
     input: RecoverOrderInput,
-    kind: "read",
+    kind: "write",
     description:
-      "After a seat hold expired: rebuilds the order for the same showtime, re-holds the same seats if still free (otherwise the closest equivalent in the same row), re-adds food and offers, and re-opens Review & Pay. Call it when a tool says ORDER_EXPIRED or the widget reports the timer ran out.",
+      "Create a fresh hold only after the guest explicitly agrees (confirmed:true). Rechecks the show is future and on sale, then attempts the same or nearest seats and restores food/offers. An expired timer or resume alone is not consent. Returns the result inline.",
   },
   suggest_fnb: {
     input: SuggestFnbInput,
     kind: "read",
     description:
-      "Quick food & drinks picks: the guest's usual order (from history), three popular items and a 'see full menu' option. Use this instead of browse_menu when offering food after the tickets are paid.",
+      "Offer a few usual/popular snacks and a skip option before payment. Also supports adding food separately after ticket payment. Browse the full menu only on request.",
   },
   order_fnb: {
     input: OrderFnbInput,
-    kind: "read",
+    kind: "write",
     description:
-      "Order food & drinks as a separate order for a paid booking (Vista cannot add items to a paid order): creates the F&B order, adds the items (or repeats the usual order) and opens Review & Pay for it.",
+      "Add the selected food to an active unpaid ticket basket for one combined payment. After ticket payment, create a separate food order. Omit items only when repeatUsual:true was explicitly requested. Returns the result inline.",
   },
   get_loyalty_balance: {
     input: GetLoyaltyBalanceInput,
@@ -598,7 +648,8 @@ export const TOOL_REGISTRY = {
   login_customer: {
     input: LoginCustomerInput,
     kind: "read",
-    description: "Simulated login by email/phone/member id and PIN (demo).",
+    description:
+      "Open the secure sign-in form. Never ask for an email/password in conversation or send credentials through an agent tool.",
   },
   list_my_bookings: {
     input: ListMyBookingsInput,
@@ -664,7 +715,8 @@ export const TOOL_REGISTRY = {
   submit_feedback: {
     input: SubmitFeedbackInput,
     kind: "write",
-    description: "Record the end-of-chat feedback rating.",
+    description:
+      "Record only a rating the guest explicitly gave on the 1–5 scale. Never invent a rating from thanks, a goodbye, positive sentiment or a successful journey. Include resolved only if the guest explicitly said whether their issue was resolved; otherwise omit it. A polite ending alone is not feedback submission.",
   },
   create_complaint: {
     input: CreateComplaintInput,
@@ -696,7 +748,7 @@ export const CLIENT_TOOLS = {
   },
   render_seat_map: {
     description:
-      "Draw the interactive seat map for the current order on the guest's screen (the widget fetches the live seat plan itself). Returns whether the map is on screen.",
+      "Fetch and draw the live interactive seat map in the widget, then return whether it is on screen. For a spoken request to see the map, prefer server get_seat_plan, which fetches and renders it in one call. If this client tool is used, await its result and say the map is open only when ok:true and rendered:true. An order summary is not a seat map.",
     params: z.object({ sessionKey: z.string(), userSessionId: z.string().optional() }),
   },
   render_order_summary: {

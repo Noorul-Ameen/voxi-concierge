@@ -1,0 +1,19 @@
+{
+  "prepared_only": true,
+  "remote_writes_performed": false,
+  "target": "validation branch only",
+  "prompt_source": "packages/agent/prompts/system.md",
+  "changed_test_ids": ["06b", "09a", "09b", "13a"],
+  "tools": [
+    {
+      "name": "submit_feedback",
+      "existing_validation_tool_id": "tool_0601m23z2qc4e0j9wt3f3f7qn64h",
+      "definition_source": "buildWebhookTools from packages/agent/src/index.ts",
+      "changed_fields": ["description"],
+      "schema_shape_changed": false,
+      "preserve": ["actual request headers", "URL", "secret references", "all remaining generated settings"],
+      "contract_description": "Record only a rating the guest explicitly gave on the 1–5 scale. Never invent a rating from thanks, a goodbye, positive sentiment or a successful journey. Include resolved only if the guest explicitly said whether their issue was resolved; otherwise omit it. A polite ending alone is not feedback submission."
+    }
+  ],
+  "acceptance": "All 17 variants, repeated three times, must pass provider evaluation and the independent trace audit. V9 is prepared, not accepted."
+}

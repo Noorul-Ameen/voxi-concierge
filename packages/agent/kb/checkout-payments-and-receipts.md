@@ -7,8 +7,10 @@ source: "https://uae.voxcinemas.com (booking flow and My Account, observed Septe
 
 # Booking checkout, payment methods, bank-offer rules and receipts
 
+This document contains reference information about the VOX website. In the Virtual Assistant demo, use the current tool results for actual seats, prices, offers and policy eligibility. Checkout is simulated: no real payment is taken, and the QR receipt appears in the widget. Do not claim an email, saved new card, food-preparation request or external delivery unless a tool confirms it. The available demo controls determine supported payment methods.
+
 ## Steps of an online booking
-VOX Membership (log in or continue as guest) → Choose Seats → Upgrades (ticket offers for that showtime) → Food & Drinks → Your Details → Review & Pay. Seats are held for about 7 minutes while you complete the booking; the concierge holds them for 10 minutes.
+VOX Membership (log in or continue as guest) → Choose Seats → Upgrades (ticket offers for that showtime) → Optional Food & Drinks → Your Details → Review & Pay. The current booking's timer and backend expiry determine how long seats remain held. Reconnecting does not extend the hold. After expiry, keep the guest's choices and ask before checking availability and creating a fresh hold.
 
 For rated films a "Conditions of access" notice must be accepted first: 18+ means no one under 18 is admitted; PG13/PG15 means children under that age are admitted only with an adult.
 

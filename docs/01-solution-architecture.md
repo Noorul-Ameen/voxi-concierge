@@ -1,5 +1,7 @@
 # Voxi — Solution Architecture
 
+Historical design approved on 3 September 2026. The current product is the VOX Cinemas Virtual Assistant. Follow [the enhancement handover](13-concierge-enhancements.md) and [current runbook](02-runbook.md) for implemented authentication, server-driven UI, checkout and deployment behavior; the original goals below are not proof of production readiness.
+
 **Product:** VOX 2.0 Digital Concierge ("Voxi") — Phase 1 + Phase 2 demo, production-grade, portable.
 **Author:** Solution Architecture (prepared with Noorul Ameen, MAF Customer Care Solutions)
 **Date:** 3 September 2026 · **Status:** Approved for build (decisions D1–D4 below)

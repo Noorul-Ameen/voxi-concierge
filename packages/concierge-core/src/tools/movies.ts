@@ -233,7 +233,7 @@ export const movieTools: Pick<
           },
         );
       }
-      film = cands[0]?.film ?? null;
+      film = cands[0] && cands[0].score >= 0.55 ? cands[0].film : null;
       if (!film)
         return err(
           "NOT_FOUND",
@@ -250,7 +250,8 @@ export const movieTools: Pick<
           f.title.toLowerCase() === film!.title.toLowerCase() &&
           (!wantLangForVersions || similarity(f.language, wantLangForVersions) >= 0.7),
       );
-      for (const f of sameTitle.length ? sameTitle : [film]) versionCodes.add(f.hoCode);
+      for (const f of sameTitle.length ? sameTitle : wantLangForVersions ? [] : [film])
+        versionCodes.add(f.hoCode);
       if (wantLangForVersions && sameTitle.length) film = sameTitle[0]!;
     }
     // ---- resolve cinema(s) ----
@@ -316,7 +317,11 @@ export const movieTools: Pick<
     // (dubbed/subtitled sessions may carry a different language tag than the film itself).
     const wantLang = film ? undefined : normaliseFilmLanguage(input.language);
     const base = (await sessionsFor(ctx, cinemaIds)).filter(
-      (s) => (!film || versionCodes.has(s.hoCode)) && s.showtime >= ctx.nowLocal,
+      (s) =>
+        (!film || versionCodes.has(s.hoCode)) &&
+        s.showtime > ctx.nowLocal &&
+        s.allowTicketSales &&
+        !s.soldOut,
     );
     const apply = (rows: Session[], f: { date?: boolean; time?: boolean; exp?: boolean; lang?: boolean }) =>
       rows.filter((s) => {
@@ -341,7 +346,9 @@ export const movieTools: Pick<
         const all = (await sessionsFor(ctx, allCinemaIds)).filter(
           (s) =>
             (!film || versionCodes.has(s.hoCode)) &&
-            s.showtime >= ctx.nowLocal &&
+            s.showtime > ctx.nowLocal &&
+            s.allowTicketSales &&
+            !s.soldOut &&
             !cinemaIds.includes(s.cinemaId),
         );
         let r = apply(all, {});
@@ -561,8 +568,8 @@ export const movieTools: Pick<
     }
     const speech = t(
       ctx.lang,
-      "You can book right here with me — just tell me the movie, cinema and time and I'll pick seats and take payment. Or I can open the booking page on the VOX website or app; you'll choose seats, add food, apply offers and pay by card, Apple Pay or VOX credit. Tickets arrive by email with a QR code.",
-      "يمكنك الحجز معي مباشرة — أخبرني بالفيلم والسينما والوقت وسأختار المقاعد وأكمل الدفع. أو أفتح لك صفحة الحجز على موقع فوكس أو التطبيق لاختيار المقاعد وإضافة الطعام والدفع. تصل التذاكر بالبريد الإلكتروني مع رمز QR.",
+      "You can choose a film and seats, add optional snacks and review payment here; your QR appears after payment. Or I can open the VOX website or app for you.",
+      "نقدر نختار الفيلم والمقاعد ونضيف سناكات إذا تحب، وبعدها تراجع الدفع هنا ويظهر لك رمز QR بعد الدفع. أو أفتح لك موقع فوكس أو التطبيق للحجز.",
     );
     return ok({ url, label, canBookInChat: true }, speech, {
       type: "movie",

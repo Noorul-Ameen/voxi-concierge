@@ -1,11 +1,12 @@
 process.env.TZ = "UTC";
 import { createDb } from "@voxi/db";
+import { assertLocalTestDatabase } from "../../../infra/test-db-guard.js";
 import { createApp } from "../src/app.js";
 import { loadConfig } from "../src/config.js";
 
 export function testApp() {
   const cfg = loadConfig({ ...process.env, NODE_ENV: "test", VISTA_MOCK_TOKEN_TTL_SECONDS: "3600" });
-  const { db, close } = createDb(cfg.databaseUrl, { max: 5 });
+  const { db, close } = createDb(assertLocalTestDatabase(cfg.databaseUrl), { max: 5 });
   const app = createApp(db, cfg);
   const BASE = "/vistatickets/vista/v2";
   let token = "";
