@@ -144,12 +144,18 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
     const def = TOOL_REGISTRY[name];
     const { prop } = zodToProp(def.input as unknown as z.ZodTypeAny);
     const obj = prop as ObjectProp;
+    // Recommendations expose only filmLanguage. Their legacy language alias stays server-side;
+    // reply/interface language already belongs to the authenticated conversation.
+    const exposedProperties =
+      name === "get_recommendations"
+        ? Object.fromEntries(Object.entries(obj.properties).filter(([field]) => field !== "language"))
+        : obj.properties;
     const properties: Record<string, Prop> = {
       ...CONTEXT_PROPS,
-      ...obj.properties,
+      ...exposedProperties,
     };
-    // A tool's language can mean Tamil/English/etc. Never replace its contract with the UI en/ar enum.
-    if (!Object.hasOwn(obj.properties, "language")) {
+    if (name !== "get_recommendations" && !Object.hasOwn(obj.properties, "language")) {
+      // Other tools keep their existing film-language contract or shared UI language.
       properties.language = {
         type: "string",
         description: "Language of the guest's last message: 'en' or 'ar'.",
@@ -170,11 +176,8 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
           : ""),
       response_timeout_secs: isWrite ? 20 : 15,
       execution_mode: "immediate" as const,
-      pre_tool_speech: SILENT_TOOLS.has(name)
-        ? ("off" as const)
-        : isWrite
-          ? ("force" as const)
-          : ("auto" as const),
+      // Announce the verified result, not an action or hold that may fail.
+      pre_tool_speech: SILENT_TOOLS.has(name) || isWrite ? ("off" as const) : ("auto" as const),
       interruption_mode: isWrite ? ("disable_during_tool" as const) : ("allow" as const),
       tool_error_handling_mode: "passthrough" as const,
       api_schema: {
@@ -212,9 +215,24 @@ export function systemPrompt(): string {
   return readFileSync(path.resolve(here, "../prompts/system.md"), "utf8");
 }
 
+/** Native turn control only; it does not call the backend or change an order/hold. */
+export const SKIP_TURN = {
+  type: "system",
+  name: "skip_turn",
+  description:
+    "Wait silently when the guest asks for a moment. After one brief acknowledgement, use this for subsequent silence or ellipsis until the guest resumes; do not ask if they are still there. This does not extend inactivity or seat-hold deadlines.",
+  params: { system_tool_type: "skip_turn" },
+} as const;
+
 /** Existing-agent sync changes behaviour only, preserving all live model, voice, privacy and KB settings. */
 export function buildAgentBehaviorPatch(toolIds: string[]) {
-  return { conversation_config: { agent: { prompt: { prompt: systemPrompt(), tool_ids: toolIds } } } };
+  return {
+    conversation_config: {
+      agent: {
+        prompt: { prompt: systemPrompt(), tool_ids: toolIds, built_in_tools: { skip_turn: SKIP_TURN } },
+      },
+    },
+  };
 }
 
 export const FIRST_MESSAGE = {
@@ -270,7 +288,7 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
     enable_parallel_tool_calls: false,
     max_tokens: -1,
     tool_ids: opts.toolIds ?? [],
-    built_in_tools: {},
+    built_in_tools: { skip_turn: SKIP_TURN },
     knowledge_base: (opts.knowledgeBase ?? []).map((k) => ({
       type: k.type,
       id: k.id,

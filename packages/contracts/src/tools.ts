@@ -102,7 +102,9 @@ export const ListOffersInput = z.object({
   cardBin: z
     .string()
     .optional()
-    .describe("First 6 digits of a card the guest mentioned — filters to offers that card qualifies for"),
+    .describe(
+      "Optional actual card prefix explicitly supplied by the guest or returned by a previous successful tool. A bank name, card brand or last four digits does not reveal this prefix. Omit when unknown; use bank for a named bank. Never invent or infer digits.",
+    ),
   memberId: z.string().optional(),
   limit: z.number().int().min(1).max(12).default(6),
 });
@@ -110,7 +112,12 @@ export const CheckOfferEligibilityInput = z.object({
   offerId: z.string(),
   sessionKey: z.string().optional(),
   memberId: z.string().optional(),
-  cardBin: z.string().optional(),
+  cardBin: z
+    .string()
+    .optional()
+    .describe(
+      "Optional actual card prefix from the guest or a previous successful tool result. Omit when unavailable. Never infer it from a bank name, card brand or last four digits.",
+    ),
   ticketCount: z.number().int().optional(),
 });
 
@@ -224,7 +231,11 @@ export const AddConcessionsInput = z.object({
   items: z
     .array(
       z.object({
-        itemId: z.string(),
+        itemId: z
+          .string()
+          .describe(
+            "Exact itemId returned earlier by suggest_fnb, browse_menu or the current order. If the chosen snack has not been looked up, call suggest_fnb or browse_menu before this action. Never invent an ID or turn a food name into one.",
+          ),
         quantity: z
           .number()
           .int()
@@ -243,7 +254,12 @@ export const ApplyOfferInput = z.object({
   userSessionId: z.string(),
   offerId: z.string().optional(),
   promoCode: z.string().optional(),
-  cardBin: z.string().optional(),
+  cardBin: z
+    .string()
+    .optional()
+    .describe(
+      "Optional actual card prefix from the guest or a previous successful tool result. Omit when unavailable. Never infer it from a bank name, card brand or last four digits.",
+    ),
   idempotencyKey: z.string().optional(),
 });
 export const RedeemPointsInput = z.object({
@@ -364,7 +380,11 @@ export const OrderFnbInput = z
     items: z
       .array(
         z.object({
-          itemId: z.string(),
+          itemId: z
+            .string()
+            .describe(
+              "Exact itemId returned earlier by suggest_fnb, browse_menu or the current order. Look up a named snack first; never invent an ID from its name. For an explicitly requested usual order, use repeatUsual instead of guessing item IDs.",
+            ),
           quantity: z.number().int().min(1).max(10),
           modifierIds: z.array(z.string()).optional(),
         }),
@@ -430,10 +450,18 @@ export const GetRecommendationsInput = z.object({
     .describe(
       "Use only when already known or needed for a ticket/age decision; true includes family films. Do not add a children question to broad recommendations.",
     ),
+  filmLanguage: z
+    .string()
+    .optional()
+    .describe(
+      "Optional FILM language explicitly requested by the guest, such as English, Tamil, Hindi or Arabic. This is never the conversation/interface language: speaking Arabic does not request an Arabic film. Omit entirely when no film language was requested so the backend uses viewing history. Do not copy the en/ar language hint here.",
+    ),
   language: z
     .string()
     .optional()
-    .describe("Film language the guest asked for (Tamil, Hindi, Arabic…) — overrides profile history"),
+    .describe(
+      "Legacy film-language alias for existing API clients. Prefer filmLanguage; filmLanguage takes precedence when both are supplied.",
+    ),
   cinemaId: z.string().optional(),
   date: dateStr
     .optional()

@@ -16,7 +16,7 @@ The virtual assistant demo supports choosing a movie, cinema, date and showtime,
 3. Select ticket types and seats. The current booking's timer shows how long the seats remain held. Use the backend expiry, rather than a fixed number of minutes. Reconnecting does not extend the hold; after expiry, ask before checking availability and creating a fresh hold.
 4. Add food and drinks (Prepare Now lets you skip the queue).
 5. Apply a bank offer (pay with the eligible card), promo code, Share Points or VOX credit.
-6. Pay. Tickets arrive by email with a QR code — scan it at the entrance, no printing needed.
+6. Review and pay through the website or app. For a booking made in this Virtual Assistant demo, payment is simulated and the confirmed receipt and QR appear in the widget. A visible receipt does not establish email delivery; only a tool result explicitly confirming delivery permits saying an email was sent.
 
 ## Managing a booking
 - Find a booking with the booking reference (7 characters, e.g. WXA7K2M), the email or the mobile number used.

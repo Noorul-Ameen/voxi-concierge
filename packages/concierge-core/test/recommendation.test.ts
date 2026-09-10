@@ -1,3 +1,4 @@
+import { GetRecommendationsInput } from "@voxi/contracts";
 import { describe, expect, it, vi } from "vitest";
 import type { Film, Session } from "../src/services/catalog.js";
 import { customerTools } from "../src/tools/customer.js";
@@ -150,6 +151,23 @@ describe("recommendation precedence and available results", () => {
         await customerTools.get_recommendations(ctx, { kind: "movies", limit: 4, language: "Japanese" }),
       ),
     ).toHaveLength(0);
+  });
+  it("separates an explicit film-language override from Arabic UI language and retains the legacy alias", async () => {
+    const { ctx } = fixture();
+    ctx.lang = "ar";
+    const recommend = (input: Record<string, unknown>) =>
+      customerTools.get_recommendations(ctx, GetRecommendationsInput.parse(input));
+
+    expect(movies(await recommend({}))[0]?.language).toBe("Tamil");
+    const explicit = movies(await recommend({ filmLanguage: "English" }));
+    expect(explicit).toHaveLength(1);
+    expect(explicit[0]?.language).toBe("English");
+    expect(movies(await recommend({ language: "English" }))).toEqual(explicit);
+    expect(movies(await recommend({ filmLanguage: "English", language: "Tamil" }))).toEqual(explicit);
+    // Legacy callers may explicitly request Arabic with "ar"; do not discard that intent.
+    expect(movies(await recommend({ language: "ar" }))).toHaveLength(0);
+    expect(movies(await recommend({ filmLanguage: "Arabic" }))).toHaveLength(0);
+    expect(ctx.lang).toBe("ar");
   });
   it("respects explicit cinema and target time ahead of preferences", async () => {
     const { ctx } = fixture();

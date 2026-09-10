@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  SKIP_TURN,
   buildAgentBehaviorPatch,
   buildAgentConfig,
   buildClientTools,
@@ -18,7 +19,11 @@ describe("agent configuration contracts", () => {
     const tools = buildWebhookTools(opts);
     const props = (name: string) =>
       tools.find((tool) => tool.name === name)!.api_schema.request_body_schema.properties;
-    expect(props("get_recommendations").language).not.toHaveProperty("enum");
+    expect(props("get_recommendations").filmLanguage).not.toHaveProperty("enum");
+    expect(props("get_recommendations")).not.toHaveProperty("language");
+    expect(props("search_films").language).not.toHaveProperty("enum");
+    expect(props("quick_book").language).not.toHaveProperty("enum");
+    expect(props("get_session_context").language).toMatchObject({ enum: ["en", "ar"] });
     expect(props("get_recommendations")).toHaveProperty("withChildren");
     expect(props("get_recommendations")).toHaveProperty("timeFrom");
     expect(props("list_offers")).toHaveProperty("bank");
@@ -48,14 +53,38 @@ describe("agent configuration contracts", () => {
   it("existing-agent patches cannot overwrite voice, model, privacy or knowledge", () => {
     const patch = buildAgentBehaviorPatch(["fixture-tool"]);
     expect(Object.keys(patch.conversation_config)).toEqual(["agent"]);
-    expect(Object.keys(patch.conversation_config.agent.prompt).sort()).toEqual(["prompt", "tool_ids"]);
+    expect(Object.keys(patch.conversation_config.agent.prompt).sort()).toEqual([
+      "built_in_tools",
+      "prompt",
+      "tool_ids",
+    ]);
     expect(patch).not.toHaveProperty("platform_settings");
   });
-  it("disables provider pre-tool speech for context, polling and bookkeeping", () => {
+  it("enables only native skip-turn control in create and behaviour patches without extending timers", () => {
+    const config = buildAgentConfig(opts);
+    const patch = buildAgentBehaviorPatch(["fixture-tool"]);
+    const expected = { skip_turn: SKIP_TURN };
+    expect(config.conversation_config.agent.prompt.built_in_tools).toEqual(expected);
+    expect(patch.conversation_config.agent.prompt.built_in_tools).toEqual(expected);
+    expect(SKIP_TURN).toMatchObject({
+      type: "system",
+      name: "skip_turn",
+      params: { system_tool_type: "skip_turn" },
+    });
+    expect(config.conversation_config.turn).toMatchObject({ turn_timeout: 8, silence_end_call_timeout: 180 });
+    expect(patch.conversation_config).not.toHaveProperty("turn");
+    expect(patch.conversation_config).not.toHaveProperty("tts");
+    expect(patch.conversation_config.agent.prompt).not.toHaveProperty("llm");
+    expect(buildWebhookTools(opts)).toHaveLength(44);
+    expect(buildClientTools()).toHaveLength(12);
+  });
+  it("disables provider pre-tool speech for writes, context, polling and bookkeeping", () => {
     const tools = buildWebhookTools(opts);
     for (const name of ["get_session_context", "get_action_result", "log_journey", "submit_feedback"]) {
       expect(tools.find((tool) => tool.name === name)!.pre_tool_speech).toBe("off");
     }
-    expect(tools.find((tool) => tool.name === "pay_order")!.pre_tool_speech).toBe("force");
+    for (const name of ["pay_order", "quick_book", "add_concessions", "apply_offer", "recover_order"])
+      expect(tools.find((tool) => tool.name === name)!.pre_tool_speech).toBe("off");
+    expect(tools.find((tool) => tool.name === "get_recommendations")!.pre_tool_speech).toBe("auto");
   });
 });
