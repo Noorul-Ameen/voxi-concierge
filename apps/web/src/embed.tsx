@@ -49,8 +49,9 @@ function mount() {
   document.body.appendChild(host);
   const shadow = host.attachShadow({ mode: "open" });
   const style = document.createElement("style");
-  // The app stylesheet scopes its variables on :root; inside a shadow tree the equivalent scope is :host.
-  style.textContent = `${css.replace(/:root/g, ":host")}\n${stateCss}\n:host { all: initial; font-family: var(--font); color: var(--ink); }`;
+  // Keep fixed widget controls above the host page's header without covering the page with an overlay.
+  // Relative positioning creates a stacking context but preserves viewport positioning for fixed children.
+  style.textContent = `${css.replace(/:root/g, ":host")}\n${stateCss}\n:host { all: initial; position: relative; z-index: 1000; font-family: var(--font); color: var(--ink); }`;
   shadow.appendChild(style);
   const root = document.createElement("div");
   root.className = "vox-assistant-root";
