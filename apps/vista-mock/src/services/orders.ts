@@ -173,7 +173,10 @@ export async function getOrCreateOrder(
 ): Promise<OrderRow> {
   const existing = (await tx.select().from(S.orders).where(eq(S.orders.userSessionId, userSessionId)))[0];
   if (existing) {
-    if (existing.state === "expired" || (existing.expiryAt < new Date() && existing.state !== "paid"))
+    if (
+      existing.state === "expired" ||
+      (existing.expiryAt.getTime() <= Date.now() && existing.state !== "paid")
+    )
       throw new VistaError(RC.GENERAL, RC.ORDER_EXPIRED, "Order has expired");
     if (existing.state === "paid" || existing.state === "cancelled")
       throw new VistaError(RC.GENERAL, RC.INVALID_STATE, `Order is ${existing.state}`);
@@ -187,6 +190,7 @@ export async function getOrCreateOrder(
       sessionId,
       state: "draft",
       conversationId: conversationId ?? null,
+      // Only a new order starts a hold. Basket edits retain this original deadline.
       expiryAt: new Date(Date.now() + cfg.expiryMinutes * 60000),
     })
     .returning();
@@ -320,7 +324,6 @@ export async function addTickets(
         ...totals,
         version: order.version + 1,
         lastUpdatedAt: new Date(),
-        expiryAt: new Date(Date.now() + cfg.expiryMinutes * 60000),
       })
       .where(and(eq(S.orders.userSessionId, req.UserSessionId), eq(S.orders.version, order.version)))
       .returning();
@@ -436,7 +439,6 @@ export async function setSeats(
         ...totals,
         version: order.version + 1,
         lastUpdatedAt: new Date(),
-        expiryAt: new Date(Date.now() + cfg.expiryMinutes * 60000),
       })
       .where(and(eq(S.orders.userSessionId, req.UserSessionId), eq(S.orders.version, order.version)))
       .returning();
@@ -515,7 +517,6 @@ export async function addConcessions(
         ...totals,
         version: order.version + 1,
         lastUpdatedAt: new Date(),
-        expiryAt: new Date(Date.now() + cfg.expiryMinutes * 60000),
       })
       .where(and(eq(S.orders.userSessionId, req.UserSessionId), eq(S.orders.version, order.version)))
       .returning();
@@ -550,7 +551,7 @@ export async function getOrder(db: Db, userSessionId: string, cfg: OrderCfg = DE
     order.state !== "paid" &&
     order.state !== "cancelled" &&
     order.state !== "expired" &&
-    order.expiryAt < new Date()
+    order.expiryAt.getTime() <= Date.now()
   ) {
     await expireOrder(db, userSessionId);
     return { ...order, state: "expired" as const };
@@ -614,7 +615,7 @@ export async function expireAbandonedOrders(db: Db): Promise<number> {
     .select({ id: S.orders.userSessionId })
     .from(S.orders)
     .where(
-      and(sql`${S.orders.state} not in ('paid','cancelled','expired')`, sql`${S.orders.expiryAt} < now()`),
+      and(sql`${S.orders.state} not in ('paid','cancelled','expired')`, sql`${S.orders.expiryAt} <= now()`),
     );
   for (const r of rows) await expireOrder(db, r.id);
   return rows.length;
