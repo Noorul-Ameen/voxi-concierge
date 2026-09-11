@@ -73,6 +73,21 @@ function mount() {
   const hasNativeLogin = !!(nativeForm && getLoginButton());
   const identifier = nativeForm?.querySelector<HTMLInputElement>("#siteLoginIdentifier");
   const password = nativeForm?.querySelector<HTMLInputElement>("#siteLoginPin");
+  const updateNativeLabels = (language: Lang) => {
+    const ar = language === "ar";
+    const emailLabel = nativeForm?.querySelector<HTMLLabelElement>('label[for="siteLoginIdentifier"]') ?? identifier?.closest("label")?.querySelector("span");
+    const passwordLabel = nativeForm?.querySelector<HTMLLabelElement>('label[for="siteLoginPin"]') ?? password?.closest("label")?.querySelector("span");
+    if (emailLabel) emailLabel.textContent = ar ? "البريد الإلكتروني" : "Email";
+    if (passwordLabel) passwordLabel.textContent = ar ? "كلمة المرور" : "Password";
+    if (identifier) identifier.placeholder = ar ? "البريد الإلكتروني" : "Email";
+    if (password) password.placeholder = ar ? "كلمة المرور" : "Password";
+    if (hasNativeLogin) {
+      const intro = document.querySelector<HTMLElement>("#loginModal p.login-intro");
+      const hint = document.querySelector<HTMLElement>("#loginModal p.login-hint");
+      if (intro) intro.textContent = ar ? "أفلامك المفضلة ومقاعدك المعتادة. سجّل دخولك لليلة سينمائية على ذوقك." : "Your favourite films. Your usual seats. Sign in for a movie night that's more you.";
+      if (hint) hint.textContent = ar ? "استخدم البريد الإلكتروني وكلمة المرور لحسابك التجريبي." : "Use your demo account email and password.";
+    }
+  };
   if (identifier && password) {
     identifier.type = "email"; identifier.autocomplete = "username";
     password.autocomplete = "current-password";
@@ -80,13 +95,7 @@ function mount() {
       for (const constraint of ["pattern", "minlength", "maxlength", "inputmode"]) field.removeAttribute(constraint);
     }
     password.maxLength = 256;
-    const emailLabel = nativeForm?.querySelector<HTMLLabelElement>('label[for="siteLoginIdentifier"]');
-    const passwordLabel = nativeForm?.querySelector<HTMLLabelElement>('label[for="siteLoginPin"]');
-    const ar = window.VoxiConfig?.lang === "ar";
-    if (emailLabel) emailLabel.textContent = ar ? "البريد الإلكتروني" : "Email";
-    if (passwordLabel) passwordLabel.textContent = ar ? "كلمة المرور" : "Password";
-    identifier.placeholder = ar ? "البريد الإلكتروني" : "Email";
-    password.placeholder = ar ? "كلمة المرور" : "Password";
+    updateNativeLabels(window.VoxiConfig?.lang ?? "en");
   }
   // The page account surface is a separate DOM root, never a card inside the assistant.
   const accountHost = document.createElement("div");
@@ -110,6 +119,7 @@ function mount() {
   const renderAccount = () => {
     const state = pageSession.getSnapshot();
     const ar = state.language === "ar";
+    updateNativeLabels(state.language);
     const button = getLoginButton();
     if (button) {
       button.textContent = state.customer ? state.customer.firstName : ar ? "تسجيل الدخول" : "Sign in";

@@ -8,6 +8,46 @@ import { buildJourneySimulationSuite } from "../src/journey-simulations.js";
 import { materializeSimulations } from "../src/simulations.js";
 
 describe("eight approved journeys", () => {
+  it("matches swap provider seats and returns a fresh booking reference in the real completion envelope", () => {
+    for (const language of ["en", "ar"]) {
+      const test = buildJourneySimulationSuite().tests.find((item) => item.id === `08-positive-${language}`)!;
+      const prepared = JSON.parse(test.tool_mock_overrides.prepare_swap[0].mock_result).data.summary;
+      expect(prepared.selectedSeats).toEqual([
+        { Row: "D", Number: "8", TicketTypeCode: "FIX_TICKET" },
+        { Row: "D", Number: "9", TicketTypeCode: "FIX_TICKET" },
+      ]);
+      const completed = JSON.parse(test.tool_mock_overrides.swap_booking[0].mock_result);
+      expect(completed.data.action.status).toBe("succeeded");
+      expect(completed.data.result.newBookingId).not.toBe(prepared.bookingId);
+      expect(completed.data.result).toMatchObject({
+        newBookingId: "fixture_swapped",
+        differenceCents: prepared.differenceCents,
+        settlement: { direction: "charge", amountCents: prepared.chargeCents },
+      });
+      expect(completed.ui.items[0]).toMatchObject({
+        bookingId: completed.data.result.newBookingId,
+        totalCents: prepared.newTotalCents,
+        swappedFrom: prepared.bookingId,
+        status: "confirmed",
+        qrPayload: "fixture-swapped-qr-only",
+      });
+      expect(completed.data.booking).toBeUndefined();
+    }
+  });
+  it("allows a polite farewell and evaluates waiting only when the user explicitly asks to pause", () => {
+    const tests = buildJourneySimulationSuite().tests;
+    for (const language of ["en", "ar"]) {
+      const positive = tests.find((test) => test.id === `01-positive-${language}`)!;
+      const pause = tests.find((test) => test.id === `01-negative-${language}`)!;
+      expect(positive.success_conditions.join(" ")).toContain(
+        "a brief polite acknowledgment or farewell is allowed",
+      );
+      expect(positive.success_conditions.join(" ")).toContain("no unsolicited follow-up question");
+      expect(positive.success_conditions.join(" ")).not.toContain("explicit pause");
+      expect(pause.success_conditions.join(" ")).toContain("On an explicit pause acknowledge once");
+      expect(pause.success_conditions.join(" ")).toContain("do not promise extended seat holds");
+    }
+  });
   it("matches fixture parameter names and enum values to the actual generated server contracts", () => {
     const schemas = new Map(
       buildWebhookTools({
@@ -36,7 +76,7 @@ describe("eight approved journeys", () => {
       "future_financial_action",
     ].map((name) => ({ name, id: `fixture_${name}` }));
     const tests = materializeSimulations(suite, tools);
-    expect(tests).toHaveLength(38);
+    expect(tests).toHaveLength(40);
     expect(new Set(tests.map((t) => t.scenario_group)).size).toBe(8);
     for (const test of tests) {
       expect(test.body.tool_mock_config).toMatchObject({
@@ -52,6 +92,34 @@ describe("eight approved journeys", () => {
     expect(JSON.stringify(suite)).not.toMatch(/paymentToken|password|\"cardBin\"/);
   });
 
+  it("grounds existing baskets and separates successful QR rendering from its explicit failure", () => {
+    const tests = buildJourneySimulationSuite().tests;
+    const offers = tests.find((test) => test.id === "03-positive-en")!;
+    expect(JSON.stringify(offers.chat_history)).toContain("fixture_order");
+    expect(offers.tool_mock_overrides.apply_offer[0].parameter_conditions).toEqual(
+      expect.arrayContaining([
+        { path: "userSessionId", eval: { type: "exact", expected_value: "fixture_order" } },
+        { path: "confirmed", eval: { type: "exact", expected_value: "true" } },
+      ]),
+    );
+    const qr = tests.find((test) => test.id === "05-positive-en")!;
+    const failed = tests.find((test) => test.id === "05-negative-en-render-failure")!;
+    expect(JSON.parse(qr.tool_mock_overrides.render_qr[0].mock_result)).toMatchObject({
+      ok: true,
+      rendered: true,
+    });
+    expect(JSON.parse(failed.tool_mock_overrides.render_qr[0].mock_result)).toMatchObject({
+      ok: false,
+      rendered: false,
+    });
+    expect(JSON.parse(failed.tool_mock_overrides.find_booking[0].mock_result).ui).toBeUndefined();
+    const bank = tests.find((test) => test.id === "06-negative-en")!;
+    expect(
+      JSON.parse(bank.tool_mock_overrides.check_cancellation_eligibility[0].mock_result).data.booking,
+    ).toMatchObject({ bookingId: "fixture_bank_booking", bookingRef: "WBANK12", experience: "IMAX" });
+    expect(bank.success_conditions.join(" ")).not.toContain("Original-card demo ETA");
+  });
+
   it("catches the observed Arabic unsolicited follow-up while allowing a necessary consent question", () => {
     expect(
       assessResponse({
@@ -64,6 +132,39 @@ describe("eight approved journeys", () => {
     expect(
       assessResponse({ text: "كم تذكرة تريد؟", modality: "voice", known: { quantity: true } }).flags,
     ).toContain("asks_known_information");
+  });
+
+  it("flags a fabricated order ID even when a permissive mock returned success", () => {
+    const calls = [
+      { role: "user", message: "Yes, apply that offer." },
+      {
+        calls: [
+          {
+            name: "apply_offer",
+            arguments: { userSessionId: "sess_unpaid_hold", offerId: "FIX_OFFER", confirmed: true },
+          },
+        ],
+      },
+    ];
+    expect(
+      auditJourneyEvidence({ name: "VOX Journey 03-positive-en fixture-v2", transcript: calls }),
+    ).toContainEqual(expect.stringContaining("order identifier absent"));
+    expect(
+      auditJourneyEvidence({
+        name: "VOX Journey 03-positive-en fixture-v2",
+        transcript: [
+          {
+            results: [
+              {
+                name: "get_session_context",
+                value: { ok: true, data: { activeOrder: { userSessionId: "sess_unpaid_hold" } } },
+              },
+            ],
+          },
+          ...calls,
+        ],
+      }).some((finding) => finding.includes("order identifier absent")),
+    ).toBe(false);
   });
 
   it("rejects a refusal being treated as offer-removal consent and a handover before investigation", () => {

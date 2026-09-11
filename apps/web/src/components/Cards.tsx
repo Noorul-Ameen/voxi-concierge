@@ -5,6 +5,7 @@ import type { CommandResult, Lang, UiHint } from "../lib/api";
 import { money, t } from "../lib/i18n";
 import { decisionSummary, uiActionLabel } from "../lib/widget-state";
 import { cinemaDate } from "../lib/cinema-time";
+import type { PreparedReceiptQr } from "../lib/receipt";
 
 export type CardActions = {
   say: (text: string) => void; // send a user message to the agent
@@ -62,7 +63,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
       case "payment":
         return <PaymentSheet o={items[0] ?? {}} meta={ui.meta ?? {}} lang={lang} act={act} />;
       case "qr":
-        return items.map((b, i) => <QRTicket key={i} b={b} lang={lang} qr={ui.meta?.qrPayload ?? b.qrPayload} />);
+        return items.map((b, i) => <QRTicket key={i} b={b} lang={lang} qr={ui.meta?.qrPayload ?? b.qrPayload} preparedQr={ui.meta?.preparedQr} />);
       case "loyalty":
         return <Loyalty l={items[0] ?? {}} lang={lang} />;
       case "complaint":
@@ -1185,17 +1186,18 @@ export async function createTicketQr(payload: string): Promise<string> {
 }
 
 /** One receipt keeps the verified reference, visit details and QR together. */
-function QRTicket({ b, lang, qr }: { b: any; lang: Lang; qr?: string }) {
+function QRTicket({ b, lang, qr, preparedQr }: { b: any; lang: Lang; qr?: string; preparedQr?: PreparedReceiptQr }) {
   const ar = lang === "ar";
   const [qrResult, setQrResult] = useState<{ payload: string; src: string; failed: boolean } | null>(null);
   const payload = confirmedQrPayload(qr, b);
-  const currentQr = qrResult?.payload === payload ? qrResult : null;
+  const prepared = payload && preparedQr?.payload === payload && /^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(preparedQr.src) ? preparedQr : null;
+  const currentQr = prepared ? { ...prepared, failed: false } : qrResult?.payload === payload ? qrResult : null;
   const src = currentQr?.src ?? "";
   useEffect(() => {
     let current = true;
-    if (payload) void createTicketQr(payload).then((image) => { if (current) setQrResult({ payload, src: image, failed: false }); }).catch(() => { if (current) setQrResult({ payload, src: "", failed: true }); });
+    if (payload && !prepared) void createTicketQr(payload).then((image) => { if (current) setQrResult({ payload, src: image, failed: false }); }).catch(() => { if (current) setQrResult({ payload, src: "", failed: true }); });
     return () => { current = false; };
-  }, [payload]);
+  }, [payload, prepared?.src]);
   const date = b.bookedAt ? cinemaDate(b.bookedAt) : undefined;
   const purchased = date && !Number.isNaN(date.getTime()) ? date.toLocaleDateString(ar ? "ar-AE" : "en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Dubai" }) : undefined;
   const filename = `VOX-QR-${String(b.bookingId ?? "booking").replace(/[^A-Za-z0-9_-]/g, "_")}.png`;

@@ -64,6 +64,25 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
   const ownsOrder = async (conversation: typeof S.conversations.$inferSelect, userSessionId: string) => {
     const metadata = conversation.metadata ?? {};
     if (metadata.activeOrder === userSessionId || metadata.fnbOrder === userSessionId) return true;
+    // Completion clears the active basket. Its own payment result remains readable/retryable
+    // in this authentication generation, including a guest whose order has no customer ID.
+    const [completed] = await app.db
+      .select({ input: S.actions.input })
+      .from(S.actions)
+      .where(
+        and(
+          eq(S.actions.conversationId, conversation.id),
+          eq(S.actions.resourceKey, `order:${userSessionId}`),
+          eq(S.actions.type, "pay_order"),
+          eq(S.actions.status, "succeeded"),
+        ),
+      )
+      .limit(1);
+    if (
+      completed &&
+      Number(completed.input._widgetAuthGeneration ?? 0) === Number(metadata.widgetAuthGeneration ?? 0)
+    )
+      return true;
     if (!conversation.isLoggedIn || !conversation.customerId) return false;
     const order = await app.vista.getOrder(userSessionId).catch(() => null);
     return order?.Order?.Customer?.ID === conversation.customerId;
@@ -878,6 +897,66 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       };
     };
     switch (cmd.type) {
+      case "booking.receipt": {
+        // The generic search tool can offer a guest identity challenge. A direct receipt
+        // must have an already verified owner before emitting any booking or QR event.
+        const result = await runTool(
+          "find_booking",
+          {
+            ...app,
+            catalog,
+            conversation: conv,
+            lang: conv.language as "en" | "ar",
+            nowLocal: nowLocalIso(app.cfg.timeZone),
+            toolCallId: prefixedId("tc", 8),
+            correlationId: prefixedId("corr", 8),
+          },
+          { bookingId: cmd.bookingId, upcomingOnly: false },
+        );
+        const bookings = result.data?.bookings as
+          | { bookingId: string; verified: boolean; status: string; qrPayload?: string }[]
+          | undefined;
+        const booking = bookings?.find((item) => item.bookingId === cmd.bookingId.toUpperCase());
+        let verified = booking?.verified === true;
+        if (booking && !verified) {
+          const [payment] = await app.db
+            .select({ input: S.actions.input })
+            .from(S.actions)
+            .where(
+              and(
+                eq(S.actions.conversationId, conv.id),
+                eq(S.actions.type, "pay_order"),
+                eq(S.actions.status, "succeeded"),
+                sql`${S.actions.result}->>'bookingId' = ${booking.bookingId}`,
+              ),
+            )
+            .limit(1);
+          verified =
+            !!payment &&
+            Number(payment.input._widgetAuthGeneration ?? 0) ===
+              Number(conv.metadata?.widgetAuthGeneration ?? 0);
+        }
+        if (!result.ok || !booking || !verified)
+          return c.json({ ok: false, error: "That booking isn't verified for this session." }, 403);
+        booking.verified = true;
+        if (!["confirmed", "collected"].includes(booking.status) || !booking.qrPayload?.trim())
+          return c.json({ ok: false, error: "A valid booking QR is not available for this booking." }, 409);
+        const ui = {
+          type: "qr",
+          items: [booking],
+          meta: { qrPayload: booking.qrPayload, receiptLookup: true },
+        };
+        await appendEvent(
+          app.db,
+          app.events,
+          conv.id,
+          "ui.render",
+          { ui, tool: "booking.receipt" },
+          "user",
+          Number(conv.metadata?.widgetAuthGeneration ?? 0),
+        );
+        return c.json({ ok: true, data: { booking }, ui });
+      }
       case "proposal.preview":
         return c.json(await widgetTool("propose_booking", cmd.input));
       case "proposal.accept":

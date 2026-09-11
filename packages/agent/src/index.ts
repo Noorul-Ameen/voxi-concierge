@@ -200,7 +200,9 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
 export function buildClientTools() {
   return Object.entries(CLIENT_TOOLS).map(([name, v]) => {
     const { prop } = zodToProp(v.params as unknown as z.ZodTypeAny);
-    const expectsResponse = ["request_location", "confirm_dialog", "render_seat_map"].includes(name);
+    const expectsResponse = ["request_location", "confirm_dialog", "render_seat_map", "render_qr"].includes(
+      name,
+    );
     return {
       type: "client" as const,
       name,

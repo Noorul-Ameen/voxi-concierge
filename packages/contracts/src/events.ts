@@ -49,6 +49,7 @@ export type WidgetEvent = z.infer<typeof WidgetEvent>;
 
 /** Messages the widget posts to the concierge (outside of the agent). */
 export const WidgetCommand = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("booking.receipt"), bookingId: z.string().min(1).max(16) }),
   z.object({ type: z.literal("proposal.preview"), input: ProposeBookingInput }),
   z.object({
     type: z.literal("proposal.accept"),

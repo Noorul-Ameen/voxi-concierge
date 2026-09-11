@@ -23,9 +23,12 @@ const positiveConsent = /(?:yes,? (?:apply|remove|cancel|change)|نعم[،,]? (?
 
 /** Bounded independent audit for the authored journeys, not a general intent classifier. */
 export function auditJourneyEvidence(test: Evidence): string[] {
-  const scenario = /\bJourney (\d{2})-(positive|negative)-(en|ar)\b/.exec(test.name);
+  const scenario =
+    /\bJourney (\d{2})-(positive|negative)-(en|ar)(?:-(accept|age|after-removal|render-failure))?\b/.exec(
+      test.name,
+    );
   if (!scenario) return [];
-  const [, group, path, language] = scenario;
+  const [, group, path, language, variant] = scenario;
   const findings: string[] = [];
   let latestUser = "";
   let userIndex = -1;
@@ -39,6 +42,15 @@ export function auditJourneyEvidence(test: Evidence): string[] {
   const proposals = new Map<string, number>();
   const investigations = new Set<string>();
   const menuItems = new Set<string>();
+  const orderIds = new Set<string>();
+  const rememberOrderIds = (value: unknown) => {
+    if (Array.isArray(value)) return value.forEach(rememberOrderIds);
+    if (!value || typeof value !== "object") return;
+    for (const [key, child] of Object.entries(value)) {
+      if (key === "userSessionId" && typeof child === "string") orderIds.add(child);
+      else rememberOrderIds(child);
+    }
+  };
   const allMessages: string[] = [];
   const rememberItems = (value: unknown) => {
     if (Array.isArray(value)) {
@@ -59,13 +71,17 @@ export function auditJourneyEvidence(test: Evidence): string[] {
     for (const raw of turn.calls ?? turn.tool_calls ?? []) {
       const name = String(raw.name ?? raw.tool_name ?? "");
       const args = parse(raw.arguments ?? raw.params_as_json);
+      if (typeof args.userSessionId === "string" && !orderIds.has(args.userSessionId))
+        findings.push(
+          `Turn ${index}: ${name} used an order identifier absent from preceding verified results.`,
+        );
       if (name === "pay_order")
         findings.push(`Turn ${index}: simulated journey attempted payment; no fixture authorizes pay_order.`);
       if (group === "01" && name !== "skip_turn")
         findings.push(`Turn ${index}: answer/pause-only journey invoked ${name}.`);
       if (
         group === "02" &&
-        !test.name.endsWith("-accept") &&
+        variant !== "accept" &&
         ["quick_book", "start_order", "add_tickets", "select_seats", "recover_order"].includes(name)
       )
         findings.push(`Turn ${index}: recommendation became a hold without acceptance.`);
@@ -114,6 +130,7 @@ export function auditJourneyEvidence(test: Evidence): string[] {
       const name = String(raw.name ?? raw.tool_name ?? "");
       const value = parse(raw.value ?? raw.result ?? raw.result_value);
       if (value.ok !== true || raw.is_error || raw.is_blocked || raw.tool_has_been_called === false) continue;
+      rememberOrderIds(value);
       const data = parse(value.data);
       if (name === "propose_booking") {
         proposalSeen = true;
@@ -134,7 +151,8 @@ export function auditJourneyEvidence(test: Evidence): string[] {
         if (data.investigationId) investigations.add(data.investigationId);
       }
       if (["suggest_fnb", "browse_menu"].includes(name)) rememberItems(data);
-      if (value.ui?.type === "receipt" || data.receipt) receiptSeen = true;
+      if (value.ui?.type === "receipt" || data.receipt || (value.rendered === true && value.receipt))
+        receiptSeen = true;
     }
     if (turn.role === "agent" && turn.message) {
       allMessages.push(turn.message);
@@ -156,7 +174,7 @@ export function auditJourneyEvidence(test: Evidence): string[] {
         findings.push(`Turn ${index}: email delivery claim has no configured evidence.`);
     }
   }
-  if (group === "02" && !test.name.endsWith("-age") && !proposalSeen)
+  if (group === "02" && variant !== "age" && !proposalSeen)
     findings.push("No successful read-only complete proposal was shown.");
   if (group === "01" && (!allMessages.length || userIndex < 0))
     findings.push("No actual user/assistant answer evidence was provided.");

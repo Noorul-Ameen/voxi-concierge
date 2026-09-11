@@ -20,15 +20,23 @@ Implementation checkpoint: 11 September 2026. This combines the approved convers
 
 The agent source contains four free-form Procedures: booking, cancellation/refund, exchange and debited/no-booking investigation. Financial correctness remains enforced by backend validation and confirmation records. Model, voices and conversation/platform settings are preserved. Procedure/tool/KB references are bound to a separately published candidate version before promotion.
 
-Candidate branch: `agtbrch_4001m26hjbkyerhr4mqhdxbg0bye`. Candidate version at this checkpoint: `agtvrsn_5101m26p97e6fs0tx9mw9rdh6j3n`. There are 46 server tools and 12 client tools, with 12 KB documents. Thirty-eight bilingual and negative conversation scenarios are defined. Publication is not evidence that those scenarios or real audio have passed.
+Candidate branch: `agtbrch_4001m26hjbkyerhr4mqhdxbg0bye`. The first premium candidate was `agtvrsn_5101m26p97e6fs0tx9mw9rdh6j3n`, promoted to main as `agtvrsn_3001m278vm1peqzvsc8zar6twafq`. There are 46 server tools and 12 client tools, with 12 KB documents. Forty bilingual and negative conversation scenarios are now defined, including explicit QR-render failure cases. Publication is not evidence that those scenarios or real audio have passed.
 
-The connected EU tool cannot execute generation-based conversation tests. These scenarios remain unrun pending an appropriate supported connection. Browser/physical microphone acceptance is also pending because both permitted browser-access attempts timed out during automatic approval review.
+The connected EU tool cannot execute generation-based conversation tests. After browser access was restored, the supported ElevenLabs dashboard ran all 38 initial logical scenarios against main. Results exposed both agent failures and inconsistent fixture facts/criteria; original results are retained separately from corrected tests. A follow-up candidate addresses identifier/amount grounding, one-time questions, failed-render claims and unconfirmed email delivery. Use final native run metadata to assess that candidate, rather than the original test definitions or code-only tests. Physical audio acceptance remains separate because browser automation cannot inspect microphone permission or listen to the result.
+
+## Hosted acceptance findings
+
+The first release, GitHub PR #5 / commit `4fee34d999f2af3c0a4cc5adf97af827494fe2f9`, deployed successfully to API, mock, worker and web. Both websites passed page-owned login and signed-in privacy checks; actual English and Arabic age-rating replies were brief. Hosted simulated transactions passed proposal/offer/snack checkout, original-card cancellation, payment investigation, full six-minute hold expiry and recovery, and same-cinema swaps charging/refunding only the price difference (AED 90 in each direction).
+
+The follow-up fixes three observed gaps: completed payment retries retain verified ownership after the active basket clears; existing-ticket QR requests retrieve only a verified active booking and acknowledge only after the actual PNG renders; the linked site's wrapped login labels are updated in both languages. Receipt lookup preserves a separate current hold. Failed/missing QR and changed-account results never count as successful display.
+
+The live `REFUND_METHODS` override on API and worker was explicitly aligned to `VOX_CREDIT,ORIGINAL_PAYMENT`; this is required alongside the source policy. Test bookings were newly tagged synthetic records and cleaned up through normal cancellation/exchange flows. Balance-tender purchases remain local-test coverage where normal hosted refunds cannot restore the original demo balances.
 
 ## Deployment and verification
 
 API bootstrap applies additive migrations `0004_refund_credit_expiry` and `0005_ledger_order_reference`. Mock and worker wait, read-only, for the committed schema before accepting HTTP or jobs; failure after 120 seconds is explicit. Do not force-reseed a populated deployment.
 
-The full isolated local suite passed: **415 tests across 46 test files** (web 107, contracts 3, agent 105, domain 21, DB 13, mock 47, core 62, API 57). Tests cover account runtime races, credential isolation, proposals/retries/reconnect, refund proof ownership, offer switching, exact confirmation binding, atomic exchange settlement and migration startup readiness.
+The first release passed 415 tests across 46 files locally and in CI. The hosted-fix regression run passed **451 tests across 48 test files** (web 136, contracts 3, agent 109, domain 21, DB 13, mock 47, core 62, API 60). Tests cover account runtime races, credential isolation, proposals/retries/reconnect, refund proof ownership, offer switching, exact confirmation binding, atomic exchange settlement, receipt ownership/rendering and migration startup readiness. These counts describe code tests; native conversation runs are recorded independently.
 
 Repository lint passes with existing warnings. Production builds include both native site and embed bundle. The committed OpenAPI document is regenerated from all 46 server-tool contracts.
 
