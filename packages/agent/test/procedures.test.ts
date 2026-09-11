@@ -12,9 +12,11 @@ const tools = [...Object.keys(TOOL_REGISTRY), ...Object.keys(CLIENT_TOOLS)].map(
 describe("scoped procedure deployment", () => {
   it("resolves every authored reference against current tool revisions without changing protected configuration", () => {
     const procedures = buildProcedures(tools);
-    expect(procedures).toHaveLength(4);
-    expect(new Set(procedures.map((p) => p.trigger)).size).toBe(4);
-    expect(procedures.every((p) => p.type === "free_form" && p.referenced_tool_ids.length > 0)).toBe(true);
+    expect(procedures).toHaveLength(5);
+    expect(new Set(procedures.map((p) => p.trigger)).size).toBe(5);
+    expect(
+      procedures.slice(0, 4).every((p) => p.type === "free_form" && p.referenced_tool_ids.length > 0),
+    ).toBe(true);
     expect(procedures[0].content).toContain('[tool id="tool_fixture_propose_booking"]');
     expect(procedures[3].content).toContain('[tool id="tool_fixture_investigate_payment"]');
     const revised = buildProcedures(
@@ -34,6 +36,34 @@ describe("scoped procedure deployment", () => {
         { proceduresEnabled: true },
       ),
     ).not.toHaveProperty("conversation_config.tts");
+  });
+
+  it("bounds the structured acknowledgement to exact bilingual Say steps without business actions", () => {
+    const procedure = buildProcedures(tools).find((p) => p.key === "brief-acknowledgement")!;
+    expect(procedure.type).toBe("deterministic");
+    expect(procedure.referenced_tool_ids).toEqual([]);
+    expect(procedure.trigger).toContain("latest user turn only");
+    expect(procedure.trigger).toContain("Excludes a booking or payment request");
+    expect(procedure.trigger).toContain("request to pause or wait");
+    const document = JSON.parse(procedure.content);
+    expect(document.steps).toHaveLength(1);
+    const branch = document.steps[0];
+    expect(branch.type).toBe("branch");
+    expect(branch.branches).toHaveLength(2);
+    for (const arm of branch.branches) {
+      expect(arm.condition).toMatchObject({ type: "llm" });
+      expect(arm.condition.condition).toContain("latest user turn");
+      expect(arm.condition.condition).toContain("details are already visible");
+      expect(arm.condition.condition).toContain(
+        "no substantive question, requested action, approval, pause or wait request",
+      );
+      expect(arm.condition.condition).toContain("'what is IMAX, briefly?' does NOT qualify");
+    }
+    expect(branch.branches[0].steps).toEqual([{ type: "say", message: "تمام، باختصر." }]);
+    expect(branch.branches[1].steps).toEqual([{ type: "say", message: "Got it, I’ll keep it brief." }]);
+    // A mistaken trigger selection must return silently, never replace a real question with an acknowledgement.
+    expect(branch.fallback).toBeUndefined();
+    expect(systemPrompt()).not.toContain('"type": "branch"');
   });
 
   it("refuses main, concurrent edits and unmanaged workflows before publishing", async () => {
@@ -140,7 +170,7 @@ describe("scoped procedure deployment", () => {
     });
     expect(result.versionId).toBe("v2");
     expect(result.promoted).toBe(false);
-    expect(result.procedures).toHaveLength(4);
+    expect(result.procedures).toHaveLength(5);
     expect(writes.filter((path) => path.startsWith("PATCH"))).toEqual([
       "PATCH /v1/convai/agents/agent_fixture?branch_id=candidate",
     ]);

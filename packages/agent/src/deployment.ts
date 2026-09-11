@@ -62,13 +62,13 @@ export async function syncCandidateAgent(
       api<Tool>("GET", `/v1/convai/tools/${encodeURIComponent(id)}`),
     ),
   );
-  const plannedNames = new Set(
+  const plannedTypes = new Map(
     buildProcedures(definitions.map((tool, i) => ({ name: tool.name, id: `tool_validation_${i}` }))).map(
-      (p) => p.name,
+      (p) => [p.name, p.type],
     ),
   );
   if (
-    existingProcedures.some((p) => !plannedNames.has(p.name) || p.type !== "free_form") ||
+    existingProcedures.some((p) => plannedTypes.get(p.name) !== p.type) ||
     new Set(existingProcedures.map((p) => p.name)).size !== existingProcedures.length
   )
     throw new Error("Candidate contains unmanaged or ambiguous procedures; review before synchronization");
@@ -128,7 +128,7 @@ export async function syncCandidateAgent(
   await api("PATCH", agentPath, {
     ...patch,
     workflow: compiled.workflow,
-    version_description: "VOX: four scoped procedures, approved demo journeys and current tool contracts",
+    version_description: "VOX: four journey procedures and one fixed brief acknowledgement",
   });
   const after = await api<Agent>("GET", agentPath);
   if (!after.version_id || after.version_id === expectedVersion)

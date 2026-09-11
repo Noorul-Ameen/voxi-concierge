@@ -18,7 +18,7 @@ Implementation checkpoint: 11 September 2026. This combines the approved convers
 
 ## ElevenLabs configuration
 
-The agent source contains four free-form Procedures: booking, cancellation/refund, exchange and debited/no-booking investigation. Financial correctness remains enforced by backend validation and confirmation records. Model, voices and conversation/platform settings are preserved. Procedure/tool/KB references are bound to a separately published candidate version before promotion.
+The agent source contains four free-form Procedures: booking, cancellation/refund, exchange and debited/no-booking investigation. A fifth structured Procedure gives an exact, brief English/Arabic acknowledgement only when the guest asks for brevity because details are already visible. It has no business tools. Financial correctness remains enforced by backend validation and confirmation records. Model, voices and conversation/platform settings are preserved. Procedure/tool/KB references are bound to a separately published candidate version before promotion.
 
 Candidate branch: `agtbrch_4001m26hjbkyerhr4mqhdxbg0bye`. The first premium candidate was `agtvrsn_5101m26p97e6fs0tx9mw9rdh6j3n`, promoted to main as `agtvrsn_3001m278vm1peqzvsc8zar6twafq`. There are 46 server tools and 12 client tools, with 12 KB documents. Forty-two bilingual and negative conversation scenarios are now defined, including explicit QR-render and offer/handover failure cases. Publication is not evidence that those scenarios or real audio have passed.
 

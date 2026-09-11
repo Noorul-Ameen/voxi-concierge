@@ -1,0 +1,33 @@
+{
+  "steps": [
+    {
+      "type": "branch",
+      "branches": [
+        {
+          "condition": {
+            "type": "llm",
+            "condition": "The latest user turn is in Arabic AND only asks for shorter replies because the details are already visible. It contains no substantive question, requested action, approval, pause or wait request. A question such as 'what is IMAX, briefly?' does NOT qualify. Judge the latest user's actual words, not their name, profile or earlier turns."
+          },
+          "steps": [
+            {
+              "type": "say",
+              "message": "تمام، باختصر."
+            }
+          ]
+        },
+        {
+          "condition": {
+            "type": "llm",
+            "condition": "The latest user turn is in English AND only asks for shorter replies because the details are already visible. It contains no substantive question, requested action, approval, pause or wait request. A question such as 'what is IMAX, briefly?' does NOT qualify. Judge the latest user's actual words, not their name, profile or earlier turns."
+          },
+          "steps": [
+            {
+              "type": "say",
+              "message": "Got it, I’ll keep it brief."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
