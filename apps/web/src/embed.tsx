@@ -82,8 +82,14 @@ function mount() {
     if (identifier) identifier.placeholder = ar ? "البريد الإلكتروني" : "Email";
     if (password) password.placeholder = ar ? "كلمة المرور" : "Password";
     if (hasNativeLogin) {
+      const heading = document.querySelector<HTMLElement>("#loginModal h3");
+      const submit = nativeForm?.querySelector<HTMLButtonElement>("#siteLoginSubmit");
+      const close = document.querySelector<HTMLButtonElement>("#loginClose");
       const intro = document.querySelector<HTMLElement>("#loginModal p.login-intro");
       const hint = document.querySelector<HTMLElement>("#loginModal p.login-hint");
+      if (heading) heading.textContent = ar ? "تسجيل الدخول" : "Sign in";
+      if (submit) submit.textContent = ar ? "تسجيل الدخول" : "SIGN IN";
+      if (close) close.setAttribute("aria-label", ar ? "إغلاق تسجيل الدخول" : "Close sign in");
       if (intro) intro.textContent = ar ? "أفلامك المفضلة ومقاعدك المعتادة. سجّل دخولك لليلة سينمائية على ذوقك." : "Your favourite films. Your usual seats. Sign in for a movie night that's more you.";
       if (hint) hint.textContent = ar ? "استخدم البريد الإلكتروني وكلمة المرور لحسابك التجريبي." : "Use your demo account email and password.";
     }
