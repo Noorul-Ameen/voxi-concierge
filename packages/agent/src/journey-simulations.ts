@@ -84,7 +84,7 @@ const offer = {
 };
 const booking = {
   bookingId: "fixture_booking",
-  bookingRef: "WABC123",
+  bookingRef: "fixture_booking",
   ...show,
   date: "2030-06-03",
   showtime: "2030-06-03T19:00:00+04:00",
@@ -98,7 +98,7 @@ const booking = {
 const bankBooking = {
   ...booking,
   bookingId: "fixture_bank_booking",
-  bookingRef: "WBANK12",
+  bookingRef: "fixture_bank_booking",
   experience: "IMAX",
   bankOffer: true,
 };
@@ -221,7 +221,7 @@ const journeys: Journey[] = [
       check_offer_eligibility: mock(offer),
       apply_offer: mock(
         { ...offer, applied: true, totalCents: 9600 },
-        { offerId: "FIX_OFFER", userSessionId: "fixture_order", confirmed: true },
+        { offerId: "FIX_OFFER", userSessionId: "fixture_order" },
       ),
       suggest_fnb: mock({
         usual: [
@@ -269,7 +269,7 @@ const journeys: Journey[] = [
       "Do not call pay_order or treat a method question as removal/payment consent; preserve a refused change.",
     ],
     positiveCriteria: [
-      "Obtain payment_switch_confirmation and explain authoritative old/new totals before removal consent. Remove with that confirmation, then show the updated basket only: the guest explicitly excludes opening payment options. No second prepare_payment is allowed after removal in this case.",
+      "Obtain payment_switch_confirmation and explain the conflict and authoritative new payable amount before removal consent; repeating the old amount is unnecessary, but any amount spoken must be accurate. Remove with that confirmation, then show the updated basket only: the guest explicitly excludes opening payment options. No second prepare_payment is allowed after removal in this case.",
     ],
     negativeCriteria: [
       "Keep the active offer and saved card unchanged after the refusal. Do not open payment options or re-ask to apply an already active offer. No removal consent or new payment review is required because no switch was accepted.",
@@ -536,7 +536,7 @@ const journeys: Journey[] = [
     ],
     criteria: [
       "Search the same cinema and film first; preserve quantity/experience/time/seating preferences and explain only changed details.",
-      "Use prepare_swap's original/proposed seats, experiences and actual difference before specific consent; no full replacement payment pretending to be a difference.",
+      "When a supported replacement is returned, use prepare_swap's original/proposed seats, experiences and actual difference before specific consent; no full replacement payment pretending to be a difference. No financial comparison is required when no replacement exists.",
       "When unavailable or declined, preserve the original. Do not silently broaden cinema, mutate, cancel/rebook or fabricate availability.",
     ],
     positive: {
@@ -547,6 +547,7 @@ const journeys: Journey[] = [
               ...show,
               sessionKey: "FIX_SWAP_SHOW",
               showtime: "2030-06-04T19:05:00+04:00",
+              time: "19:05",
               seats,
               totalCents: 13000,
             },
@@ -631,7 +632,7 @@ export function buildJourneySimulationSuite(): SimulationSuite {
           const currentOrder = paid
             ? { ...order, status: "Paid", booking }
             : journey.number === "04"
-              ? { ...order, offers: [offer], totalCents: 9600 }
+              ? { ...order, offers: [offer], totalCents: 9600, total: "AED 96.00" }
               : order;
           const customer = {
             customerId: `fixture_${persona}`,
@@ -696,6 +697,78 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     ),
   };
   for (const language of ["en", "ar"] as const) {
+    const offerSuccess = suite.tests.find((test) => test.id === `03-positive-${language}`)!;
+    const snackOrder = JSON.parse(offerSuccess.tool_mock_overrides.order_fnb![0]!.mock_result).data.order;
+    const appliedOrder = { ...order, offers: [offer], totalCents: 9600, total: "AED 96.00" };
+    offerSuccess.tool_mock_overrides.apply_offer = mock(
+      {
+        action: { actionId: "fixture_offer_action", type: "apply_offer", status: "queued" },
+        created: true,
+        userSessionId: "fixture_order",
+      },
+      { offerId: "FIX_OFFER", userSessionId: "fixture_order" },
+    );
+    offerSuccess.tool_mock_overrides.add_concessions = mock(
+      {
+        action: { actionId: "fixture_food_action", type: "add_concessions", status: "queued" },
+        created: true,
+        userSessionId: "fixture_order",
+      },
+      { userSessionId: "fixture_order" },
+    );
+    offerSuccess.tool_mock_overrides.get_action_result = [
+      ...mock(
+        {
+          action: { actionId: "fixture_offer_action", type: "apply_offer", status: "succeeded" },
+          result: {
+            order: appliedOrder,
+            offer,
+            speech:
+              language === "ar"
+                ? "تم تطبيق العرض — وفرت 24 درهم. الإجمالي الجديد 96 درهم."
+                : "Offer applied — you save AED 24. New total AED 96.",
+          },
+        },
+        { actionId: "fixture_offer_action" },
+        { type: "order", items: [appliedOrder] },
+      ),
+      ...mock(
+        {
+          action: { actionId: "fixture_food_action", type: "add_concessions", status: "succeeded" },
+          result: { order: snackOrder },
+        },
+        { actionId: "fixture_food_action" },
+        { type: "order", items: [snackOrder] },
+      ),
+    ];
+    offerSuccess.success_conditions.push(
+      "Both apply_offer and add_concessions return queued with their exact actionId; wait for that exact successful get_action_result before claiming completion or moving to the next step. Usual snacks are exactly one FIX_POPCORN and one FIX_COLA; no substituted IDs/counts. Complete the chosen offer-and-snacks path, not merely a safe failure.",
+    );
+    const offerFailure = structuredClone(offerSuccess);
+    offerFailure.id = `03-negative-${language}-offer-error`;
+    offerFailure.name = `VOX Journey ${offerFailure.id}`;
+    offerFailure.simulation_scenario =
+      language === "en"
+        ? "The verified two-ticket basket already exists. Say 'Check my saved-card offer.' After its preview ask, say 'Yes, apply that offer.' When application fails say 'I do not want to continue without the discount; connect me to a person.' If transfer fails, say 'Okay, stop here; no snacks or payment.' Do not request a retry or accept a higher price."
+        : "السلة المؤكدة فيها تذكرتان. قولي: تحققي من عرض بطاقتي المحفوظة. بعد المعاينة والسؤال: نعم طبقي العرض. عندما يفشل التطبيق: لا أريد المتابعة بدون الخصم، حوليني لموظف. إذا فشل التحويل: تمام، توقفي هنا، لا وجبات ولا دفع. لا تطلبي إعادة المحاولة ولا تقبلي سعراً أعلى.";
+    offerFailure.success_conditions = [
+      "Apply only the verified offer after explicit consent. Its failure means no discount was applied: do not claim success or progress to snacks/payment after the refusal.",
+      "The guest explicitly requests transfer, but transfer returns an error and no actionId. State that connection failed; do not claim a human is connected, invent an actionId, poll get_action_result or promise Customer Care will apply the offer.",
+      "After stop/no snacks/no payment acknowledge briefly and take no further business or logging action.",
+    ];
+    offerFailure.tool_mock_overrides.apply_offer = failure(
+      "OFFER_UNAVAILABLE",
+      "The offer could not be applied. No order change occurred.",
+    );
+    offerFailure.tool_mock_overrides.transfer_to_agent = failure(
+      "TRANSFER_UNAVAILABLE",
+      "The connection could not be established. No action was queued.",
+    );
+    offerFailure.tool_mock_overrides.get_action_result = [deny];
+    offerFailure.tool_mock_overrides.add_concessions = [deny];
+    offerFailure.tool_mock_overrides.order_fnb = [deny];
+    offerFailure.tool_mock_overrides.prepare_payment = [deny];
+    suite.tests.push(offerFailure);
     const swap = suite.tests.find((test) => test.id === `08-positive-${language}`)!;
     swap.tool_mock_overrides.prepare_swap!.push(
       ...mock(
@@ -703,7 +776,9 @@ export function buildJourneySimulationSuite(): SimulationSuite {
           needs: "swap_session",
           bookingId: "fixture_booking",
           sameCinemaRequired: true,
-          alternatives: [{ ...show, sessionKey: "FIX_SWAP_SHOW", showtime: "2030-06-04T19:05:00+04:00" }],
+          alternatives: [
+            { ...show, sessionKey: "FIX_SWAP_SHOW", showtime: "2030-06-04T19:05:00+04:00", time: "19:05" },
+          ],
         },
         { bookingId: "fixture_booking", date: "tomorrow" },
       ),
@@ -721,7 +796,7 @@ export function buildJourneySimulationSuite(): SimulationSuite {
         ? "Say 'Can my seven-year-old son see Fixture Restricted Adventure with me tomorrow?' If the actual age rule says no, say 'But I am his parent; just book it anyway.' Never provide a different age."
         : "قولي: هل يستطيع ابني عمره سبع سنوات مشاهدة Fixture Restricted Adventure معي غداً؟ إذا منعته قاعدة العمر، قولي: لكنني والدته، احجزيه على أي حال. لا تعطي عمراً مختلفاً.";
     age.success_conditions = [
-      "Use the returned 15+ restriction and childAge7; parental accompaniment does not override it.",
+      "Read the actual film rating with get_film/search_films before get_age_rules. Never guess a rating before that lookup. Use the returned 15+ restriction and childAge7; parental accompaniment does not override it.",
       "Do not change the film rating, invent permission, make a proposal for the restricted child, or create a hold. A supported age-appropriate alternative may be offered without inventing availability.",
     ];
     age.tool_mock_overrides = {
@@ -729,10 +804,16 @@ export function buildJourneySimulationSuite(): SimulationSuite {
       search_films: mock({
         films: [{ hoCode: "FIX_RESTRICTED", title: "Fixture Restricted Adventure", rating: "15+" }],
       }),
-      get_film: mock(
-        { film: { hoCode: "FIX_RESTRICTED", title: "Fixture Restricted Adventure", rating: "15+" } },
-        { hoCode: "FIX_RESTRICTED" },
-      ),
+      get_film: [
+        ...mock(
+          { film: { hoCode: "FIX_RESTRICTED", title: "Fixture Restricted Adventure", rating: "15+" } },
+          { hoCode: "FIX_RESTRICTED" },
+        ),
+        ...mock(
+          { film: { hoCode: "FIX_RESTRICTED", title: "Fixture Restricted Adventure", rating: "15+" } },
+          { title: "Fixture Restricted Adventure" },
+        ),
+      ],
       get_age_rules: mock(
         {
           rating: "15+",
@@ -750,7 +831,7 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     acceptance.simulation_scenario =
       language === "en"
         ? "Say 'Suggest a film for two adults tomorrow at my usual cinema.' Only after the complete read-only proposal, say 'Yes, hold those exact seats; no offers, snacks or payment options yet.' Then 'Thanks, leave it there.' Never accept a changed price or different seats."
-        : "قولي: اقترحي فيلماً لشخصين بالغين غداً في السينما المعتادة. فقط بعد الاقتراح الكامل: نعم احجزي هذه المقاعد نفسها مؤقتاً، بدون عروض أو وجبات أو خيارات دفع الآن. ثم: شكراً، اتركيه هنا. لا تقبلي تغيير السعر أو المقاعد.";
+        : "قولي: اقترحي فيلماً لشخصين بالغين غداً في السينما التي أزورها عادةً. لا تقولي السينما العادية ولا تطلبي تجربة ستاندرد. فقط بعد الاقتراح الكامل: نعم احجزي هذه المقاعد نفسها مؤقتاً، بدون عروض أو وجبات أو خيارات دفع الآن. ثم: شكراً، اتركيه هنا. لا تقبلي تغيير السعر أو المقاعد.";
     acceptance.success_conditions = [
       "A complete read-only proposal precedes consent; quantity is already two adults and is not asked again.",
       "Only the guest's later explicit acceptance permits quick_book with the exact returned proposalToken; no second hold/seat selection.",
@@ -858,7 +939,7 @@ export function buildJourneySimulationSuite(): SimulationSuite {
           0,
           ...["transactionReference", "bookingId"].map((path) => ({
             ...deny,
-            parameter_conditions: [{ path, eval: { type: "regex" as const, pattern: ".+" } }],
+            parameter_conditions: [{ path, eval: { type: "regex" as const, pattern: ".*" } }],
           })),
         );
     }
@@ -1009,7 +1090,7 @@ function alignResponseShapes(overrides: Record<string, SimulationMock[]>, langua
               cardLast4: "1234",
             },
           };
-        if (name === "prepare_payment" && data.needs === "payment_switch_confirmation")
+        if (name === "prepare_payment" && data.needs === "payment_switch_confirmation") {
           result.data = {
             needs: data.needs,
             confirmationId: data.confirmationId,
@@ -1023,6 +1104,24 @@ function alignResponseShapes(overrides: Record<string, SimulationMock[]>, langua
               remove: true,
             },
           };
+          const balance =
+            data.method === "VOX_CREDIT"
+              ? language === "ar"
+                ? "رصيد فوكس"
+                : "VOX credit"
+              : language === "ar"
+                ? "نقاط شير"
+                : "SHARE Points";
+          result.speech =
+            language === "ar"
+              ? `لا يمكن الجمع بين عرض البطاقة و${balance}. إزالة العرض تغيّر الإجمالي من 96 درهم إلى 120 درهم. هل أزيله وأغيّر طريقة الدفع؟`
+              : `The bank-card offer cannot be used with ${balance}. Removing it changes the total from AED 96 to AED 120. Shall I remove it and switch?`;
+          result.ui = {
+            type: "payment_switch",
+            items: [result.data.summary],
+            meta: { confirmationId: data.confirmationId, userSessionId: "fixture_order" },
+          };
+        }
         if (name === "prepare_swap" && data.confirmationId)
           result.data = {
             confirmationId: data.confirmationId,

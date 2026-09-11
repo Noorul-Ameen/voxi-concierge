@@ -52,7 +52,9 @@ export class SimulatedHandover implements HandoverPort {
   async sendCustomerMessage(ext: string, text: string, meta: { transferId: string; conversationId: string }) {
     const agentName = this.agents[0]!;
     const reply = /refund|استرداد/i.test(text)
-      ? "I can see the refund request. I'm processing it now — you'll receive an email confirmation within a few minutes."
+      ? /[\u0600-\u06ff]/.test(text)
+        ? "يمكنني مراجعة طلب الاسترداد معك."
+        : "I can review the refund request with you."
       : /thank|شكر/i.test(text)
         ? "You're welcome! Is there anything else I can help with?"
         : "Thanks — let me check that for you. One moment please.";

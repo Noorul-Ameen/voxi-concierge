@@ -1,6 +1,6 @@
 # 12 — Current build: full details
 
-> Historical snapshot from 9 September 2026. “Current” and “right now” below refer to that snapshot, not the later enhancement candidate or its deployment. See [the current enhancement guide](13-concierge-enhancements.md) and its acceptance record. The original snapshot is retained for traceability.
+> Historical snapshot from 9 September 2026. “Current” and “right now” below refer to that snapshot, not the later enhancement releases. See [the premium journey guide](13-premium-journeys.md) and [the earlier enhancement guide](13-concierge-enhancements.md) for the subsequent changes and acceptance scope. The original snapshot is retained for traceability.
 
 Snapshot taken 9 Sep 2026, 16:55 Dubai. Everything below is what is deployed and running right now.
 

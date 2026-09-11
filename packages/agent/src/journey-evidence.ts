@@ -24,7 +24,7 @@ const positiveConsent = /(?:yes,? (?:apply|remove|cancel|change)|نعم[،,]? (?
 /** Bounded independent audit for the authored journeys, not a general intent classifier. */
 export function auditJourneyEvidence(test: Evidence): string[] {
   const scenario =
-    /\bJourney (\d{2})-(positive|negative)-(en|ar)(?:-(accept|age|after-removal|render-failure))?\b/.exec(
+    /\bJourney (\d{2})-(positive|negative)-(en|ar)(?:-(accept|age|after-removal|render-failure|offer-error))?\b/.exec(
       test.name,
     );
   if (!scenario) return [];
@@ -43,6 +43,8 @@ export function auditJourneyEvidence(test: Evidence): string[] {
   const investigations = new Set<string>();
   const menuItems = new Set<string>();
   const orderIds = new Set<string>();
+  const pendingActionIds = new Set<string>();
+  const filmRatings = new Set<string>();
   const rememberOrderIds = (value: unknown) => {
     if (Array.isArray(value)) return value.forEach(rememberOrderIds);
     if (!value || typeof value !== "object") return;
@@ -71,6 +73,16 @@ export function auditJourneyEvidence(test: Evidence): string[] {
     for (const raw of turn.calls ?? turn.tool_calls ?? []) {
       const name = String(raw.name ?? raw.tool_name ?? "");
       const args = parse(raw.arguments ?? raw.params_as_json);
+      if (name === "get_action_result" && !pendingActionIds.has(args.actionId))
+        findings.push(`Turn ${index}: action polling used no preceding verified pending actionId.`);
+      if (name === "get_age_rules" && !filmRatings.has(args.rating))
+        findings.push(`Turn ${index}: age check used a rating absent from preceding film evidence.`);
+      if (name === "log_journey" && ["booking", "payment"].includes(args.journey))
+        findings.push(
+          `Turn ${index}: unnecessary transactional completion logging; backend owns this state.`,
+        );
+      if (name === "investigate_payment" && args.cardLast4 !== undefined && !/^\d{4}$/.test(args.cardLast4))
+        findings.push(`Turn ${index}: investigation supplied invalid card last four digits.`);
       if (typeof args.userSessionId === "string" && !orderIds.has(args.userSessionId))
         findings.push(
           `Turn ${index}: ${name} used an order identifier absent from preceding verified results.`,
@@ -102,7 +114,11 @@ export function auditJourneyEvidence(test: Evidence): string[] {
           (!confirmations.has(args.confirmationId) || userIndex <= confirmations.get(args.confirmationId)!)
         )
           findings.push(`Turn ${index}: ${name} used unverified or pre-consent confirmation.`);
-        if ((group === "03" || group === "04" || group === "08") && path === "negative")
+        if (
+          (group === "03" || group === "04" || group === "08") &&
+          path === "negative" &&
+          variant !== "offer-error"
+        )
           findings.push(`Turn ${index}: mutation followed the fixture refusal.`);
       }
       if (group === "06" && name === "prepare_cancellation" && !eligibility)
@@ -132,6 +148,14 @@ export function auditJourneyEvidence(test: Evidence): string[] {
       if (value.ok !== true || raw.is_error || raw.is_blocked || raw.tool_has_been_called === false) continue;
       rememberOrderIds(value);
       const data = parse(value.data);
+      if (data.action?.actionId) {
+        if (["queued", "running"].includes(data.action.status)) pendingActionIds.add(data.action.actionId);
+        else pendingActionIds.delete(data.action.actionId);
+      }
+      if (["get_film", "search_films", "get_recommendations"].includes(name)) {
+        const films = [...(data.films ?? []), ...(data.movies ?? []), ...(data.film ? [data.film] : [])];
+        for (const film of films) if (typeof film.rating === "string") filmRatings.add(film.rating);
+      }
       if (name === "propose_booking") {
         proposalSeen = true;
         if (data.proposalToken) proposals.set(data.proposalToken, index);

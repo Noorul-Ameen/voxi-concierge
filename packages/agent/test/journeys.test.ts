@@ -8,6 +8,82 @@ import { buildJourneySimulationSuite } from "../src/journey-simulations.js";
 import { materializeSimulations } from "../src/simulations.js";
 
 describe("eight approved journeys", () => {
+  it("matches asynchronous offer edits, valid title lookups and consistent switch amounts", () => {
+    const tests = buildJourneySimulationSuite().tests;
+    for (const language of ["en", "ar"]) {
+      const offer = tests.find((test) => test.id === `03-positive-${language}`)!;
+      const apply = offer.tool_mock_overrides.apply_offer[0];
+      expect(apply.parameter_conditions.some((condition) => condition.path === "confirmed")).toBe(false);
+      const queued = JSON.parse(apply.mock_result).data.action;
+      expect(queued.status).toBe("queued");
+      expect(offer.tool_mock_overrides.get_action_result[0].parameter_conditions).toContainEqual({
+        path: "actionId",
+        eval: { type: "exact", expected_value: queued.actionId },
+      });
+      expect(
+        JSON.parse(offer.tool_mock_overrides.get_action_result[0].mock_result).data.result.order.totalCents,
+      ).toBe(9600);
+      const age = tests.find((test) => test.id === `02-negative-${language}-age`)!;
+      expect(
+        age.tool_mock_overrides.get_film.some((mock) =>
+          mock.parameter_conditions.some((condition) => condition.path === "title"),
+        ),
+      ).toBe(true);
+      const switching = tests.find((test) => test.id === `04-positive-${language}`)!;
+      const current = JSON.parse(switching.tool_mock_overrides.get_session_context[0].mock_result).data
+        .activeOrder.summary;
+      expect(current).toMatchObject({ totalCents: 9600, total: "AED 96.00" });
+      const preview = JSON.parse(switching.tool_mock_overrides.prepare_payment[0].mock_result);
+      expect(preview.speech).toContain("96");
+      expect(preview.speech).toContain("120");
+      expect(preview.ui.type).toBe("payment_switch");
+      const failed = tests.find((test) => test.id === `03-negative-${language}-offer-error`)!;
+      expect(failed.tool_mock_overrides.apply_offer[0].is_error).toBe(true);
+      expect(failed.tool_mock_overrides.transfer_to_agent[0].is_error).toBe(true);
+      expect(JSON.parse(failed.tool_mock_overrides.transfer_to_agent[0].mock_result).data).toBeUndefined();
+    }
+  });
+
+  it("detects guessed ratings, fabricated action polling and unnecessary unpaid completion logging", () => {
+    const bad = auditJourneyEvidence({
+      name: "VOX Journey 03-negative-ar-offer-error fixture-v5",
+      transcript: [
+        { calls: [{ name: "get_age_rules", arguments: { rating: "18+", childAge: 7 } }] },
+        {
+          results: [
+            { name: "transfer_to_agent", value: { ok: false, error: { code: "TRANSFER_UNAVAILABLE" } } },
+          ],
+        },
+        { calls: [{ name: "get_action_result", arguments: { actionId: "transfer_action" } }] },
+        { calls: [{ name: "log_journey", arguments: { journey: "booking", status: "completed" } }] },
+      ],
+    });
+    expect(bad).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("rating absent"),
+        expect.stringContaining("pending actionId"),
+        expect.stringContaining("backend owns"),
+      ]),
+    );
+    const good = auditJourneyEvidence({
+      name: "VOX Journey 03-positive-en fixture-v5",
+      transcript: [
+        { results: [{ name: "get_film", value: { ok: true, data: { film: { rating: "PG" } } } }] },
+        { calls: [{ name: "get_age_rules", arguments: { rating: "PG", childAge: 7 } }] },
+        {
+          results: [
+            {
+              name: "apply_offer",
+              value: { ok: true, data: { action: { actionId: "actual_action", status: "queued" } } },
+            },
+          ],
+        },
+        { calls: [{ name: "get_action_result", arguments: { actionId: "actual_action" } }] },
+      ],
+    });
+    expect(good).toEqual([]);
+  });
+
   it("matches swap provider seats and returns a fresh booking reference in the real completion envelope", () => {
     for (const language of ["en", "ar"]) {
       const test = buildJourneySimulationSuite().tests.find((item) => item.id === `08-positive-${language}`)!;
@@ -76,7 +152,7 @@ describe("eight approved journeys", () => {
       "future_financial_action",
     ].map((name) => ({ name, id: `fixture_${name}` }));
     const tests = materializeSimulations(suite, tools);
-    expect(tests).toHaveLength(40);
+    expect(tests).toHaveLength(42);
     expect(new Set(tests.map((t) => t.scenario_group)).size).toBe(8);
     for (const test of tests) {
       expect(test.body.tool_mock_config).toMatchObject({
@@ -99,7 +175,7 @@ describe("eight approved journeys", () => {
     expect(offers.tool_mock_overrides.apply_offer[0].parameter_conditions).toEqual(
       expect.arrayContaining([
         { path: "userSessionId", eval: { type: "exact", expected_value: "fixture_order" } },
-        { path: "confirmed", eval: { type: "exact", expected_value: "true" } },
+        { path: "offerId", eval: { type: "exact", expected_value: "FIX_OFFER" } },
       ]),
     );
     const qr = tests.find((test) => test.id === "05-positive-en")!;
@@ -116,7 +192,11 @@ describe("eight approved journeys", () => {
     const bank = tests.find((test) => test.id === "06-negative-en")!;
     expect(
       JSON.parse(bank.tool_mock_overrides.check_cancellation_eligibility[0].mock_result).data.booking,
-    ).toMatchObject({ bookingId: "fixture_bank_booking", bookingRef: "WBANK12", experience: "IMAX" });
+    ).toMatchObject({
+      bookingId: "fixture_bank_booking",
+      bookingRef: "fixture_bank_booking",
+      experience: "IMAX",
+    });
     expect(bank.success_conditions.join(" ")).not.toContain("Original-card demo ETA");
   });
 
