@@ -1,0 +1,27 @@
+{
+  "steps": [
+    {
+      "type": "branch",
+      "branches": [
+        {
+          "condition": {
+            "type": "llm",
+            "condition": "The latest full user sentence is in Arabic. Judge the words of that latest sentence, not the user's name, profile or an earlier language."
+          },
+          "steps": [
+            {
+              "type": "say",
+              "message": "تمام، باختصر."
+            }
+          ]
+        }
+      ],
+      "fallback": [
+        {
+          "type": "say",
+          "message": "Got it, I’ll keep it brief."
+        }
+      ]
+    }
+  ]
+}
