@@ -255,6 +255,30 @@ describe("eight approved journeys", () => {
     ).toBe(false);
   });
 
+  it("rejects an invented offer identifier before a permissive response can disguise it", () => {
+    const result = auditJourneyEvidence({
+      name: "VOX Journey 03-negative-en fixture-v7",
+      transcript: [
+        { calls: [{ name: "check_offer_eligibility", arguments: { offerId: "bank_offer" } }] },
+        {
+          results: [
+            {
+              name: "check_offer_eligibility",
+              value: { ok: true, data: { offerId: "FIX_OFFER", eligible: true } },
+            },
+          ],
+        },
+      ],
+    });
+    expect(result).toContainEqual(expect.stringContaining("offer identifier absent"));
+    const mock = buildJourneySimulationSuite().tests.find((test) => test.id === "03-negative-en")!
+      .tool_mock_overrides.check_offer_eligibility[0];
+    expect(mock.parameter_conditions).toContainEqual({
+      path: "offerId",
+      eval: { type: "exact", expected_value: "FIX_OFFER" },
+    });
+  });
+
   it("rejects a refusal being treated as offer-removal consent and a handover before investigation", () => {
     const offer = auditJourneyEvidence({
       name: "VOX Journey 04-negative-en",

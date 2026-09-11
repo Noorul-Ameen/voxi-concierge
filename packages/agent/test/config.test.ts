@@ -10,6 +10,18 @@ import {
 
 const opts = { conciergeUrl: "https://fixture.invalid", toolSecretHeader: { secret_id: "fixture-secret" } };
 describe("agent configuration contracts", () => {
+  it("exposes only verified proposal acceptance for agent quick booking while preserving backend filters", () => {
+    const tool = buildWebhookTools(opts).find((tool) => tool.name === "quick_book")!;
+    const schema = tool.api_schema.request_body_schema;
+    expect(schema.required).toContain("proposalToken");
+    expect(schema.properties).not.toHaveProperty("tickets");
+    expect(schema.properties).not.toHaveProperty("sessionKey");
+    expect(schema.properties).toHaveProperty("idempotencyKey");
+    expect(TOOL_REGISTRY.quick_book.input.safeParse({ tickets: 2 }).success).toBe(true);
+    expect(TOOL_REGISTRY.propose_booking.input.safeParse({ tickets: 2, date: "tomorrow" }).success).toBe(
+      true,
+    );
+  });
   it("waits for the live seat-map result instead of assuming the screen opened", () => {
     const map = buildClientTools().find((tool) => tool.name === "render_seat_map")!;
     expect(map.expects_response).toBe(true);
@@ -32,7 +44,8 @@ describe("agent configuration contracts", () => {
     expect(props("get_recommendations").filmLanguage).not.toHaveProperty("enum");
     expect(props("get_recommendations")).not.toHaveProperty("language");
     expect(props("search_films").language).not.toHaveProperty("enum");
-    expect(props("quick_book").language).not.toHaveProperty("enum");
+    expect(props("propose_booking").language).not.toHaveProperty("enum");
+    expect(props("quick_book")).not.toHaveProperty("language");
     expect(props("get_session_context").language).toMatchObject({ enum: ["en", "ar"] });
     expect(props("get_recommendations")).toHaveProperty("withChildren");
     expect(props("get_recommendations")).toHaveProperty("timeFrom");

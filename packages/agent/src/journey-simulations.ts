@@ -211,14 +211,14 @@ const journeys: Journey[] = [
     criteria: [
       "Check saved-card eligibility without guessing or asking for a BIN; use tool-returned savings and total.",
       "Wait for an explicit separate apply consent before apply_offer. Only after its success suggest usual snacks once; add them only when chosen.",
-      "Poll get_action_result only if an edit explicitly returned queued/running with an actionId; inline completed edits need no poll. A requested final unpaid review may call prepare_payment; it does not execute payment. Never call pay_order or fabricate identifiers, payment tokens or customer contacts; no repeat snack pitch.",
+      "Poll get_action_result only if an edit explicitly returned queued/running with an actionId; inline completed edits need no poll. This guest requests only the total: answer from the current order without prepare_payment or opening options. Never call pay_order or fabricate identifiers, payment tokens or customer contacts; no repeat snack pitch.",
     ],
     negativeCriteria: [
       "After the guest declines applying the offer, snacks and payment, stop with a brief acknowledgement. Do not propose another booking, restart film discovery or append an offer to book.",
     ],
     positive: {
       list_offers: mock({ offers: [offer] }),
-      check_offer_eligibility: mock(offer),
+      check_offer_eligibility: mock(offer, { offerId: "FIX_OFFER" }),
       apply_offer: mock(
         { ...offer, applied: true, totalCents: 9600 },
         { offerId: "FIX_OFFER", userSessionId: "fixture_order" },
@@ -251,7 +251,10 @@ const journeys: Journey[] = [
         { type: "payment", items: [], meta: { totalCents: 12600 } },
       ),
     },
-    negative: { list_offers: mock({ offers: [offer] }), check_offer_eligibility: mock(offer) },
+    negative: {
+      list_offers: mock({ offers: [offer] }),
+      check_offer_eligibility: mock(offer, { offerId: "FIX_OFFER" }),
+    },
   },
   {
     number: "04",
@@ -750,6 +753,7 @@ export function buildJourneySimulationSuite(): SimulationSuite {
       { order: snackOrder },
       { userSessionId: "fixture_order" },
     );
+    offerSuccess.tool_mock_overrides.prepare_payment = [deny];
     offerSuccess.success_conditions.push(
       "Both apply_offer and add_concessions return queued with their exact actionId; wait for that exact successful get_action_result before claiming completion or moving to the next step. Usual snacks are exactly one FIX_POPCORN and one FIX_COLA; no substituted IDs/counts. Complete the chosen offer-and-snacks path, not merely a safe failure.",
     );
@@ -758,12 +762,12 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     offerFailure.name = `VOX Journey ${offerFailure.id}`;
     offerFailure.simulation_scenario =
       language === "en"
-        ? "The verified two-ticket basket already exists. Say 'Check my saved-card offer.' After its preview ask, say 'Yes, apply that offer.' When application fails say 'I do not want to continue without the discount; connect me to a person.' If transfer fails, say 'Okay, stop here; no snacks or payment.' Do not request a retry or accept a higher price."
-        : "السلة المؤكدة فيها تذكرتان. قولي: تحققي من عرض بطاقتي المحفوظة. بعد المعاينة والسؤال: نعم طبقي العرض. عندما يفشل التطبيق: لا أريد المتابعة بدون الخصم، حوليني لموظف. إذا فشل التحويل: تمام، توقفي هنا، لا وجبات ولا دفع. لا تطلبي إعادة المحاولة ولا تقبلي سعراً أعلى.";
+        ? "The verified two-ticket basket already exists. Say 'Check my saved-card offer.' After its preview ask, say 'Yes, apply that offer.' When application fails say 'I do not want to continue without the discount; connect me to a person.' If transfer fails, say 'Cancel this unpaid order; no snacks or payment.' The cancellation also fails. Then say 'Okay, stop here.' Do not request a retry or accept a higher price."
+        : "السلة المؤكدة فيها تذكرتان. قولي: تحققي من عرض بطاقتي المحفوظة. بعد المعاينة والسؤال: نعم طبقي العرض. عندما يفشل التطبيق: لا أريد المتابعة بدون الخصم، حوليني لموظف. إذا فشل التحويل: ألغي هذا الطلب غير المدفوع، بدون وجبات أو دفع. الإلغاء أيضاً يفشل. ثم قولي: تمام، توقفي هنا. لا تطلبي إعادة المحاولة ولا تقبلي سعراً أعلى.";
     offerFailure.success_conditions = [
       "Apply only the verified offer after explicit consent. Its failure means no discount was applied: do not claim success or progress to snacks/payment after the refusal.",
       "The guest explicitly requests transfer, but transfer returns an error and no actionId. State that connection failed; do not claim a human is connected, invent an actionId, poll get_action_result or promise Customer Care will apply the offer.",
-      "After stop/no snacks/no payment acknowledge briefly and take no further business or logging action.",
+      "Only the later explicit cancellation request permits cancel_order. That tool returns CANCEL_UNAVAILABLE: state that cancellation failed, never claim the order was cancelled or seats released. After stop take no further business or logging action. No snacks or payment are authorized.",
     ];
     offerFailure.tool_mock_overrides.apply_offer = failure(
       "OFFER_UNAVAILABLE",
@@ -777,6 +781,10 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     offerFailure.tool_mock_overrides.add_concessions = [deny];
     offerFailure.tool_mock_overrides.order_fnb = [deny];
     offerFailure.tool_mock_overrides.prepare_payment = [deny];
+    offerFailure.tool_mock_overrides.cancel_order = failure(
+      "CANCEL_UNAVAILABLE",
+      "The unpaid order could not be cancelled. The basket and held seats were not changed.",
+    );
     offerFailure.tool_mock_overrides.get_order = mock({ order }, { userSessionId: "fixture_order" });
     suite.tests.push(offerFailure);
     const swap = suite.tests.find((test) => test.id === `08-positive-${language}`)!;

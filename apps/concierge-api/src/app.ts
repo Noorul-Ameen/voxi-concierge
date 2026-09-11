@@ -203,6 +203,19 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
             ].includes(k) && !k.startsWith("system__"),
         ),
       );
+    // Agent tool calls may accept a reviewed proposal, but cannot use legacy direct booking
+    // arguments. Reject before the inline mutation can invalidate checkout or replace a hold.
+    // The widget's explicit booking.select command uses the internal handler separately.
+    if (name === "quick_book" && (typeof input.proposalToken !== "string" || !input.proposalToken.trim()))
+      return c.json({
+        ok: false,
+        error: {
+          code: "CONFIRMATION_REQUIRED",
+          message: "Review a booking proposal and obtain the guest's approval before holding seats.",
+          retryable: false,
+        },
+        data: { needs: "proposal_acceptance" },
+      });
     const conversation = await ensureConversation(app.db, {
       conversationId,
       // Schema defaults apply only when creating a conversation. Omitted tool

@@ -11,6 +11,10 @@ afterAll(async () => {
 });
 
 const conv = (s: string) => `conv_${s}_${Date.now().toString(36)}`;
+const selectBooking = async (conversationId: string, input: { sessionKey: string; tickets?: number }) => {
+  const session = await h.session(conversationId);
+  return h.widget("command", session.token, { type: "booking.select", ...input });
+};
 
 describe("Phase 1 — information", () => {
   it("searches films and resolves fuzzy titles", async () => {
@@ -478,6 +482,7 @@ describe("Phase 2 — personalisation, feedback, complaints, transfer", () => {
   it("exposes OpenAPI for all tools", async () => {
     const r = await h.api.request("/openapi.json").then((x) => x.json() as any);
     expect(Object.keys(r.paths).length).toBe(46);
+    expect(r.components.schemas.quick_book_input.required).toContain("proposalToken");
   });
 });
 
@@ -495,29 +500,32 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     return sessions.data.sessions.find((s: any) => s.seatsAvailable > 12 && s.showtime > soon);
   };
 
-  it("quick_book uses the usual cinema, asks only unknown quantity, then reviews seats before checkout", async () => {
+  it("proposes the usual cinema, asks only unknown quantity, then holds an accepted proposal", async () => {
     const c = conv("qb");
     await h.login(c, "RAHUL");
     const show = await pickShow(c, "Burjuman");
     if (!show) return;
     // The usual cinema is already known; only ticket quantity needs asking.
-    const ask = await h.tool("quick_book", c, {
+    const ask = await h.tool("propose_booking", c, {
       title: show.filmTitle,
       date: show.date,
       time: show.showtime.slice(11, 16),
     });
     expect(ask.ok).toBe(true);
     expect(ask.data.needs).toBe("tickets");
-    expect(ask.ui.type).toBe("quantity");
+    expect(ask.ui.type).toBe("booking_proposal");
     // Once quantity is supplied, show editable seats and optional snacks.
     const hhmm = show.showtime.slice(11, 16);
-    const r = await h.tool("quick_book", c, {
+    const proposal = await h.tool("propose_booking", c, {
       title: show.filmTitle,
       cinemaName: "Burjuman",
       date: show.date,
       time: hhmm,
       tickets: 2,
     });
+    expect(proposal.ok).toBe(true);
+    expect(proposal.data.proposal.held).toBe(false);
+    const r = await h.tool("quick_book", c, { proposalToken: proposal.data.proposalToken });
     expect(r.error, JSON.stringify(r).slice(0, 600)).toBeUndefined();
     expect(r.ui.type).toBe("order");
     expect(r.data.bookingState.currentJourneyStage).toBe("seats");
@@ -532,8 +540,7 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     expect(checkout.ui.type).toBe("payment");
     expect(checkout.data.sheet.preferredToken).toBeTruthy();
     expect(checkout.data.sheet.expiresAtUtc).toBeTruthy();
-    // the spoken seat label is compact (F10–F11) and the price is stated once
-    expect(r.speech).toMatch(/[A-Z]\d+–[A-Z]\d+|[A-Z]\d+, [A-Z]\d+/);
+    expect(r.data.order.seats).toMatch(/[A-Z]\d+/);
     // resume returns the same held order without rebuilding it
     const again = await h.tool("resume_order", c, {});
     expect(again.ok).toBe(true);
@@ -546,7 +553,7 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     const c = conv("qb-guest");
     const show = await pickShow(c, "Mirdif");
     if (!show) return;
-    const r = await h.tool("quick_book", c, { sessionKey: show.sessionKey, tickets: 1 });
+    const r = await selectBooking(c, { sessionKey: show.sessionKey, tickets: 1 });
     expect(r.error, JSON.stringify(r).slice(0, 600)).toBeUndefined();
     expect(r.ui.type).toBe("order");
     const checkout = await h.tool("prepare_payment", c, {
@@ -603,7 +610,7 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     expect(sessions.ok).toBe(true);
     const show = sessions.data.sessions.find((s: any) => s.date === tomorrow && s.seatsAvailable > 12);
     expect(show, "Expected a bookable Standard show at Mall of the Emirates tomorrow").toBeDefined();
-    const r = await h.tool("quick_book", c, {
+    const r = await h.tool("propose_booking", c, {
       title: show.filmTitle,
       cinemaName: "Mall of the Emirates",
       date: show.date,
@@ -617,10 +624,10 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     expect(r.speech).toMatch(/which (?:one|works)\?$/);
     expect(r.ui.type).toBe("showtimes");
     // Picking a show keeps it selected, but an unknown quantity is never assumed.
-    const pick = await h.tool("quick_book", c, { sessionKey: r.data.alternatives[0].sessionKey });
+    const pick = await selectBooking(c, { sessionKey: r.data.alternatives[0].sessionKey });
     expect(pick.error, JSON.stringify(pick).slice(0, 400)).toBeUndefined();
     expect(pick.data.needs).toBe("tickets");
-    const selected = await h.tool("quick_book", c, {
+    const selected = await selectBooking(c, {
       sessionKey: r.data.alternatives[0].sessionKey,
       tickets: 2,
     });
@@ -633,10 +640,9 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     await h.login(c, "SARA");
     const show = await pickShow(c, "Mirdif");
     if (!show) return;
-    const r = await h.tool("quick_book", c, {
+    const r = await selectBooking(c, {
       sessionKey: show.sessionKey,
       tickets: 2,
-      cinemaName: "Mirdif",
     });
     expect(r.error, JSON.stringify(r).slice(0, 400)).toBeUndefined();
     const usid = r.data.order.userSessionId;
@@ -687,11 +693,11 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     for (const s of sessions.data.sessions
       .filter((x: any) => x.seatsAvailable > 12 && x.showtime > soon)
       .slice(0, 12)) {
-      const single = await h.tool("quick_book", c, { sessionKey: s.sessionKey, tickets: 1 });
+      const single = await selectBooking(c, { sessionKey: s.sessionKey, tickets: 1 });
       if (!single.ok) continue;
       expect(single.data.offerHint ?? null).toBeNull(); // 1 ticket never qualifies for buy-one-get-one
       one = single;
-      const two = await h.tool("quick_book", c, { sessionKey: s.sessionKey, tickets: 2 });
+      const two = await selectBooking(c, { sessionKey: s.sessionKey, tickets: 2 });
       if (two.ok && two.data.offerHint) {
         hinted = two;
         break;

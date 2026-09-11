@@ -148,9 +148,15 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
     // Recommendations expose only filmLanguage. Their legacy language alias stays server-side;
     // reply/interface language already belongs to the authenticated conversation.
     const exposedProperties =
-      name === "get_recommendations"
-        ? Object.fromEntries(Object.entries(obj.properties).filter(([field]) => field !== "language"))
-        : obj.properties;
+      name === "quick_book"
+        ? Object.fromEntries(
+            Object.entries(obj.properties).filter(([field]) =>
+              ["proposalToken", "idempotencyKey"].includes(field),
+            ),
+          )
+        : name === "get_recommendations"
+          ? Object.fromEntries(Object.entries(obj.properties).filter(([field]) => field !== "language"))
+          : obj.properties;
     const properties: Record<string, Prop> = {
       ...CONTEXT_PROPS,
       ...exposedProperties,
@@ -168,7 +174,9 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
       type: "webhook" as const,
       name,
       description:
-        def.description +
+        (name === "quick_book"
+          ? "Hold only the exact verified proposal the guest authorized. A proposalToken returned by propose_booking is required; copy it unchanged. Never call this tool with just ticket count, a session ID or remembered choices. Use propose_booking for discovery or edits; resume_order for the active unpaid basket. Missing or fabricated tokens are rejected before any basket or consent change."
+          : def.description) +
         (SILENT_TOOLS.has(name)
           ? " Call silently; never announce fetching context, polling, logging or recording. Acknowledge a completed customer action only once when relevant."
           : "") +
@@ -189,7 +197,7 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
         request_body_schema: {
           type: "object" as const,
           properties,
-          required: ["conversationId", ...(obj.required ?? [])],
+          required: ["conversationId", ...(name === "quick_book" ? ["proposalToken"] : (obj.required ?? []))],
         },
       },
     };
