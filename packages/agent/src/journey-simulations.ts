@@ -536,8 +536,10 @@ const journeys: Journey[] = [
     ],
     criteria: [
       "Search the same cinema and film first; preserve quantity/experience/time/seating preferences and explain only changed details.",
-      "When a supported replacement is returned, use prepare_swap's original/proposed seats, experiences and actual difference before specific consent; no full replacement payment pretending to be a difference. No financial comparison is required when no replacement exists.",
       "When unavailable or declined, preserve the original. Do not silently broaden cinema, mutate, cancel/rebook or fabricate availability.",
+    ],
+    positiveCriteria: [
+      "Use prepare_swap's original/proposed seats, experiences and actual difference before specific consent; no full replacement payment pretending to be a difference.",
     ],
     positive: {
       search_sessions: mock(
@@ -595,6 +597,7 @@ const journeys: Journey[] = [
               date: "2030-06-04",
               showtime: "2030-06-04T19:05:00+04:00",
               seats: "D8, D9",
+              time: "19:05",
               totalCents: 13000,
               total: "AED 130.00",
               qrPayload: "fixture-swapped-qr-only",
@@ -741,6 +744,12 @@ export function buildJourneySimulationSuite(): SimulationSuite {
         { type: "order", items: [snackOrder] },
       ),
     ];
+    // This success segment's optional cart refresh is after the chosen food completed.
+    // Its read must agree with that action, never replay the initial AED120 empty basket.
+    offerSuccess.tool_mock_overrides.get_order = mock(
+      { order: snackOrder },
+      { userSessionId: "fixture_order" },
+    );
     offerSuccess.success_conditions.push(
       "Both apply_offer and add_concessions return queued with their exact actionId; wait for that exact successful get_action_result before claiming completion or moving to the next step. Usual snacks are exactly one FIX_POPCORN and one FIX_COLA; no substituted IDs/counts. Complete the chosen offer-and-snacks path, not merely a safe failure.",
     );
@@ -768,6 +777,7 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     offerFailure.tool_mock_overrides.add_concessions = [deny];
     offerFailure.tool_mock_overrides.order_fnb = [deny];
     offerFailure.tool_mock_overrides.prepare_payment = [deny];
+    offerFailure.tool_mock_overrides.get_order = mock({ order }, { userSessionId: "fixture_order" });
     suite.tests.push(offerFailure);
     const swap = suite.tests.find((test) => test.id === `08-positive-${language}`)!;
     swap.tool_mock_overrides.prepare_swap!.push(
@@ -939,7 +949,7 @@ export function buildJourneySimulationSuite(): SimulationSuite {
           0,
           ...["transactionReference", "bookingId"].map((path) => ({
             ...deny,
-            parameter_conditions: [{ path, eval: { type: "regex" as const, pattern: ".*" } }],
+            parameter_conditions: [{ path, eval: { type: "regex" as const, pattern: ".+" } }],
           })),
         );
     }
@@ -1005,6 +1015,15 @@ function alignResponseShapes(overrides: Record<string, SimulationMock[]>, langua
         const result = JSON.parse(entry.mock_result);
         if (!result.ok) return entry;
         const data = result.data;
+        if (name === "list_offers" && data.offers?.length === 1) {
+          // Match the real list_offers speech envelope: formatted saving and total
+          // already come from the backend; the agent need not verbalise raw cents.
+          result.speech =
+            language === "ar"
+              ? "يوجد 1 عروض: عرض Fixture Bank (وفّر 24 درهم، الإجمالي 96 درهم). لديك بطاقة Mastercard ending 1234 محفوظة مؤهلة لهذا العرض — هل تريد استخدامها؟ هل أطبق أحدها؟"
+              : "There are 1 offers: Fixture Bank offer (save AED 24, total AED 96). You have a saved Mastercard ending 1234 that qualifies for this offer — would you like to use it? Want me to apply one?";
+          result.ui = { type: "offer", items: data.offers, meta: { guest: false, ticketCount: 2 } };
+        }
         if (name === "get_recommendations") {
           for (const movie of data.movies ?? []) {
             movie.title = movie.filmTitle;

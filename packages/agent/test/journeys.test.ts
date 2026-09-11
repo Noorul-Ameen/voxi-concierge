@@ -16,6 +16,10 @@ describe("eight approved journeys", () => {
       expect(apply.parameter_conditions.some((condition) => condition.path === "confirmed")).toBe(false);
       const queued = JSON.parse(apply.mock_result).data.action;
       expect(queued.status).toBe("queued");
+      expect(JSON.parse(offer.tool_mock_overrides.list_offers[0].mock_result).speech).toContain("96");
+      expect(JSON.parse(offer.tool_mock_overrides.get_order[0].mock_result).data.order.totalCents).toBe(
+        12600,
+      );
       expect(offer.tool_mock_overrides.get_action_result[0].parameter_conditions).toContainEqual({
         path: "actionId",
         eval: { type: "exact", expected_value: queued.actionId },
@@ -41,6 +45,9 @@ describe("eight approved journeys", () => {
       expect(failed.tool_mock_overrides.apply_offer[0].is_error).toBe(true);
       expect(failed.tool_mock_overrides.transfer_to_agent[0].is_error).toBe(true);
       expect(JSON.parse(failed.tool_mock_overrides.transfer_to_agent[0].mock_result).data).toBeUndefined();
+      expect(JSON.parse(failed.tool_mock_overrides.get_order[0].mock_result).data.order.totalCents).toBe(
+        12000,
+      );
     }
   });
 
@@ -106,6 +113,7 @@ describe("eight approved journeys", () => {
         swappedFrom: prepared.bookingId,
         status: "confirmed",
         qrPayload: "fixture-swapped-qr-only",
+        time: "19:05",
       });
       expect(completed.data.booking).toBeUndefined();
     }
