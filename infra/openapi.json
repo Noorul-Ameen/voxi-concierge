@@ -1445,8 +1445,8 @@
           },
           "proposalToken": {
             "type": "string",
-            "maxLength": 12000,
-            "description": "Exact token from propose_booking, only after the guest accepts that complete proposal. Never construct or modify it. Rechecks the same seats and price before holding."
+            "minLength": 1,
+            "description": "Token returned by propose_booking for the accepted selection."
           },
           "title": {
             "type": "string",
@@ -1535,7 +1535,8 @@
           }
         },
         "required": [
-          "conversationId"
+          "conversationId",
+          "proposalToken"
         ]
       },
       "propose_booking_input": {

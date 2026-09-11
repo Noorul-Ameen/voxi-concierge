@@ -25,7 +25,17 @@ export function buildOpenApi(serverUrl: string): Record<string, unknown> {
       "ZodEffects"
         ? (def.input as unknown as { _def: { schema: z.AnyZodObject } })._def.schema
         : (def.input as unknown as z.AnyZodObject);
-    const body = ConversationContext.merge(inner).openapi(`${name}_input`);
+    const toolInput =
+      name === "quick_book"
+        ? inner.extend({
+            proposalToken: z
+              .string()
+              .trim()
+              .min(1)
+              .describe("Token returned by propose_booking for the accepted selection."),
+          })
+        : inner;
+    const body = ConversationContext.merge(toolInput).openapi(`${name}_input`);
     registry.registerPath({
       method: "post",
       path: `/tools/${name}`,

@@ -43,6 +43,7 @@ export function auditJourneyEvidence(test: Evidence): string[] {
   const investigations = new Set<string>();
   const menuItems = new Set<string>();
   const orderIds = new Set<string>();
+  const offerIds = new Set<string>();
   const pendingActionIds = new Set<string>();
   const filmRatings = new Set<string>();
   const rememberOrderIds = (value: unknown) => {
@@ -50,6 +51,7 @@ export function auditJourneyEvidence(test: Evidence): string[] {
     if (!value || typeof value !== "object") return;
     for (const [key, child] of Object.entries(value)) {
       if (key === "userSessionId" && typeof child === "string") orderIds.add(child);
+      else if (key === "offerId" && typeof child === "string") offerIds.add(child);
       else rememberOrderIds(child);
     }
   };
@@ -73,6 +75,10 @@ export function auditJourneyEvidence(test: Evidence): string[] {
     for (const raw of turn.calls ?? turn.tool_calls ?? []) {
       const name = String(raw.name ?? raw.tool_name ?? "");
       const args = parse(raw.arguments ?? raw.params_as_json);
+      if (typeof args.offerId === "string" && !offerIds.has(args.offerId))
+        findings.push(
+          `Turn ${index}: ${name} used an offer identifier absent from preceding verified results.`,
+        );
       if (name === "get_action_result" && !pendingActionIds.has(args.actionId))
         findings.push(`Turn ${index}: action polling used no preceding verified pending actionId.`);
       if (name === "get_age_rules" && !filmRatings.has(args.rating))

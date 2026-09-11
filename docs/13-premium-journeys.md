@@ -40,6 +40,8 @@ The first release passed 415 tests across 46 files locally and in CI. The hosted
 
 The simulated handover adapter's refund-keyword reply only offers to review the request. It does not claim an actual refund was processed or an email was sent; those require a real action and result.
 
+The agent HTTP booking tool requires a valid proposal token before its inline mutation path. Missing or fabricated tokens preserve the current basket and payment confirmation. The shared widget retains its explicit internal booking controls. The ElevenLabs tool definition and public OpenAPI schema reflect this boundary. Focused acceptance passed all 65 API tests and 114 agent tests; the full release CI remains recorded separately.
+
 Repository lint passes with existing warnings. Production builds include both native site and embed bundle. The committed OpenAPI document is regenerated from all 46 server-tool contracts.
 
 Before declaring full acceptance, record the deployed Git commit and all four Railway service statuses, the promoted ElevenLabs version and reference readback, actual English/Arabic journey results, and browser checks of both sites including page login/logout, responsive layout, QR download and microphone-input mute with continued assistant audio.
