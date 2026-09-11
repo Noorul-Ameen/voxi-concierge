@@ -1,12 +1,19 @@
 process.env.TZ = "UTC"; // timestamps without time zone are read as UTC wall-clock; keep every service consistent
 import { serve } from "@hono/node-server";
-import { createDb } from "@voxi/db";
+import { createDb, waitForCommerceSchema } from "@voxi/db";
 import { createApp } from "./app.js";
 import { loadConfig } from "./config.js";
 import { expireAbandonedOrders } from "./services/orders.js";
 
 const cfg = loadConfig();
 const { db, close } = createDb(cfg.databaseUrl);
+try {
+  await waitForCommerceSchema(db);
+} catch (error) {
+  console.error((error as Error).message);
+  await close();
+  process.exit(1);
+}
 const app = createApp(db, cfg);
 /** Bind dual-stack ("::") where available, falling back to IPv4 on hosts without IPv6. */
 function listen(port: number, onListen: (info: { port: number }) => void) {

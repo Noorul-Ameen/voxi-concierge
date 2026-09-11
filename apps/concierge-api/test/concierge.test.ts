@@ -204,7 +204,7 @@ describe("Phase 1 — booking lookup, cancellation, refund", () => {
     const prep = await h.tool("prepare_cancellation", c, {
       bookingId: "WKGRP33",
       ticketIds: ["1"],
-      refundMethod: "SHARE_POINTS",
+      refundMethod: "VOX_CREDIT",
       verification: { email: "rahul.menon@example.com" },
     });
     expect(prep.ok).toBe(true);
@@ -223,7 +223,7 @@ describe("Phase 1 — booking lookup, cancellation, refund", () => {
 });
 
 describe("Phase 1 — swaps", () => {
-  it("swaps to another showtime of the same film (saga) and links bookings", async () => {
+  it("exchanges to another showtime of the same film and cinema, settling only the difference", async () => {
     const c = conv("swap");
     const login = await h.login(c, "JAMES");
     expect(login.ok).toBe(true);
@@ -238,6 +238,7 @@ describe("Phase 1 — swaps", () => {
     });
     const target = alts.data.sessions.find(
       (s: any) =>
+        s.cinemaId === b.cinemaId &&
         `${s.cinemaId}-${s.sessionId}` !== `${b.cinemaId}-${b.sessionId}` &&
         s.seatsAvailable > 2 &&
         s.showtime >
@@ -250,7 +251,7 @@ describe("Phase 1 — swaps", () => {
       paymentMethodForDifference: "VOX_CREDIT",
     });
     expect(prep.ok).toBe(true);
-    expect(prep.speech).toMatch(/move(s)? with it/); // F&B on the booking is carried over
+    expect(prep.speech).toMatch(/food transfers unchanged/); // F&B on the booking is carried over
     const r = await h.tool("swap_booking", c, {
       bookingId: "WJG8LD7",
       confirmationId: prep.data.confirmationId,
@@ -258,7 +259,7 @@ describe("Phase 1 — swaps", () => {
     });
     expect(r.ok).toBe(true);
     expect(r.data.result.newBookingId).toHaveLength(7);
-    expect(r.speech).toMatch(/moved with it/);
+    expect(r.data.result.differenceCents).toBe(prep.data.summary.differenceCents);
     expect(r.speech).not.toMatch(/1 tickets/);
     const old = await h.tool("find_booking", c, { bookingId: "WJG8LD7", upcomingOnly: false });
     expect(old.data.bookings[0].status).toBe("swapped");
@@ -370,7 +371,9 @@ describe("Phase 2 — guided booking end to end", () => {
     // Phase 1 sees it and can cancel it (member → VOX credit)
     const mine = await h.tool("list_my_bookings", c, {});
     expect(mine.data.bookings.some((b: any) => b.bookingId === bookingId)).toBe(true);
-    const cprep = await h.tool("prepare_cancellation", c, { bookingId });
+    const methods = await h.tool("prepare_cancellation", c, { bookingId });
+    expect(methods.data.needs).toBe("refund_method");
+    const cprep = await h.tool("prepare_cancellation", c, { bookingId, refundMethod: "VOX_CREDIT" });
     expect(cprep.error, JSON.stringify(cprep)).toBeUndefined();
     expect(cprep.ok).toBe(true);
     const cancel = await h.tool("cancel_booking", c, {
@@ -474,7 +477,7 @@ describe("Phase 2 — personalisation, feedback, complaints, transfer", () => {
   });
   it("exposes OpenAPI for all tools", async () => {
     const r = await h.api.request("/openapi.json").then((x) => x.json() as any);
-    expect(Object.keys(r.paths).length).toBe(44);
+    expect(Object.keys(r.paths).length).toBe(46);
   });
 });
 

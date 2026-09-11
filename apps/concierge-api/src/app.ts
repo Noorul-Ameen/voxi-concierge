@@ -845,7 +845,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       return c.json({ ok: false, error: "Session not found." }, 401);
     if ("userSessionId" in cmd && cmd.userSessionId && !(await ownsOrder(conv, cmd.userSessionId)))
       return c.json({ ok: false, error: "That order isn't available in this session." }, 403);
-    const widgetTool = async (name: ToolName, input: Record<string, unknown>) => {
+    const widgetTool = async (name: ToolName, input: Record<string, unknown>, refundChoiceProof?: string) => {
       const toolCtx: ToolCtx = {
         ...app,
         catalog,
@@ -854,6 +854,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         nowLocal: nowLocalIso(app.cfg.timeZone),
         toolCallId: prefixedId("tc", 8),
         correlationId: prefixedId("corr", 8),
+        refundChoiceProof,
       };
       const result = await runTool(name, toolCtx, input);
       if (result.ui)
@@ -877,6 +878,27 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       };
     };
     switch (cmd.type) {
+      case "proposal.preview":
+        return c.json(await widgetTool("propose_booking", cmd.input));
+      case "proposal.accept":
+        return c.json(
+          await widgetTool("quick_book", {
+            proposalToken: cmd.proposalToken,
+            idempotencyKey: cmd.idempotencyKey,
+          }),
+        );
+      case "refund.choose":
+        return c.json(
+          await widgetTool(
+            "prepare_cancellation",
+            {
+              bookingId: cmd.bookingId,
+              refundMethod: cmd.refundMethod,
+              ticketIds: cmd.ticketIds,
+            },
+            cmd.refundChoiceProof,
+          ),
+        );
       case "language": {
         await updateConversation(app.db, conv.id, { language: cmd.language });
         await appendEvent(
@@ -1189,9 +1211,29 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
   /** Public: now-showing films for the demo backdrop. */
   api.get("/demo/films", async (c) => {
     const films = (await catalog.films())
-      .filter((f) => f.status === "now_showing" && f.posterUrl)
-      .map((f) => ({ hoCode: f.hoCode, title: f.title, posterUrl: f.posterUrl, rating: f.rating }));
+      .filter((f) => (c.req.query("status") === "all" || f.status === "now_showing") && f.posterUrl)
+      .map((f) => ({
+        hoCode: f.hoCode,
+        title: f.title,
+        titleAlt: f.titleAlt,
+        language: f.language,
+        status: f.status,
+        posterUrl: f.posterUrl,
+        rating: f.rating,
+        runTime: f.runTime,
+      }));
     return c.json({ films });
+  });
+  api.get("/demo/cinemas", async (c) => {
+    return c.json({
+      cinemas: (await catalog.cinemas()).map(({ id, name, nameAlt, city, experiences }) => ({
+        cinemaId: id,
+        name,
+        nameAlt,
+        city,
+        experiences,
+      })),
+    });
   });
 
   // ---------- demo helpers (protected by tool secret) ----------
@@ -1253,6 +1295,7 @@ function clearBookingMetadata(metadata: Record<string, unknown>) {
     "usualFnb",
     "lastCinemaId",
     "verifiedBookings",
+    "paymentInvestigation",
   ])
     delete metadata[key];
 }

@@ -5,6 +5,8 @@ export type CoachingInput = {
   previousResponses?: string[];
   known?: Partial<Record<"movie" | "cinema" | "date" | "quantity" | "language", boolean>>;
   confirmedFacts?: { amountsCents?: number[]; bookingReferences?: string[] };
+  /** Reviewed turn intent: no decision is necessary after this answer/acknowledgement. */
+  answerOnly?: boolean;
 };
 export type CoachingFlag =
   | "formal_tone"
@@ -12,6 +14,7 @@ export type CoachingFlag =
   | "multiple_questions"
   | "repeated_response"
   | "asks_known_information"
+  | "unsolicited_followup"
   | "unsupported_amount"
   | "unsupported_booking_reference";
 const normalise = (text: string) =>
@@ -31,14 +34,22 @@ export function assessResponse(input: CoachingInput): { flags: CoachingFlag[]; n
     flags.push("formal_tone");
   if (text.trim().split(/\s+/).length > (input.modality === "voice" ? 42 : 70)) flags.push("too_long");
   if ((text.match(/[?؟]/g) ?? []).length > 1) flags.push("multiple_questions");
+  if (
+    input.answerOnly &&
+    (/[?؟]/.test(text) ||
+      /(?:let me know if|anything else|would you like|how can i help|كيف (?:يمكنني|أقدر|اقدر|أستطيع)|هل (?:تريد|تود|تحتاج|تحب)|إذا (?:احتجت|كنت تحتاج))/iu.test(
+        text,
+      ))
+  )
+    flags.push("unsolicited_followup");
   if (input.previousResponses?.slice(-3).some((previous) => normalise(previous) === normalise(text)))
     flags.push("repeated_response");
   const questions = {
-    movie: /(?:which|what) (?:movie|film).*[?؟]/i,
-    cinema: /(?:which|what) (?:cinema|location).*[?؟]/i,
-    date: /(?:which|what) (?:day|date).*[?؟]/i,
-    quantity: /how many (?:tickets|people|are going).*[?؟]/i,
-    language: /(?:which|what) (?:movie )?language.*[?؟]/i,
+    movie: /(?:(?:which|what) (?:movie|film)|(?:أي|اي|شو) فيلم).*[?؟]/i,
+    cinema: /(?:(?:which|what) (?:cinema|location)|(?:أي|اي) سينما).*[?؟]/i,
+    date: /(?:(?:which|what) (?:day|date)|(?:أي|اي) (?:يوم|تاريخ)).*[?؟]/i,
+    quantity: /(?:how many (?:tickets|people|are going)|كم (?:تذكرة|تذاكر|شخص|عدد)).*[?؟]/i,
+    language: /(?:(?:which|what) (?:movie )?language|(?:أي|اي) لغة).*[?؟]/i,
   };
   if (
     Object.entries(questions).some(

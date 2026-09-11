@@ -4,3 +4,4 @@ export * from "./recommend.js";
 export * from "./geo.js";
 export * from "./text.js";
 export * from "./profile.js";
+export * from "./payment-rules.js";

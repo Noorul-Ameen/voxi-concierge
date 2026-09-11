@@ -53,6 +53,19 @@ function context(signedIn: boolean, customer: typeof profile | null = profile): 
 
 beforeEach(() => vi.clearAllMocks());
 
+it("directs guests to page sign-in for balances without asking for personal details or preparing payment", async () => {
+  for (const method of ["VOX_CREDIT", "SHARE_POINTS"] as const) {
+    const result = await orderingTools.prepare_payment(context(false), {
+      userSessionId: "food-order",
+      method,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.error?.code).toBe("LOGIN_REQUIRED");
+    expect(result.error?.message).toMatch(/sign in on the page/);
+  }
+  expect(createConfirmation).not.toHaveBeenCalled();
+});
+
 it("uses verified member contact for both the payment sheet and persisted confirmation", async () => {
   const result = await orderingTools.prepare_payment(context(true), {
     userSessionId: "food-order",

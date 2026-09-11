@@ -733,8 +733,8 @@ async function main() {
                   }
                 : {
                     PaymentTenderCategory: "LOYALTY",
-                    PaymentValueCents: total,
-                    PointsRedeemed: centsToPoints(total),
+                    PaymentValueCents: total + fee,
+                    PointsRedeemed: centsToPoints(total + fee),
                     Reference: `PTS${transNo}`,
                   },
         ],
@@ -899,6 +899,8 @@ async function main() {
 
   await updateDemoProfiles(db);
   const schedule = await refreshDemoSchedule(db);
+  const { refreshDemoJourneyFixtures } = await import("./journey-fixtures.js");
+  await refreshDemoJourneyFixtures(db);
   if (schedule.enabled)
     log(`synthetic demo schedule: added ${schedule.inserted} sessions for the next ${schedule.days} days`);
   log("done");

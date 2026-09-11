@@ -157,7 +157,9 @@ export const Verification = z
 export const PrepareCancellationInput = z.object({
   bookingId: z.string(),
   ticketIds: z.array(z.string()).optional(),
-  refundMethod: RefundMethod.default("VOX_CREDIT"),
+  refundMethod: RefundMethod.optional().describe(
+    "Guest-selected destination from the returned permitted refund methods. Omit to show choices; never select a destination for them.",
+  ),
   reason: z.string().optional(),
   verification: Verification.optional(),
 });
@@ -173,9 +175,18 @@ export const CancelBookingInput = z.object({
 
 export const PrepareSwapInput = z.object({
   bookingId: z.string(),
-  targetSessionKey: z.string().describe("'{cinemaId}-{sessionId}' of the new session"),
+  targetSessionKey: z
+    .string()
+    .optional()
+    .describe(
+      "Actual same-cinema, same-film session id from a prior tool. Omit to find nearest available options for the requested date/time/experience.",
+    ),
+  date: dateStr.optional(),
+  time: timeStr.optional(),
+  experience: Experience.optional(),
   keepSeatsIfPossible: z.boolean().default(true),
   paymentMethodForDifference: PaymentMethod.optional(),
+  refundMethodForDifference: RefundMethod.optional(),
   verification: Verification.optional(),
 });
 export const SwapBookingInput = z.object({
@@ -252,6 +263,14 @@ export const AddConcessionsInput = z.object({
 });
 export const ApplyOfferInput = z.object({
   userSessionId: z.string(),
+  remove: z
+    .boolean()
+    .optional()
+    .describe(
+      "true only to remove the bank offer after prepare_payment returned a payment_switch_confirmation preview and the guest explicitly accepted its repriced total.",
+    ),
+  confirmationId: z.string().optional(),
+  confirmed: z.literal(true).optional(),
   offerId: z.string().optional(),
   promoCode: z.string().optional(),
   cardBin: z
@@ -299,6 +318,13 @@ export const CancelOrderInput = z.object({
 // ---------- Booking v2: one-shot booking, recovery, quick F&B ----------
 
 export const QuickBookInput = z.object({
+  proposalToken: z
+    .string()
+    .max(12000)
+    .optional()
+    .describe(
+      "Exact token from propose_booking, only after the guest accepts that complete proposal. Never construct or modify it. Rechecks the same seats and price before holding.",
+    ),
   title: z.string().optional().describe("Movie title as the guest said it (fuzzy matched)"),
   hoCode: z.string().optional(),
   cinemaName: z
@@ -349,6 +375,36 @@ export const QuickBookInput = z.object({
       "Book this exact showtime (from a showtimes/alternatives card) — skips film/cinema/time resolution",
     ),
   idempotencyKey: z.string().max(120).optional(),
+});
+
+export const ProposeBookingInput = QuickBookInput.omit({ proposalToken: true, idempotencyKey: true }).extend({
+  seats: z
+    .array(z.object({ row: z.string(), number: z.string() }))
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Exact seats selected by the guest on the available seat map; never invent seat ids."),
+});
+
+export const InvestigatePaymentInput = z.object({
+  bookingId: z.string().optional(),
+  userSessionId: z
+    .string()
+    .optional()
+    .describe("Order id already returned by the backend; omit to inspect this conversation's latest order."),
+  transactionReference: z
+    .string()
+    .max(120)
+    .optional()
+    .describe(
+      "Reference supplied by the guest. It is reported information until matched against backend records.",
+    ),
+  cardLast4: z
+    .string()
+    .regex(/^\d{4}$/)
+    .optional()
+    .describe("Only the last four digits supplied by the guest; never request a full card number."),
+  verification: Verification.optional(),
 });
 
 export const RecoverOrderInput = z.object({
@@ -491,6 +547,10 @@ export const GetRecommendationsInput = z.object({
 });
 
 export const TransferToAgentInput = z.object({
+  investigationId: z
+    .string()
+    .optional()
+    .describe("Exact id from investigate_payment; adds verified investigation evidence to the handover."),
   reason: z
     .string()
     .transform((r) => {
@@ -637,6 +697,18 @@ export const TOOL_REGISTRY = {
     kind: "write",
     description:
       "Book using the guest's known choices; explicit choices override history. Before supplying profile-derived values, call get_session_context; otherwise omit them for backend inference. Omit seatPreference for 'my usual seats'. Unknown ticket count returns needs:tickets without holding seats. Once known, holds seats and shows an editable review with optional snacks before one payment. Unavailable shows return alternatives. Returns inline; repeated idempotencyKey replays the result.",
+  },
+  propose_booking: {
+    input: ProposeBookingInput,
+    kind: "read",
+    description:
+      "Build one complete editable booking proposal from actual film, cinema, experience, showtime, ticket prices and available preferred seats. Explicit choices override history. When movie is omitted, uses personalised recommendations. No seats are held and no payment is taken. Unknown quantity returns needs:tickets; otherwise show the proposal and obtain acceptance before quick_book with its unchanged proposalToken. Prices and seats are rechecked on acceptance.",
+  },
+  investigate_payment: {
+    input: InvestigatePaymentInput,
+    kind: "read",
+    description:
+      "Investigate payment-debited/no-booking reports using verified booking ownership, order and action records before handover. Returns found, processing, failed, unresolved or verification_required with grounded evidence. A guest's transaction reference or card last four is not proof that money was taken. Never charge again; pass the investigationId to handover if unresolved.",
   },
   resume_order: {
     input: ResumeOrderInput,

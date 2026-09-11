@@ -3,7 +3,7 @@
  *  - the captured VOX UAE web pages (FAQ, refunds, T&Cs, experiences, offers, app, contact…)
  *  - the seed dataset (cinema pages: hours, directions, parking, accessibility, experiences)
  *  - policy docs generated from packages/db catalog (age rules)
- * Output: packages/agent/kb/*.md — uploaded to ElevenLabs by deploy-agent.ts and seeded into kb_documents.
+ * Output: packages/agent/kb/*.md — reviewed before separate candidate KB upload and seeded into kb_documents.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -98,8 +98,18 @@ async function main() {
     films: any[];
     experiences: string[];
   };
+  // These reviewed sources contain the approved demo policy and must not be replaced by an older scrape.
+  const curated = new Set([
+    "refund-policy",
+    "checkout-payments-and-receipts",
+    "how-to-book-and-manage",
+    "terms-and-conditions",
+    "faq",
+    "offers-and-bank-offers",
+  ]);
   let n = 0;
   for (const [route, meta] of Object.entries(PAGES)) {
+    if (curated.has(meta.id)) continue;
     const p = raw[route];
     if (!p?.md) continue;
     const title = meta.title ?? p.title;
@@ -180,34 +190,7 @@ ${Object.entries(catalog.EXPERIENCE_AGE_RULES)
     path.join(OUT, "age-restrictions.md"),
     `${fm({ title: "Age restrictions and movie ratings", language: "en", category: "age_restrictions", source: "https://uae.voxcinemas.com/faq" })}\n${age}`,
   );
-  // ---- how to book / concierge capabilities ----
-  const howto = `# How to book tickets and what Voxi can do
-
-## Booking with Voxi (the concierge)
-Voxi can complete a booking end to end in the chat: choose a movie, cinema, date and showtime; pick tickets (adult, child, student, premium view); choose seats on the seat map or let Voxi pick the best available; add food and drinks; apply an offer, promo code, Share Points or VOX credit; and pay by card, Apple Pay, Google Pay, VOX credit or Share Points. The confirmation shows a QR code and the tickets are emailed.
-
-## Booking on the website or app
-1. Go to uae.voxcinemas.com or open the VOX Cinemas app and pick a movie under What's On.
-2. Choose the cinema, date and showtime.
-3. Select ticket types and seats. Seats are held for 10 minutes while you complete payment.
-4. Add food and drinks (Prepare Now lets you skip the queue).
-5. Apply a bank offer (pay with the eligible card), promo code, Share Points or VOX credit.
-6. Pay. Tickets arrive by email with a QR code — scan it at the entrance, no printing needed.
-
-## Managing a booking
-- Find a booking with the booking reference (7 characters, e.g. WXA7K2M), the email or the mobile number used.
-- Cancel and refund: allowed up to 30 minutes before the showtime for tickets not yet collected/scanned and not bought with a bank/telco offer. Refunds go to VOX credit (registered accounts) or Share Points; guests receive refunds to the original payment method via Customer Care.
-- Swap: move the same tickets to another showtime of the same movie; price differences are charged or refunded.
-- Lost ticket: search by email/phone and Voxi can resend the QR.
-
-## Share Points and VOX credit
-- SHARE is Majid Al Futtaim's loyalty programme. Members earn Share Points on every purchase; 100 points = AED 1 (demo assumption) and points can pay for tickets and food.
-- VOX credit (VOX Rewards wallet) is a credit note: 1 VOX credit = AED 1, valid 90 days, applied automatically at checkout for logged-in members.
-`;
-  await writeFile(
-    path.join(OUT, "how-to-book-and-manage.md"),
-    `${fm({ title: "How to book, cancel, swap; Share Points and VOX credit", language: "en", category: "how_to", source: "https://uae.voxcinemas.com" })}\n${howto}`,
-  );
+  // how-to-book-and-manage.md is a reviewed source, not a generated scrape/template.
   // ---- Arabic glossary ----
   const glossary = `# مصطلحات فوكس سينما — Arabic glossary for Voxi
 
@@ -251,7 +234,7 @@ Voxi can complete a booking end to end in the chat: choose a movie, cinema, date
     path.join(OUT, "arabic-glossary.md"),
     `${fm({ title: "Arabic glossary of VOX terms", language: "ar", category: "faq", source: "" })}\n${glossary}`,
   );
-  console.log(`wrote ${n + 3} KB documents to ${OUT}`);
+  console.log(`wrote ${n + 2} KB documents to ${OUT}`);
 }
 main().catch((e) => {
   console.error(e);

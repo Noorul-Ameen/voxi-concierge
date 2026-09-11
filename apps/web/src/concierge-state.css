@@ -1,1 +1,13 @@
 .widget .booking-summary{display:flex;align-items:center;justify-content:space-between;gap:16px;width:100%;padding:11px 14px;border:1px solid #e2e8ed;border-radius:12px;background:#f7f9fb;color:#263948;text-align:start;cursor:pointer;font:inherit;font-size:13px}.widget .booking-summary small{color:#087b93;font-weight:650}.widget .reconnect-bar{display:flex;align-items:center;justify-content:center;gap:12px;padding:10px 16px;background:#eef8fa;color:#35525e;font-size:12px}.widget .holdbar{flex-wrap:wrap}.widget .holdbar .btn{min-height:36px}.widget .reconnect-bar .btn{min-height:40px}@media(max-width:480px){.widget .reconnect-bar{flex-wrap:wrap}.widget .widget-head .auth{max-width:90px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+
+.widget .booking-summary { padding: 13px 15px; gap: 12px; border-color: #deebf3; border-radius: 14px; background: #f5faff; color: #365164; font-size: 12px; line-height: 1.5; }
+.widget .booking-summary small { flex-shrink: 0; color: #0084b9; font-size: 10px; }
+.widget .reconnect-bar { border-top: 1px solid #e4edf3; padding: 12px 16px; gap: 10px; background: #f4f9fd; color: #648095; font-size: 11px; line-height: 1.5; }
+.widget .holdbar { gap: 7px; padding: 9px 15px; border-top: 1px solid #e6edf2; background: #f6fafc; color: #526c7e; font-variant-numeric: tabular-nums; }
+.widget .holdbar .btn { font-size: 10px; padding: 6px 10px; border-radius: 8px; min-height: 32px; }
+.widget .holdbar.urgent, .widget .holdbar.expired { color: #925d38; background: #fff8ef; border-color: #f3e8d9; }
+.widget .past-decision, .widget .decision-summary { padding: 9px 0; border-color: #edf0f3; color: #8a969f; font-size: 10px; line-height: 1.6; }
+.widget .past-decision summary, .widget .decision-summary summary { padding: 3px 0; }
+.widget .past-decision[open] > .cards, .widget .decision-summary[open] > .cards { margin-top: 10px; }
+.widget .expired-choices .muted { font-size: 12px; color: #8b7b65; line-height: 1.6; }
+@media(max-width:480px) { .widget .booking-summary { padding: 11px 12px; font-size: 11px; }.widget .reconnect-bar { padding: 10px 13px; }.widget .holdbar { padding: 8px 12px; } }

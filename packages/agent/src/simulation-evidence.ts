@@ -1,5 +1,6 @@
 import { CLIENT_TOOLS, TOOL_REGISTRY, type ToolName } from "@voxi/contracts";
 import { buildWebhookTools } from "./index.js";
+import { auditJourneyEvidence } from "./journey-evidence.js";
 
 type Call = {
   name?: string;
@@ -252,6 +253,8 @@ const pauseRequests = new Set(
     "Wait a moment",
     "Pause please",
     "Please pause",
+    "Please pause while I read for twenty seconds",
+    "انتظري عشرين ثانية حتى أقرأ",
     "Thanks",
     "Thank you",
     "That's all",
@@ -332,7 +335,7 @@ export function auditSimulationEvidence(test: SimulationEvidence): string[] {
   const findings: string[] = [];
   const menuIds = new Set<string>();
   const foodScenario = /\b06a\b/.test(test.name);
-  const seatScenario = /\b08\b/.test(test.name);
+  const seatScenario = /\bEnhancement 08\b/.test(test.name);
   // This fixed spoken-text scenario ends with thanks and supplies no rating or resolution.
   const noFeedbackScenario = /\b13a\b/.test(test.name);
   let callCount = 0;
@@ -496,11 +499,11 @@ export function auditSimulationEvidence(test: SimulationEvidence): string[] {
       if (bin) knownBins.add(bin);
     }
   }
-  if (callCount === 0)
+  if (callCount === 0 && !/\bJourney 01-/.test(test.name))
     findings.push("Missing tool-call evidence; an empty or message-only trace cannot pass this audit.");
   if (foodScenario && !foodMutationSucceeded)
     findings.push("No successful food mutation established the requested popcorn in the basket.");
   if (seatScenario && !mapReceived)
     findings.push("No successful seat-map tool result; a spoken display claim is insufficient.");
-  return findings;
+  return [...findings, ...auditJourneyEvidence(test)];
 }

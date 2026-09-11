@@ -28,7 +28,9 @@ import { updateConversation } from "../services/conversation.js";
 import { fmtDate, fmtTime, joinList, money, t } from "../services/format.js";
 import { beginInlineBasketMutation, finishInlineBasketMutation } from "../services/inline-mutation.js";
 import { buildBookingState } from "../services/order-state.js";
-import { loadCustomer } from "./customer.js";
+import { signProposal, verifyProposal } from "../services/proposal-token.js";
+import { previewSeats, pricePreviewSeats } from "../services/seat-preview.js";
+import { customerTools, loadCustomer } from "./customer.js";
 import { filmCard, sessionCard } from "./movies.js";
 import {
   type OfferHint,
@@ -232,8 +234,14 @@ export async function holdSeats(
   tickets: { TicketTypeCode: string; Qty: number }[],
   preference: string | undefined,
   exactSeats?: { Row: string; Number: string }[],
+  expectedTotalCents?: number,
 ): Promise<{ userSessionId: string; order: VistaOrder; sameSeats: boolean }> {
   const previous = meta(ctx).activeOrder;
+  const previousOrder = previous ? (await ctx.vista.getOrder(previous).catch(() => null))?.Order : undefined;
+  const previousOrderId =
+    previousOrder && !["paid", "cancelled"].includes(previousOrder.State) && !holdExpired(previousOrder)
+      ? (previous ?? undefined)
+      : undefined;
   const holdRequest = JSON.stringify({ sessionKey: s.key, tickets, preference, exactSeats });
   if (previous && meta(ctx).holdRequest === holdRequest) {
     const current = (await ctx.vista.getOrder(previous).catch(() => null))?.Order;
@@ -268,6 +276,7 @@ export async function holdSeats(
         TicketTypes: tickets,
         SkipAutoAllocation: true,
         ConversationId: ctx.conversation.id,
+        PreviousOrderId: previousOrderId,
       });
       order = (
         await ctx.vista.setSeats({
@@ -278,7 +287,11 @@ export async function holdSeats(
         })
       ).Order;
       sameSeats = true;
-    } catch {
+    } catch (error) {
+      if (expectedTotalCents != null) {
+        await ctx.vista.cancelOrder(userSessionId).catch(() => undefined);
+        throw error;
+      }
       order = (
         await ctx.vista.addTickets({
           UserSessionId: userSessionId,
@@ -287,6 +300,7 @@ export async function holdSeats(
           TicketTypes: tickets,
           SeatPreference: preference,
           ConversationId: ctx.conversation.id,
+          PreviousOrderId: previousOrderId,
         })
       ).Order;
     }
@@ -299,8 +313,16 @@ export async function holdSeats(
         TicketTypes: tickets,
         SeatPreference: preference,
         ConversationId: ctx.conversation.id,
+        PreviousOrderId: previousOrderId,
       })
     ).Order;
+  }
+  if (expectedTotalCents != null && order.TotalValueCents !== expectedTotalCents) {
+    await ctx.vista.cancelOrder(userSessionId).catch(() => undefined);
+    throw new DomainError(
+      ErrorCodes.ORDER_INVALID_STATE,
+      "The price changed. Please review a fresh proposal before holding seats.",
+    );
   }
   await setMeta(ctx, {
     activeOrder: userSessionId,
@@ -535,7 +557,9 @@ async function resolveSession(
   const inWindow = (rows: Session[]) =>
     rows.filter((s) => (!from || hm(s.showtime) >= from) && (!to || hm(s.showtime) <= to));
   const preferredExp: string | undefined =
-    input.experience ?? (customer?.preferences?.experiences?.[0] as string | undefined);
+    input.experience ??
+    customer?.profile?.preferredExperience ??
+    (customer?.preferences?.experiences?.[0] as string | undefined);
   const byExperience = (rows: Session[]) => {
     if (input.experience) return rows.filter((s) => s.experience === input.experience);
     const std = rows.filter((s) => s.experience === "Standard");
@@ -705,10 +729,237 @@ export function seatRange(seats: string): string {
 
 const quickHandlers: Pick<
   ToolHandlers,
-  "quick_book" | "recover_order" | "resume_order" | "suggest_fnb" | "order_fnb"
+  "propose_booking" | "quick_book" | "recover_order" | "resume_order" | "suggest_fnb" | "order_fnb"
 > = {
+  async propose_booking(ctx, input) {
+    const customer = await loadCustomer(ctx);
+    let selection = { ...input };
+    if (!selection.sessionKey && !selection.title && !selection.hoCode) {
+      const recommended = await customerTools.get_recommendations(ctx, {
+        kind: "movies",
+        limit: 1,
+        filmLanguage: input.language,
+        cinemaId: input.cinemaId,
+        cinemaName: input.cinemaName,
+        date: input.date,
+        time: input.time,
+        timeFrom: input.timeFrom,
+        timeTo: input.timeTo,
+        withChildren: (input.childTickets ?? 0) > 0 ? true : undefined,
+      });
+      const first = (
+        recommended.data?.movies as { suggestedSession?: { sessionKey?: string } }[] | undefined
+      )?.[0];
+      if (!recommended.ok || !first?.suggestedSession?.sessionKey) return recommended;
+      selection = { ...selection, sessionKey: first.suggestedSession.sessionKey };
+      // Re-resolve an explicit experience against the chosen film; never silently ignore that request.
+      if (input.experience) {
+        const selected = await ctx.catalog.sessionByKey(selection.sessionKey!);
+        if (selected?.experience !== input.experience)
+          selection = { ...selection, sessionKey: undefined, hoCode: selected?.hoCode };
+      }
+    }
+    const resolved = await resolveSession(ctx, selection, customer);
+    if (resolved.kind === "result") return resolved.result;
+    const { session: s, cinema, film } = resolved;
+    const pref =
+      input.seatPreference ??
+      customer?.profile?.seatPreference ??
+      customer?.preferences?.seatPreference ??
+      "middle";
+    const adults = input.tickets ?? null;
+    const children = input.childTickets ?? 0;
+    const count = adults == null ? null : adults + children;
+    if (children > 0 && /^(15|18|21)\+?$/.test((film?.rating ?? "").trim()))
+      return err(
+        ErrorCodes.VALIDATION,
+        t(
+          ctx.lang,
+          `This film is rated ${film?.rating}; child tickets cannot be proposed.`,
+          "هذا الفيلم للكبار؛ لا يمكن اقتراح تذاكر أطفال.",
+        ),
+      );
+    const [plan, types] = await Promise.all([
+      ctx.vista.seatPlan(s.cinemaId, s.sessionId),
+      ctx.vista.ticketTypes(s.cinemaId, s.sessionId),
+    ]);
+    const seats = count ? previewSeats(plan.SeatLayoutData ?? {}, count, pref, input.seats) : [];
+    if (count && !seats)
+      return err(
+        ErrorCodes.SEATS_UNAVAILABLE,
+        t(
+          ctx.lang,
+          "Those seats are unavailable. Please choose different seats or a showtime at this cinema.",
+          "هذه المقاعد غير متاحة. اختر مقاعد أخرى أو موعداً في هذه السينما.",
+        ),
+        false,
+        { needs: "seats", sessionKey: s.key },
+      );
+    const priced =
+      count && seats
+        ? pricePreviewSeats(seats, adults!, children, types.Tickets ?? [], !!ctx.conversation.memberId)
+        : null;
+    if (count && !priced)
+      return err(
+        ErrorCodes.VISTA_ERROR,
+        "The available seats do not have matching ticket prices. Please choose another option.",
+      );
+    const fee = Number.isSafeInteger(types.BookingFeeCentsPerTicket) ? types.BookingFeeCentsPerTicket! : null;
+    const totalCents = priced && fee != null ? priced.ticketsCents + fee * count! : null;
+    if (count && totalCents == null)
+      return err(
+        ErrorCodes.VISTA_UNAVAILABLE,
+        t(
+          ctx.lang,
+          "The provider cannot quote the full ticket price including fees. I haven't held seats; please choose another option or contact Customer Care.",
+          "لا يمكن تأكيد السعر الكامل شاملاً الرسوم. لم أحجز مقاعد؛ اختر خياراً آخر أو تواصل مع خدمة العملاء.",
+        ),
+        false,
+        { needs: "price_unavailable", sessionKey: s.key },
+      );
+    const isAlternative = !!(
+      (input.time && hm(s.showtime) !== input.time) ||
+      (input.timeFrom && hm(s.showtime) < input.timeFrom) ||
+      (input.timeTo && hm(s.showtime) > input.timeTo)
+    );
+    const proposal = {
+      isAlternative,
+      ...(isAlternative
+        ? {
+            alternativeReason: "different_requested_time",
+            requested: { time: input.time, timeFrom: input.timeFrom, timeTo: input.timeTo, date: input.date },
+          }
+        : {}),
+      sessionKey: s.key,
+      filmTitle: ctx.lang === "ar" ? film?.titleAlt || s.filmTitle : s.filmTitle,
+      posterUrl: film?.posterUrl,
+      cinemaId: s.cinemaId,
+      cinemaName: cinemaName(cinema, ctx.lang),
+      experience: s.experience,
+      showtime: s.showtime,
+      showtimeLabel: `${fmtDate(s.showtime, ctx.lang, ctx.nowLocal)} ${fmtTime(s.showtime, ctx.lang)}`,
+      ticketQuantity: count,
+      adultTickets: adults,
+      childTickets: children,
+      seatPreference: pref,
+      selectedSeats: priced?.lines ?? [],
+      ticketsCents: priced?.ticketsCents ?? null,
+      bookingFeeCents: count && fee != null ? fee * count : null,
+      totalCents,
+      held: false,
+      priceIncludesFees: fee != null,
+      preferredExperience: customer?.profile?.preferredExperience ?? null,
+    };
+    const proposalToken =
+      priced && seats && totalCents != null
+        ? signProposal(ctx, {
+            sessionKey: s.key,
+            adults: adults!,
+            children,
+            preference: pref,
+            seats: seats.map(({ row, number }) => ({ row, number })),
+            tickets: priced.tickets,
+            totalCents,
+          })
+        : undefined;
+    const needs =
+      count == null ? "tickets" : totalCents == null ? "price_unavailable" : "proposal_acceptance";
+    return ok(
+      { proposal, proposalToken, needs },
+      (isAlternative
+        ? t(ctx.lang, "This is an alternative to your requested time. ", "هذا موعد بديل عن الوقت المطلوب. ")
+        : "") +
+        t(
+          ctx.lang,
+          count == null
+            ? `${proposal.filmTitle}, ${proposal.experience} at ${proposal.cinemaName}, ${fmtTime(s.showtime, ctx.lang)}. How many are going?`
+            : `${proposal.filmTitle}, ${proposal.experience} at ${proposal.cinemaName}, ${fmtTime(s.showtime, ctx.lang)}: ${count} seats ${seats!.map((s) => s.row + s.number).join(", ")}${totalCents != null ? `, ${money(totalCents, ctx.lang)}` : ""}. Shall I hold this, or would you like to change anything?`,
+          count == null
+            ? `${proposal.filmTitle} في ${proposal.cinemaName}، ${proposal.experience} الساعة ${fmtTime(s.showtime, ctx.lang)}. كم عدد التذاكر؟`
+            : `${proposal.filmTitle} في ${proposal.cinemaName}، ${proposal.experience} الساعة ${fmtTime(s.showtime, ctx.lang)}، ${count} مقاعد${totalCents != null ? `، ${money(totalCents, ctx.lang)}` : ""}. هل أحجزها مؤقتاً أم تريد تغيير شيء؟`,
+        ),
+      {
+        type: "booking_proposal",
+        items: [proposal],
+        meta: { proposalToken, needs, editable: true },
+        actions: [
+          ...(proposalToken
+            ? [{ label: t(ctx.lang, "Hold these seats", "احجز هذه المقاعد مؤقتاً"), value: "proposal:accept" }]
+            : []),
+          { label: t(ctx.lang, "Change choices", "تغيير الخيارات"), value: "proposal:edit" },
+        ],
+      },
+    );
+  },
   async quick_book(ctx, incoming) {
     const lang = ctx.lang;
+    if (incoming.proposalToken) {
+      let proof: Awaited<ReturnType<typeof verifyProposal>>;
+      try {
+        proof = await verifyProposal(ctx, incoming.proposalToken);
+      } catch (error) {
+        if (error instanceof DomainError)
+          return err(error.code, error.message, false, { needs: "proposal_refresh" });
+        throw error;
+      }
+      const resolved = await resolveSession(ctx, { sessionKey: proof.sessionKey }, await loadCustomer(ctx));
+      if (resolved.kind === "result") return resolved.result;
+      const s = resolved.session;
+      const [plan, types] = await Promise.all([
+        ctx.vista.seatPlan(s.cinemaId, s.sessionId),
+        ctx.vista.ticketTypes(s.cinemaId, s.sessionId),
+      ]);
+      const seats = previewSeats(
+        plan.SeatLayoutData ?? {},
+        proof.adults + proof.children,
+        proof.preference,
+        proof.seats,
+      );
+      const priced = seats
+        ? pricePreviewSeats(seats, proof.adults, proof.children, types.Tickets, !!ctx.conversation.memberId)
+        : null;
+      if (
+        !priced ||
+        types.BookingFeeCentsPerTicket == null ||
+        priced.ticketsCents + types.BookingFeeCentsPerTicket * seats!.length !== proof.totalCents
+      )
+        return err(
+          ErrorCodes.SEATS_UNAVAILABLE,
+          t(
+            lang,
+            "That proposal's seats or price changed. Please review a fresh proposal before holding.",
+            "تغيرت مقاعد الاقتراح أو سعره. يرجى مراجعة اقتراح جديد قبل الحجز المؤقت.",
+          ),
+          false,
+          { needs: "proposal_refresh", sessionKey: s.key },
+        );
+      const held = await holdSeats(
+        ctx,
+        s,
+        priced.tickets,
+        proof.preference,
+        proof.seats.map((seat) => ({ Row: seat.row, Number: seat.number })),
+        proof.totalCents,
+      );
+      await appendEvent(ctx.db, ctx.events, ctx.conversation.id, "order.updated", {
+        userSessionId: held.userSessionId,
+        summary: orderSummary(held.order, lang, ctx.nowLocal, cinemaName(resolved.cinema, lang)),
+      });
+      const customer = await loadCustomer(ctx);
+      const hint = customer
+        ? await savedCardOfferHint(ctx, s.key, s.cinemaId, seats!.length, customer)
+        : null;
+      return bookingReview(
+        ctx,
+        held.order,
+        t(
+          lang,
+          `${seats!.length} seats held. ${hint ? "Your saved card has an eligible offer; shall I show the saving?" : "Would you like your usual snacks before payment?"}`,
+          `حجزت ${seats!.length} مقاعد مؤقتاً. ${hint ? "لبطاقتك المحفوظة عرض مؤهل؛ هل أعرض التوفير؟" : "هل تريد وجباتك المعتادة قبل الدفع؟"}`,
+        ),
+        { offerHint: hint, holdMinutes: ctx.cfg.orderExpiryMinutes },
+      );
+    }
     const previous = meta(ctx).pendingBooking ?? {};
     const provided = Object.fromEntries(Object.entries(incoming).filter(([, value]) => value !== undefined));
     const pending = { ...previous, ...provided };
@@ -813,8 +1064,8 @@ const quickHandlers: Pick<
       held.order,
       t(
         lang,
-        `${count} seats held — ${seats}. Snacks before payment?`,
-        `حجزت ${count} مقاعد — ${seats}. هل تريد وجبات خفيفة قبل الدفع؟`,
+        `${count} seats held — ${seats}. ${hint ? "Your saved card has an eligible offer; shall I show the saving?" : "Snacks before payment?"}`,
+        `حجزت ${count} مقاعد — ${seats}. ${hint ? "لبطاقتك المحفوظة عرض مؤهل؛ هل أعرض التوفير؟" : "هل تريد وجبات خفيفة قبل الدفع؟"}`,
       ),
       { offerHint: hint, holdMinutes: ctx.cfg.orderExpiryMinutes },
     );
@@ -1239,7 +1490,22 @@ async function runQuick<N extends "quick_book" | "recover_order" | "order_fnb">(
   input: Parameters<ToolHandlers[N]>[1],
 ): Promise<ToolResult> {
   const requestKey = (input as { idempotencyKey?: string }).idempotencyKey ?? ctx.toolCallId;
-  const idempotencyKey = `quick:${createHash("sha256").update(`${ctx.conversation.id}:${name}:${requestKey}`).digest("hex")}`;
+  const proposalToken =
+    name === "quick_book" ? (input as { proposalToken?: string }).proposalToken : undefined;
+  if (proposalToken) {
+    // A transport retry addresses the accepted proposal, even after relinking. Validate identity
+    // and expiry before replay, so a stale card cannot revive an old hold or another account's result.
+    try {
+      await verifyProposal(ctx, proposalToken);
+    } catch (error) {
+      if (error instanceof DomainError)
+        return err(error.code, error.message, false, { needs: "proposal_refresh" });
+      throw error;
+    }
+  }
+  const idempotencyKey = `quick:${createHash("sha256")
+    .update(proposalToken ? `proposal:${proposalToken}` : `${ctx.conversation.id}:${name}:${requestKey}`)
+    .digest("hex")}`;
   return ctx.db.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`quick:${ctx.conversation.id}`}))`);
     const existing = (

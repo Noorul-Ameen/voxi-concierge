@@ -182,6 +182,7 @@ export const customerTools: Pick<
         language: h.language,
         showtime: h.showtime,
         seatPreference: h.seatPreference,
+        experience: h.experience,
       })),
       calendar,
       ctx.nowLocal,
@@ -479,12 +480,30 @@ export const customerTools: Pick<
   },
 
   async transfer_to_agent(ctx, input) {
+    const investigation = ctx.conversation.metadata?.paymentInvestigation as
+      | Record<string, unknown>
+      | undefined;
+    if (
+      input.investigationId &&
+      (investigation?.investigationId !== input.investigationId ||
+        Number(investigation.authGeneration ?? 0) !==
+          Number(ctx.conversation.metadata?.widgetAuthGeneration ?? 0))
+    )
+      return err(
+        ErrorCodes.VALIDATION,
+        "That investigation is not available in this account session. Check the payment again before handover.",
+      );
     const { action, created } = await enqueue(ctx.db, ctx.events, {
       conversationId: ctx.conversation.id,
       type: "transfer_to_agent",
       resourceKey: `conversation:${ctx.conversation.id}`,
       idempotencyKey: idem(ctx.conversation.id, input.idempotencyKey ?? `transfer:${input.reason}`),
-      payload: { reason: input.reason, agentSummary: input.summary ?? "", language: ctx.lang },
+      payload: {
+        reason: input.reason,
+        agentSummary: input.summary ?? "",
+        language: ctx.lang,
+        ...(input.investigationId ? { paymentInvestigation: investigation } : {}),
+      },
       toolCallId: ctx.toolCallId,
     });
     return ok(

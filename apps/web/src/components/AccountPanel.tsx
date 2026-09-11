@@ -53,7 +53,7 @@ export function AccountPanel({ lang, customer, profile: suppliedProfile, history
           <input id={`${id}-password`} name="password" type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} dir="ltr" />
           {error || localError ? <p className="err" role="alert">{error || localError}</p> : null}
           <button className="btn cta" type="submit" disabled={busy}>{busy ? ar ? "جارٍ تسجيل الدخول…" : "Signing in…" : ar ? "تسجيل الدخول" : "Sign in"}</button>
-          <button className="btn ghost" type="button" onClick={onClose}>{ar ? "المتابعة كضيف" : "Continue as a guest"}</button>
+          <button className="btn ghost" type="button" disabled={busy} onClick={onClose}>{ar ? "المتابعة كضيف" : "Continue as a guest"}</button>
         </form>
       ) : (
         <div className="account-details">

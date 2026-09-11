@@ -1,9 +1,11 @@
-import { ErrorCodes } from "@voxi/contracts";
+import { DomainError, ErrorCodes } from "@voxi/contracts";
 import { type BookingSnapshot, evaluateCancellation, evaluateSwap } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 import { enqueue, findByKey, idem, toRef } from "../actions/ledger.js";
 import { consumeConfirmation, createConfirmation } from "../services/confirmations.js";
 import { fmtDateTime, joinList, money, onDateTime, seatLabels, t } from "../services/format.js";
+import { signRefundChoice, verifyRefundChoice } from "../services/refund-choice-proof.js";
+import { prepareSwap } from "./swap.js";
 import { type ToolCtx, type ToolHandlers, type ToolResult, err, ok } from "./types.js";
 
 export type VistaBooking = Record<string, any>;
@@ -32,6 +34,7 @@ export function toSnapshot(b: VistaBooking): BookingSnapshot {
     bookingFeeValueCents: b.BookingFeeValueCents ?? 0,
     totalValueCents: b.TotalValueCents ?? 0,
     refundedValueCents: b.RefundedValueCents ?? 0,
+    payments: b.PaymentInfoCollection ?? [],
   };
 }
 
@@ -83,6 +86,7 @@ export function bookingCard(b: VistaBooking, lang: "en" | "ar", nowLocal: string
     bookedAt: b.BookedAtUtc,
     offers: b.AppliedOffers ?? [],
     collected: !!b.TicketsCollected,
+    refunds: b.Refunds ?? [],
   };
 }
 
@@ -218,8 +222,8 @@ export const bookingTools: Pick<
         : first.status === "cancelled" || first.status === "refunded"
           ? t(
               ctx.lang,
-              `Booking ${first.bookingId} for ${first.filmTitle} (${first.showtimeLabel}) has already been ${first.status}${first.totalCents ? `; the refund of AED ${(first.totalCents / 100).toFixed(0)} goes back to the original payment method within 5–10 working days` : ""}. Anything else I can help with?`,
-              `الحجز ${first.bookingId} لفيلم ${first.filmTitle} (${first.showtimeLabel}) تم إلغاؤه بالفعل${first.totalCents ? `؛ وسيُعاد المبلغ ${(first.totalCents / 100).toFixed(0)} درهم إلى طريقة الدفع الأصلية خلال 5–10 أيام عمل` : ""}. هل هناك شيء آخر أساعدك به؟`,
+              `Booking ${first.bookingId} for ${first.filmTitle} has already been ${first.status}. Recorded refund: ${money(first.refundedCents, ctx.lang)}. ${firstRaw.Refunds?.length ? firstRaw.Refunds.map((r: any) => `${r.Method}: ${money(r.AmountCents, ctx.lang)}, ${r.Status}${r.Method === "ORIGINAL_PAYMENT" ? ", 5–10 days to the same original card" : r.Method === "VOX_CREDIT" ? ", wallet credit valid for 90 days" : ""}`).join("; ") : "The refund destination is not present in this record; Customer Care can verify it."}`,
+              `تم إلغاء الحجز ${first.bookingId} بالفعل. مبلغ الاسترداد المسجل ${money(first.refundedCents, "ar")}. تفاصيل الاسترداد المتاحة معروضة على الشاشة.`,
             )
           : null;
     const speech =
@@ -315,7 +319,19 @@ export const bookingTools: Pick<
           `لم أجد الحجز ${input.bookingId.toUpperCase()}.`,
         ),
       );
-    const v = verifyOwnership(ctx, b, input.verification);
+    if (ctx.refundChoiceProof) {
+      try {
+        await verifyRefundChoice(ctx, ctx.refundChoiceProof, {
+          bookingId: b.VistaBookingId,
+          bookingVersion: b.Version,
+          ticketIds: input.ticketIds,
+        });
+      } catch (error) {
+        if (error instanceof DomainError) return err(error.code, error.message);
+        throw error;
+      }
+    }
+    const v = ctx.refundChoiceProof ? { ok: true as const } : verifyOwnership(ctx, b, input.verification);
     if (!v.ok) return err("VERIFICATION_REQUIRED", v.message);
     const e = evaluateCancellation(toSnapshot(b), ctx.nowLocal, input.ticketIds, ctx.cfg.policy);
     if (!e.eligible)
@@ -325,7 +341,44 @@ export const bookingTools: Pick<
         false,
         { eligibility: e },
       );
-    const method = e.refundMethods.find((m) => m.method === input.refundMethod) ?? e.refundMethods[0]!;
+    const method = e.refundMethods.find((m) => m.method === input.refundMethod);
+    if (!method)
+      return ok(
+        {
+          needs: "refund_method",
+          bookingId: b.VistaBookingId,
+          refundMethods: e.refundMethods,
+          requestedMethodAllowed: !input.refundMethod,
+          eligibility: e,
+        },
+        t(
+          ctx.lang,
+          `${input.refundMethod ? "That refund destination is not available for this payment. " : ""}Your refund is ${money(e.amounts.totalCents, ctx.lang)}. Choose ${e.refundMethods.map((m) => (m.method === "VOX_CREDIT" ? "VOX wallet credit, valid for 90 days" : m.method === "ORIGINAL_PAYMENT" ? `the same original card${m.cardLast4 ? ` ending ${m.cardLast4}` : ""}, in 5–10 days` : "SHARE Points")).join(" or ")}.`,
+          `مبلغ الاسترداد ${money(e.amounts.totalCents, "ar")}. اختر طريقة الاسترداد المتاحة على الشاشة؛ رصيد فوكس صالح90يوماً والاسترداد إلى البطاقة الأصلية خلال5–10أيام.`,
+        ),
+        {
+          type: "refund_options",
+          items: e.refundMethods,
+          meta: {
+            bookingId: b.VistaBookingId,
+            ticketIds: input.ticketIds,
+            refundChoiceProof: signRefundChoice(ctx, {
+              bookingId: b.VistaBookingId,
+              bookingVersion: b.Version,
+              ticketIds: input.ticketIds,
+            }),
+          },
+          actions: e.refundMethods.map((m) => ({
+            label:
+              m.method === "VOX_CREDIT"
+                ? "VOX wallet credit"
+                : m.method === "ORIGINAL_PAYMENT"
+                  ? "Same original card"
+                  : "SHARE Points",
+            value: `refund:${b.VistaBookingId}:${m.method}`,
+          })),
+        },
+      );
     const partial =
       e.refundableTicketIds.length < toSnapshot(b).tickets.filter((x) => x.Status === "valid").length;
     const summary = {
@@ -341,6 +394,8 @@ export const bookingTools: Pick<
       eta: method.eta,
       reason: input.reason ?? "",
       expectedVersion: b.Version,
+      cardLast4: method.cardLast4,
+      validityDays: method.validityDays,
     };
     const refundText =
       method.method === "VOX_CREDIT"
@@ -353,8 +408,8 @@ export const bookingTools: Pick<
           ? t(ctx.lang, `${method.points} Share Points`, `${method.points} نقطة شير`)
           : t(
               ctx.lang,
-              `${money(method.amountCents, ctx.lang)} to your original payment method within 5–10 working days`,
-              `${money(method.amountCents, "ar")} إلى وسيلة الدفع الأصلية خلال 5–10 أيام عمل`,
+              `${money(method.amountCents, ctx.lang)} to the same original card${method.cardLast4 ? ` ending ${method.cardLast4}` : ""} within 5–10 days`,
+              `${money(method.amountCents, "ar")} إلى البطاقة الأصلية نفسها خلال 5–10 أيام`,
             );
     const spoken = t(
       ctx.lang,
@@ -383,6 +438,8 @@ export const bookingTools: Pick<
               amountCents: method.amountCents,
               points: method.points,
               eta: method.eta,
+              cardLast4: method.cardLast4,
+              validityDays: method.validityDays,
             },
           },
         ],
@@ -440,169 +497,7 @@ export const bookingTools: Pick<
     );
   },
 
-  async prepare_swap(ctx, input) {
-    const b = await loadBooking(ctx, input.bookingId);
-    if (!b)
-      return err(
-        ErrorCodes.BOOKING_NOT_FOUND,
-        t(
-          ctx.lang,
-          `I couldn't find booking ${input.bookingId.toUpperCase()}.`,
-          `لم أجد الحجز ${input.bookingId.toUpperCase()}.`,
-        ),
-      );
-    const v = verifyOwnership(ctx, b, input.verification);
-    if (!v.ok) return err("VERIFICATION_REQUIRED", v.message);
-    const target = await ctx.catalog.sessionByKey(input.targetSessionKey);
-    if (!target)
-      return err(ErrorCodes.NOT_FOUND, t(ctx.lang, "I couldn't find that showtime.", "لم أجد هذا الموعد."));
-    if (target.hoCode !== b.ScheduledFilmId) {
-      const film = await ctx.catalog.film(target.hoCode);
-      return err(
-        ErrorCodes.BOOKING_NOT_ELIGIBLE,
-        t(
-          ctx.lang,
-          `Swaps are only for another showtime of the same movie. ${film?.title ?? "That session"} is a different film — I can cancel and rebook instead if you like.`,
-          "التبديل متاح فقط لموعد آخر لنفس الفيلم. يمكنني الإلغاء وإعادة الحجز بدلاً من ذلك.",
-        ),
-      );
-    }
-    const tt = await ctx.vista.ticketTypes(target.cinemaId, target.sessionId);
-    const valid = (b.Tickets ?? []).filter((x: any) => x.Status === "valid");
-    const priceByCode: Record<string, number> = {};
-    const plan: { TicketTypeCode: string; Qty: number }[] = [];
-    for (const tk of valid) {
-      // same ticket type (adult/child/premium...) at the new session; fall back to matching by description keywords
-      const code = String(tk.TicketTypeCode).replace(/^[A-Z0-9]*?(\d{4})$/, "$1");
-      const same =
-        tt.Tickets.find((x: any) => String(x.TicketTypeCode).endsWith(code)) ??
-        tt.Tickets.find(
-          (x: any) =>
-            /CHILD/.test(x.Description) === /CHILD/.test(tk.Description) &&
-            x.AreaCategoryCode === tk.SeatAreaCatCode,
-        ) ??
-        tt.Tickets[0];
-      if (!same)
-        return err(
-          ErrorCodes.BOOKING_NOT_ELIGIBLE,
-          t(
-            ctx.lang,
-            "The new session doesn't offer a matching ticket type.",
-            "لا يوفر الموعد الجديد نوع تذكرة مطابق.",
-          ),
-        );
-      priceByCode[`${same.TicketTypeCode}#${tk.Id}`] = same.PriceInCents;
-      const p = plan.find((x) => x.TicketTypeCode === same.TicketTypeCode);
-      if (p) p.Qty++;
-      else plan.push({ TicketTypeCode: same.TicketTypeCode, Qty: 1 });
-    }
-    const sw = evaluateSwap(
-      toSnapshot(b),
-      ctx.nowLocal,
-      {
-        showtime: target.showtime,
-        experience: target.experience,
-        seatsAvailable: target.seatsAvailable,
-        ticketPriceCentsByCode: priceByCode,
-      },
-      ctx.cfg.policy,
-    );
-    if (!sw.allowed)
-      return err(
-        ErrorCodes[sw.code as keyof typeof ErrorCodes] ?? ErrorCodes.BOOKING_NOT_ELIGIBLE,
-        sw.reasons[0]!,
-      );
-    const diff = sw.differenceCents;
-    const cname = await cinemaName(ctx, target.cinemaId);
-    const diffText =
-      diff > 0
-        ? t(
-            ctx.lang,
-            `The new tickets cost ${money(diff, ctx.lang)} more, which I'll ${input.paymentMethodForDifference === "VOX_CREDIT" ? "take from your VOX credit" : input.paymentMethodForDifference === "SHARE_POINTS" ? "redeem from your Share Points" : "charge to the card on your booking"}.`,
-            `التذاكر الجديدة أغلى بـ ${money(diff, "ar")} وسأخصمها ${input.paymentMethodForDifference === "VOX_CREDIT" ? "من رصيد فوكس" : "من البطاقة المسجلة"}.`,
-          )
-        : diff < 0
-          ? t(
-              ctx.lang,
-              `The new tickets are ${money(-diff, ctx.lang)} cheaper; the difference goes to your VOX credit.`,
-              `التذاكر الجديدة أرخص بـ ${money(-diff, "ar")}؛ سيُضاف الفرق إلى رصيد فوكس.`,
-            )
-          : t(ctx.lang, "Same price, nothing extra to pay.", "نفس السعر، لا يوجد فرق.");
-    const summary = {
-      bookingId: b.VistaBookingId,
-      filmTitle: b.FilmTitle,
-      fromShowtime: b.Showtime,
-      targetSessionKey: target.key,
-      targetCinemaId: target.cinemaId,
-      targetSessionId: target.sessionId,
-      targetShowtime: target.showtime,
-      targetExperience: target.experience,
-      tickets: plan,
-      ticketCount: valid.length,
-      differenceCents: diff,
-      refundCents: sw.refundCents ?? 0,
-      newTicketsCents: sw.newTicketsCents ?? 0,
-      paymentMethodForDifference: input.paymentMethodForDifference ?? "CARD",
-      keepSeatsIfPossible: input.keepSeatsIfPossible,
-      customer: b.Customer,
-      expectedVersion: b.Version,
-      // food & drinks move with the booking (re-added to the new order at the same price)
-      concessions: (
-        (b.Concessions ?? []) as {
-          ItemId: string;
-          Quantity: number;
-          Description: string;
-          Modifiers?: { Id: string }[];
-        }[]
-      ).map((c) => ({
-        ItemId: c.ItemId,
-        Quantity: c.Quantity,
-        Description: c.Description,
-        Modifiers: (c.Modifiers ?? []).map((m) => m.Id),
-      })),
-    };
-    const fnbList = summary.concessions.map((c) => `${c.Quantity}× ${c.Description}`);
-    const fnbText = fnbList.length
-      ? t(
-          ctx.lang,
-          ` Your ${joinList(fnbList, "en")} move${fnbList.length === 1 ? "s" : ""} with it.`,
-          ` وستنتقل معه ${joinList(fnbList, "ar")}.`,
-        )
-      : "";
-    const spoken = t(
-      ctx.lang,
-      `To confirm: I'll move your ${valid.length} ticket${valid.length === 1 ? "" : "s"} for ${b.FilmTitle} from ${fmtDateTime(b.Showtime, "en", ctx.nowLocal)} to ${fmtDateTime(target.showtime, "en", ctx.nowLocal)} (${target.experience}) at ${cname}.${fnbText} ${diffText} Your original booking will be cancelled once the new one is confirmed. Shall I go ahead?`,
-      `للتأكيد: سأنقل ${valid.length} تذكرة لفيلم ${b.FilmTitle} من ${fmtDateTime(b.Showtime, "ar", ctx.nowLocal)} إلى ${fmtDateTime(target.showtime, "ar", ctx.nowLocal)} (${target.experience}) في ${cname}.${fnbText} ${diffText} سيُلغى الحجز الأصلي بعد تأكيد الجديد. هل أتابع؟`,
-    );
-    const conf = await createConfirmation(ctx.db, {
-      conversationId: ctx.conversation.id,
-      actionType: "swap_booking",
-      resourceKey: `booking:${b.VistaBookingId}`,
-      summary,
-      spokenSummary: spoken,
-      ttlSeconds: ctx.cfg.confirmationTtlSeconds,
-    });
-    return ok({ confirmationId: conf.id, summary }, spoken, {
-      type: "booking",
-      title: t(ctx.lang, "Confirm swap", "تأكيد التبديل"),
-      items: [
-        {
-          ...bookingCard(b, ctx.lang, ctx.nowLocal),
-          swapTo: {
-            showtimeLabel: fmtDateTime(target.showtime, ctx.lang, ctx.nowLocal),
-            experience: target.experience,
-            cinemaName: cname,
-            differenceCents: diff,
-          },
-        },
-      ],
-      actions: [
-        { label: t(ctx.lang, "Yes, swap", "نعم، بدّل"), value: `confirm:${conf.id}`, style: "primary" },
-        { label: t(ctx.lang, "Keep original", "احتفظ بالأصلي"), value: "abort" },
-      ],
-      meta: { confirmationId: conf.id },
-    });
-  },
+  prepare_swap: prepareSwap,
 
   async swap_booking(ctx, input) {
     let conf: Awaited<ReturnType<typeof consumeConfirmation>>;

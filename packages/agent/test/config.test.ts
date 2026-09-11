@@ -1,3 +1,4 @@
+import { TOOL_REGISTRY } from "@voxi/contracts";
 import { describe, expect, it } from "vitest";
 import {
   SKIP_TURN,
@@ -75,7 +76,7 @@ describe("agent configuration contracts", () => {
     expect(patch.conversation_config).not.toHaveProperty("turn");
     expect(patch.conversation_config).not.toHaveProperty("tts");
     expect(patch.conversation_config.agent.prompt).not.toHaveProperty("llm");
-    expect(buildWebhookTools(opts)).toHaveLength(44);
+    expect(buildWebhookTools(opts)).toHaveLength(Object.keys(TOOL_REGISTRY).length);
     expect(buildClientTools()).toHaveLength(12);
   });
   it("disables provider pre-tool speech for writes, context, polling and bookkeeping", () => {
@@ -85,6 +86,6 @@ describe("agent configuration contracts", () => {
     }
     for (const name of ["pay_order", "quick_book", "add_concessions", "apply_offer", "recover_order"])
       expect(tools.find((tool) => tool.name === name)!.pre_tool_speech).toBe("off");
-    expect(tools.find((tool) => tool.name === "get_recommendations")!.pre_tool_speech).toBe("auto");
+    expect(tools.every((tool) => tool.pre_tool_speech === "off")).toBe(true);
   });
 });

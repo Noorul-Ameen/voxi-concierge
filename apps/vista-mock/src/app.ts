@@ -3,6 +3,7 @@ import { schema as S, nowLocalIso, shortId, verifyPassword } from "@voxi/db";
 import { centsToPoints, pointsToCents } from "@voxi/domain";
 import { type Offer, applyBenefit, evaluateOffer, offerAcceptsBin, offerMatchesBank } from "@voxi/domain";
 import { inferCustomerProfile, preferenceCalendar, visitDayType } from "@voxi/domain";
+import { isCardOffer } from "@voxi/domain";
 /**
  * Vista-shaped mock API (VOX Apigee partner API + Vista RESTBooking/RESTLoyalty + Offers Engine + Customer).
  * All routes live under BASE = /vistatickets/vista/v2 (as production) plus /v1/oauth/generate at the root.
@@ -16,6 +17,8 @@ import { applyQuery, readQuery } from "./odata.js";
 import { bookingJson, orderJson, seatPlanJson } from "./serialize-order.js";
 import { cinemaJson, concessionJson, filmJson, sessionJson, ticketTypeJson } from "./serialize.js";
 import { getBooking, markCollected, refundBooking, searchBookings } from "./services/bookings.js";
+import { exchangeBooking } from "./services/exchange.js";
+import { previewOfferRemoval, removeOffers } from "./services/offer-removal.js";
 import {
   type OrderCfg,
   RC,
@@ -31,6 +34,7 @@ import {
   removeConcession,
   setSeats,
 } from "./services/orders.js";
+import { expireWalletCredits } from "./services/wallet.js";
 
 export type MockConfig = { auth: AuthConfig; order: OrderCfg; basePath?: string; logging?: boolean };
 
@@ -202,6 +206,7 @@ export function createApp(db: Db, cfg: MockConfig) {
     return c.json({
       ResponseCode: 0,
       Tickets: rows.filter((t) => (t.salesChannels ?? []).includes(channel)).map(ticketTypeJson),
+      BookingFeeCentsPerTicket: cfg.order.bookingFeeCentsPerTicket,
     });
   });
 
@@ -351,6 +356,11 @@ export function createApp(db: Db, cfg: MockConfig) {
   });
 
   /** Offers Engine → order application (not in Vista; modelled as a Ticketing extension). */
+  api.post("/Ticketing/Order/offers/preview-removal", async (c) => {
+    const body = await c.req.json();
+    const { preview } = await previewOfferRemoval(db, body.UserSessionId, body.OfferIds ?? [], cfg.order);
+    return c.json(v1ok({ Preview: preview }));
+  });
   api.post("/Ticketing/Order/offers", async (c) => {
     const body = (await c.req.json()) as {
       UserSessionId: string;
@@ -359,186 +369,206 @@ export function createApp(db: Db, cfg: MockConfig) {
       CardBin?: string;
       MemberId?: string;
       Remove?: boolean;
+      OfferIds?: string[];
+      ExpectedVersion?: number;
+      ExpectedTotalCents?: number;
     };
     const order = await getOrder(db, String(body.UserSessionId), cfg.order);
     if (!order) throw new VistaError(RC.GENERAL, RC.ORDER_NOT_FOUND, "Order not found");
-    if (order.state === "expired") throw new VistaError(RC.GENERAL, RC.ORDER_EXPIRED, "Order has expired");
+    if (["paid", "cancelled", "expired"].includes(order.state))
+      throw new VistaError(RC.GENERAL, RC.ORDER_EXPIRED, "Order is closed or expired");
     if (body.Remove) {
-      const reset = {
-        tickets: order.tickets.map((t) => ({
-          ...t,
-          DiscountPriceCents: 0,
-          FinalPriceCents: t.PriceCents,
-          DealDefinitionId: null,
-          DealDescription: null,
-        })),
-        concessions: order.concessions.map((x) => ({
-          ...x,
-          FinalPriceCents: x.PriceCents * x.Quantity,
-          DealDefinitionId: null,
-          DealDescription: null,
-        })),
-        appliedOffers: [],
-      };
-      const totals = recalc({ ...order, ...reset }, cfg.order);
-      await db
-        .update(S.orders)
-        .set({ ...reset, ...totals, version: order.version + 1, lastUpdatedAt: new Date() })
-        .where(eq(S.orders.userSessionId, order.userSessionId));
-      await db
-        .update(S.offerRedemptions)
-        .set({ status: "released" })
-        .where(eq(S.offerRedemptions.orderUserSessionId, order.userSessionId));
+      await removeOffers(
+        db,
+        {
+          ...body,
+          OfferIds:
+            body.OfferIds ?? (body.OfferId ? [body.OfferId] : order.appliedOffers.map((o) => o.offerId)),
+        },
+        cfg.order,
+      );
       return c.json(await orderResponse(order.userSessionId));
     }
-    const offers = await db.select().from(S.offers).where(eq(S.offers.active, true));
-    let offer = body.OfferId ? offers.find((o) => o.id === body.OfferId) : undefined;
-    if (!offer && body.PromoCode)
-      offer = offers.find((o) => o.rules.promoCode?.toUpperCase() === body.PromoCode!.toUpperCase());
-    if (!offer && body.CardBin)
-      offer = offers
-        .filter((o) => o.rules.bankBins?.some((b) => body.CardBin!.startsWith(b)))
-        .sort((a, b) => a.priority - b.priority)[0];
-    if (!offer)
-      throw new VistaError(RC.GENERAL, RC.OFFER_NOT_ELIGIBLE, "Offer not found or no offer matches");
-    const session = order.sessionId
-      ? (
-          await db
-            .select()
-            .from(S.sessions)
-            .where(and(eq(S.sessions.cinemaId, order.cinemaId), eq(S.sessions.sessionId, order.sessionId)))
-        )[0]
-      : undefined;
-    const acct = body.MemberId
-      ? (await db.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, body.MemberId)))[0]
-      : undefined;
-    const redemptions = body.MemberId
-      ? (
-          await db
-            .select({ n: sql<number>`count(*)` })
-            .from(S.offerRedemptions)
-            .where(
-              and(
-                eq(S.offerRedemptions.offerId, offer.id),
-                eq(S.offerRedemptions.memberId, body.MemberId),
-                eq(S.offerRedemptions.status, "committed"),
-              ),
-            )
-        )[0]?.n
-      : 0;
-    const elig = evaluateOffer(offer as unknown as Offer, {
-      cinemaId: order.cinemaId,
-      experience: session?.experience,
-      hoCode: session?.hoCode,
-      showtime: session ? session.showtime.toISOString().slice(0, 19) : undefined,
-      ticketCount: order.tickets.length,
-      ticketTypeCodes: order.tickets.map((t) => t.TicketTypeCode),
-      memberId: body.MemberId,
-      tier: acct?.tier,
-      cardBin: body.CardBin,
-      promoCode: body.PromoCode,
-      channel: "WWW",
-      memberRedemptions: Number(redemptions ?? 0),
-      monthlyRedemptions: await monthlyRedemptions(offer.id, body.MemberId),
-    });
-    if (!elig.eligible)
-      throw new VistaError(
-        RC.GENERAL,
-        RC.OFFER_NOT_ELIGIBLE,
-        [...elig.reasons, ...elig.requires.map((r) => `requires ${r}`)].join("; "),
-      );
-    if (
-      order.appliedOffers.some((a) => a.type === "bank" || a.type === "promo") &&
-      (offer.type === "bank" || offer.type === "promo")
-    )
-      throw new VistaError(RC.GENERAL, RC.OFFER_NOT_ELIGIBLE, "Bank and promo offers cannot be combined");
-    const applied = applyBenefit(
-      offer.benefit,
-      order.tickets,
-      order.concessions,
-      offer.rules.maxTicketsPerRedemption,
-    );
-    const tickets = order.tickets.map((t, i) => ({
-      ...t,
-      DiscountPriceCents: applied.tickets[i]!.DiscountPriceCents,
-      FinalPriceCents: applied.tickets[i]!.FinalPriceCents,
-      DealDefinitionId: applied.tickets[i]!.DiscountPriceCents ? offer.id : t.DealDefinitionId,
-      DealDescription: applied.tickets[i]!.DiscountPriceCents ? offer.title : t.DealDescription,
-    }));
-    let concessions = order.concessions.map((x, i) => ({
-      ...x,
-      FinalPriceCents: applied.concessions[i]!.FinalPriceCents,
-      DealDefinitionId:
-        applied.concessions[i]!.FinalPriceCents !== x.PriceCents * x.Quantity ? offer.id : x.DealDefinitionId,
-      DealDescription:
-        applied.concessions[i]!.FinalPriceCents !== x.PriceCents * x.Quantity
-          ? offer.title
-          : x.DealDescription,
-    }));
-    if (applied.freeItemId) {
-      const item = (
-        await db.select().from(S.concessionItems).where(eq(S.concessionItems.id, applied.freeItemId))
-      )[0];
-      if (item && !concessions.some((x) => x.ItemId === item.id && x.FinalPriceCents === 0))
-        concessions = [
-          ...concessions,
+    return db
+      .transaction(async (tx) => {
+        await tx.select().from(S.orders).where(eq(S.orders.userSessionId, body.UserSessionId)).for("update");
+        const db = tx as unknown as Db;
+        const order = await getOrder(db, String(body.UserSessionId), cfg.order);
+        if (!order || ["paid", "cancelled", "expired"].includes(order.state))
+          throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Order is closed or expired");
+        const offers = await db.select().from(S.offers).where(eq(S.offers.active, true));
+        let offer = body.OfferId ? offers.find((o) => o.id === body.OfferId) : undefined;
+        if (!offer && body.PromoCode)
+          offer = offers.find((o) => o.rules.promoCode?.toUpperCase() === body.PromoCode!.toUpperCase());
+        if (!offer && body.CardBin)
+          offer = offers
+            .filter((o) => o.rules.bankBins?.some((b) => body.CardBin!.startsWith(b)))
+            .sort((a, b) => a.priority - b.priority)[0];
+        if (!offer)
+          throw new VistaError(RC.GENERAL, RC.OFFER_NOT_ELIGIBLE, "Offer not found or no offer matches");
+        const repeated = order.appliedOffers.find((applied) => applied.offerId === offer.id);
+        if (repeated)
+          return {
+            userSessionId: order.userSessionId,
+            AppliedOffer: { Id: offer.id, Title: offer.title, DiscountCents: repeated.discountCents },
+          };
+        if (isCardOffer(offer) && order.loyaltyPointsPayableValueInCents > 0)
+          throw new VistaError(
+            RC.GENERAL,
+            RC.OFFER_NOT_ELIGIBLE,
+            "A bank-card offer cannot be combined with VOX credit or SHARE Points",
+          );
+        const session = order.sessionId
+          ? (
+              await db
+                .select()
+                .from(S.sessions)
+                .where(
+                  and(eq(S.sessions.cinemaId, order.cinemaId), eq(S.sessions.sessionId, order.sessionId)),
+                )
+            )[0]
+          : undefined;
+        const acct = body.MemberId
+          ? (
+              await db.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, body.MemberId))
+            )[0]
+          : undefined;
+        const redemptions = body.MemberId
+          ? (
+              await db
+                .select({ n: sql<number>`count(*)` })
+                .from(S.offerRedemptions)
+                .where(
+                  and(
+                    eq(S.offerRedemptions.offerId, offer.id),
+                    eq(S.offerRedemptions.memberId, body.MemberId),
+                    eq(S.offerRedemptions.status, "committed"),
+                  ),
+                )
+            )[0]?.n
+          : 0;
+        const elig = evaluateOffer(offer as unknown as Offer, {
+          cinemaId: order.cinemaId,
+          experience: session?.experience,
+          hoCode: session?.hoCode,
+          showtime: session ? session.showtime.toISOString().slice(0, 19) : undefined,
+          ticketCount: order.tickets.length,
+          ticketTypeCodes: order.tickets.map((t) => t.TicketTypeCode),
+          memberId: body.MemberId,
+          tier: acct?.tier,
+          cardBin: body.CardBin,
+          promoCode: body.PromoCode,
+          channel: "WWW",
+          memberRedemptions: Number(redemptions ?? 0),
+          monthlyRedemptions: await monthlyRedemptions(offer.id, body.MemberId),
+        });
+        if (!elig.eligible)
+          throw new VistaError(
+            RC.GENERAL,
+            RC.OFFER_NOT_ELIGIBLE,
+            [...elig.reasons, ...elig.requires.map((r) => `requires ${r}`)].join("; "),
+          );
+        if (
+          order.appliedOffers.some((a) => a.type === "bank" || a.type === "promo") &&
+          (offer.type === "bank" || offer.type === "promo")
+        )
+          throw new VistaError(RC.GENERAL, RC.OFFER_NOT_ELIGIBLE, "Bank and promo offers cannot be combined");
+        const applied = applyBenefit(
+          offer.benefit,
+          order.tickets,
+          order.concessions,
+          offer.rules.maxTicketsPerRedemption,
+        );
+        const tickets = order.tickets.map((t, i) => ({
+          ...t,
+          DiscountPriceCents: applied.tickets[i]!.DiscountPriceCents,
+          FinalPriceCents: applied.tickets[i]!.FinalPriceCents,
+          DealDefinitionId: applied.tickets[i]!.DiscountPriceCents ? offer.id : t.DealDefinitionId,
+          DealDescription: applied.tickets[i]!.DiscountPriceCents ? offer.title : t.DealDescription,
+        }));
+        let concessions = order.concessions.map((x, i) => ({
+          ...x,
+          FinalPriceCents: applied.concessions[i]!.FinalPriceCents,
+          DealDefinitionId:
+            applied.concessions[i]!.FinalPriceCents !== x.PriceCents * x.Quantity
+              ? offer.id
+              : x.DealDefinitionId,
+          DealDescription:
+            applied.concessions[i]!.FinalPriceCents !== x.PriceCents * x.Quantity
+              ? offer.title
+              : x.DealDescription,
+        }));
+        if (applied.freeItemId) {
+          const item = (
+            await db.select().from(S.concessionItems).where(eq(S.concessionItems.id, applied.freeItemId))
+          )[0];
+          if (item && !concessions.some((x) => x.ItemId === item.id && x.FinalPriceCents === 0))
+            concessions = [
+              ...concessions,
+              {
+                Id: String(concessions.length + 1),
+                ItemId: item.id,
+                Description: item.description,
+                Quantity: 1,
+                PriceCents: item.priceInCents,
+                DealPriceCents: 0,
+                FinalPriceCents: 0,
+                TaxCents: 0,
+                DeliveryOption: 2,
+                Modifiers: [],
+                DealDefinitionId: offer.id,
+                DealDescription: offer.title,
+              },
+            ];
+        }
+        const appliedOffers = [
+          ...order.appliedOffers.filter((a) => a.offerId !== offer.id),
           {
-            Id: String(concessions.length + 1),
-            ItemId: item.id,
-            Description: item.description,
-            Quantity: 1,
-            PriceCents: item.priceInCents,
-            DealPriceCents: 0,
-            FinalPriceCents: 0,
-            TaxCents: 0,
-            DeliveryOption: 2,
-            Modifiers: [],
-            DealDefinitionId: offer.id,
-            DealDescription: offer.title,
+            offerId: offer.id,
+            title: offer.title,
+            type: offer.type,
+            discountCents:
+              applied.discountCents +
+              (applied.freeItemId
+                ? (concessions.find((x) => x.ItemId === applied.freeItemId)?.PriceCents ?? 0)
+                : 0),
+            reference: applied.pointsMultiplier ? "points_multiplier" : undefined,
+            cardBin: body.CardBin,
+            bankBins: offer.rules.bankBins,
+            bankName: offer.rules.bankName,
           },
         ];
-    }
-    const appliedOffers = [
-      ...order.appliedOffers.filter((a) => a.offerId !== offer.id),
-      {
-        offerId: offer.id,
-        title: offer.title,
-        type: offer.type,
-        discountCents:
-          applied.discountCents +
-          (applied.freeItemId
-            ? (concessions.find((x) => x.ItemId === applied.freeItemId)?.PriceCents ?? 0)
-            : 0),
-        reference: applied.pointsMultiplier ? "points_multiplier" : undefined,
-        cardBin: body.CardBin,
-        bankBins: offer.rules.bankBins,
-        bankName: offer.rules.bankName,
-      },
-    ];
-    const totals = recalc({ ...order, tickets, concessions, appliedOffers }, cfg.order);
-    await db
-      .update(S.orders)
-      .set({
-        tickets,
-        concessions,
-        appliedOffers,
-        ...totals,
-        version: order.version + 1,
-        lastUpdatedAt: new Date(),
+        const totals = recalc({ ...order, tickets, concessions, appliedOffers }, cfg.order);
+        await db
+          .update(S.orders)
+          .set({
+            tickets,
+            concessions,
+            appliedOffers,
+            ...totals,
+            version: order.version + 1,
+            lastUpdatedAt: new Date(),
+          })
+          .where(eq(S.orders.userSessionId, order.userSessionId));
+        await db.insert(S.offerRedemptions).values({
+          id: `rd_${shortId(10)}`,
+          offerId: offer.id,
+          memberId: body.MemberId ?? null,
+          orderUserSessionId: order.userSessionId,
+          discountCents: applied.discountCents,
+          status: "applied",
+        });
+        return {
+          userSessionId: order.userSessionId,
+          AppliedOffer: { Id: offer.id, Title: offer.title, DiscountCents: applied.discountCents },
+        };
       })
-      .where(eq(S.orders.userSessionId, order.userSessionId));
-    await db.insert(S.offerRedemptions).values({
-      id: `rd_${shortId(10)}`,
-      offerId: offer.id,
-      memberId: body.MemberId ?? null,
-      orderUserSessionId: order.userSessionId,
-      discountCents: applied.discountCents,
-      status: "applied",
-    });
-    return c.json({
-      ...(await orderResponse(order.userSessionId)),
-      AppliedOffer: { Id: offer.id, Title: offer.title, DiscountCents: applied.discountCents },
-    });
+      .then(async (result) =>
+        c.json({
+          ...(await orderResponse(result.userSessionId)),
+          AppliedOffer: result.AppliedOffer,
+        }),
+      );
   });
 
   /** Redeem Share Points / VOX credit against the order total (pre-payment). */
@@ -549,50 +579,68 @@ export function createApp(db: Db, cfg: MockConfig) {
       Points?: number;
       BalanceType?: "SHARE_POINTS" | "VOX_REWARDS";
     };
-    const order = await getOrder(db, String(body.UserSessionId), cfg.order);
-    if (!order) throw new VistaError(RC.GENERAL, RC.ORDER_NOT_FOUND, "Order not found");
-    const acct = (
-      await db.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, body.MemberId))
-    )[0];
-    if (!acct) throw new VistaError(RC.GENERAL, RC.INSUFFICIENT_FUNDS, "Loyalty account not found");
-    const gross = recalc({ ...order, loyaltyPointsPayableValueInCents: 0 }, cfg.order).totalValueCents;
-    const type = body.BalanceType ?? "SHARE_POINTS";
-    // Share Points are valued at 10 points = AED 1; VOX credit is already in fils
-    const available =
-      type === "SHARE_POINTS" ? pointsToCents(acct.sharePointsBalance) : acct.voxRewardsBalanceCents;
-    const want = Math.min(
-      body.Points != null ? (type === "SHARE_POINTS" ? pointsToCents(body.Points) : body.Points) : available,
-      available,
-      gross,
-    );
-    if (want <= 0)
-      throw new VistaError(
-        RC.GENERAL,
-        RC.INSUFFICIENT_FUNDS,
-        `No ${type === "SHARE_POINTS" ? "Share Points" : "VOX credit"} available`,
+    const redeemed = await db.transaction(async (tx) => {
+      await tx.select().from(S.orders).where(eq(S.orders.userSessionId, body.UserSessionId)).for("update");
+      const db = tx as unknown as Db;
+      const order = await getOrder(db, String(body.UserSessionId), cfg.order);
+      if (!order) throw new VistaError(RC.GENERAL, RC.ORDER_NOT_FOUND, "Order not found");
+      if (["paid", "cancelled", "expired"].includes(order.state))
+        throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Order is closed or expired");
+      if (order.appliedOffers.some(isCardOffer))
+        throw new VistaError(
+          RC.GENERAL,
+          RC.OFFER_NOT_ELIGIBLE,
+          "Remove the bank-card offer after confirming the repriced total before using VOX credit or SHARE Points",
+        );
+      await expireWalletCredits(tx, body.MemberId);
+      const acct = (
+        await db.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, body.MemberId))
+      )[0];
+      if (!acct) throw new VistaError(RC.GENERAL, RC.INSUFFICIENT_FUNDS, "Loyalty account not found");
+      const gross = recalc({ ...order, loyaltyPointsPayableValueInCents: 0 }, cfg.order).totalValueCents;
+      const type = body.BalanceType ?? "SHARE_POINTS";
+      // Share Points are valued at 10 points = AED 1; VOX credit is already in fils
+      const available =
+        type === "SHARE_POINTS" ? pointsToCents(acct.sharePointsBalance) : acct.voxRewardsBalanceCents;
+      const want = Math.min(
+        body.Points != null
+          ? type === "SHARE_POINTS"
+            ? pointsToCents(body.Points)
+            : body.Points
+          : available,
+        available,
+        gross,
       );
-    const appliedOffers = [
-      ...order.appliedOffers.filter((a) => a.type !== "loyalty_redeem"),
-      {
-        offerId: type,
-        title: type === "SHARE_POINTS" ? "Share Points redemption" : "VOX credit",
-        type: "loyalty_redeem",
-        discountCents: want,
-        pointsRedeemed: want,
-      },
-    ];
-    const totals = recalc({ ...order, appliedOffers, loyaltyPointsPayableValueInCents: want }, cfg.order);
-    await db
-      .update(S.orders)
-      .set({
-        appliedOffers,
-        loyaltyPointsPayableValueInCents: want,
-        ...totals,
-        version: order.version + 1,
-        lastUpdatedAt: new Date(),
-      })
-      .where(eq(S.orders.userSessionId, order.userSessionId));
-    return c.json({ ...(await orderResponse(order.userSessionId)), Redeemed: { Type: type, Amount: want } });
+      if (want <= 0)
+        throw new VistaError(
+          RC.GENERAL,
+          RC.INSUFFICIENT_FUNDS,
+          `No ${type === "SHARE_POINTS" ? "Share Points" : "VOX credit"} available`,
+        );
+      const appliedOffers = [
+        ...order.appliedOffers.filter((a) => a.type !== "loyalty_redeem"),
+        {
+          offerId: type,
+          title: type === "SHARE_POINTS" ? "Share Points redemption" : "VOX credit",
+          type: "loyalty_redeem",
+          discountCents: want,
+          pointsRedeemed: type === "SHARE_POINTS" ? centsToPoints(want) : want,
+        },
+      ];
+      const totals = recalc({ ...order, appliedOffers, loyaltyPointsPayableValueInCents: want }, cfg.order);
+      await db
+        .update(S.orders)
+        .set({
+          appliedOffers,
+          loyaltyPointsPayableValueInCents: want,
+          ...totals,
+          version: order.version + 1,
+          lastUpdatedAt: new Date(),
+        })
+        .where(eq(S.orders.userSessionId, order.userSessionId));
+      return { Type: type, Amount: want };
+    });
+    return c.json({ ...(await orderResponse(body.UserSessionId)), Redeemed: redeemed });
   });
 
   api.post("/Ticketing/order/payment", async (c) => {
@@ -634,6 +682,17 @@ export function createApp(db: Db, cfg: MockConfig) {
   });
 
   // ---------------- Bookings (RESTBooking.svc) ----------------
+  api.post("/RESTBooking.svc/booking/exchange", async (c) => {
+    const result = await exchangeBooking(db, await c.req.json(), cfg.order);
+    return c.json(
+      v1ok({
+        Booking: bookingJson(result.booking),
+        DifferenceCents: result.differenceCents,
+        Settlement: result.settlement,
+        Idempotent: result.idempotent,
+      }),
+    );
+  });
   api.post("/RESTBooking.svc/booking/search", async (c) => {
     const body = await c.req.json();
     const rows = await searchBookings(db, body);
@@ -641,7 +700,21 @@ export function createApp(db: Db, cfg: MockConfig) {
   });
   api.get("/RESTBooking.svc/booking/:bookingId", async (c) => {
     const b = await getBooking(db, c.req.param("bookingId"));
-    return c.json(v1ok({ Booking: bookingJson(b) }));
+    const refunds = await db.select().from(S.refunds).where(eq(S.refunds.bookingId, b.vistaBookingId));
+    return c.json(
+      v1ok({
+        Booking: {
+          ...bookingJson(b),
+          Refunds: refunds.map((r) => ({
+            Reference: r.reference,
+            AmountCents: r.amountCents,
+            Method: r.method,
+            Status: r.status,
+            CreatedUtc: r.createdAt.toISOString(),
+          })),
+        },
+      }),
+    );
   });
   api.post("/RESTBooking.svc/booking/refund", async (c) => {
     const body = await c.req.json();
@@ -718,6 +791,7 @@ export function createApp(db: Db, cfg: MockConfig) {
         ExtendedResultCode: 401,
         ErrorDescription: "Email or password does not match",
       });
+    if (cust.memberId) await db.transaction((tx) => expireWalletCredits(tx, cust.memberId!));
     const acct = cust.memberId
       ? (await db.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, cust.memberId)))[0]
       : undefined;
@@ -740,6 +814,7 @@ export function createApp(db: Db, cfg: MockConfig) {
     );
   });
   api.get("/RESTLoyalty.svc/member/:memberId/balances", async (c) => {
+    await db.transaction((tx) => expireWalletCredits(tx, c.req.param("memberId")));
     const acct = (
       await db
         .select()
@@ -918,6 +993,7 @@ export function createApp(db: Db, cfg: MockConfig) {
         .where(eq(S.customers.id, c.req.param("id")))
     )[0];
     if (!cust) return c.json({ error: "not_found" }, 404);
+    if (cust.memberId) await db.transaction((tx) => expireWalletCredits(tx, cust.memberId!));
     const acct = cust.memberId
       ? (await db.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, cust.memberId)))[0]
       : undefined;

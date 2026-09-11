@@ -26,7 +26,10 @@ export async function createConfirmation(
   const id = prefixedId("cnf", 10);
   return db.transaction(async (tx) => {
     const current = await resolveLinkedConversation(tx, input.conversationId, true);
-    if (input.actionType === "pay_order")
+    if (
+      input.actionType === "pay_order" ||
+      (input.actionType === "apply_offer" && input.summary.remove === true)
+    )
       await assertNoPendingBasketEdits(
         tx,
         input.resourceKey,

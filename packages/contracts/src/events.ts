@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { ActionRef, UiHint } from "./common.js";
+import { ActionRef, RefundMethod, UiHint } from "./common.js";
+import { ProposeBookingInput } from "./tools.js";
 
 /** Server-sent events pushed to the widget over /events/{conversationId}. */
 const identity = { eventId: z.string().optional() };
@@ -48,6 +49,19 @@ export type WidgetEvent = z.infer<typeof WidgetEvent>;
 
 /** Messages the widget posts to the concierge (outside of the agent). */
 export const WidgetCommand = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("proposal.preview"), input: ProposeBookingInput }),
+  z.object({
+    type: z.literal("proposal.accept"),
+    proposalToken: z.string().min(1).max(12000),
+    idempotencyKey: z.string().max(120).optional(),
+  }),
+  z.object({
+    type: z.literal("refund.choose"),
+    bookingId: z.string(),
+    refundMethod: RefundMethod,
+    ticketIds: z.array(z.string()).optional(),
+    refundChoiceProof: z.string().min(1).max(4000).optional(),
+  }),
   z.object({ type: z.literal("language"), language: z.enum(["en", "ar"]) }),
   z.object({
     type: z.literal("booking.select"),

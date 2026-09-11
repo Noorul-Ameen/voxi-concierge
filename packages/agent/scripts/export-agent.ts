@@ -3,6 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildAgentConfig, buildClientTools, buildWebhookTools } from "../src/index.js";
+import { buildJourneySimulationSuite } from "../src/journey-simulations.js";
+import { loadProcedureSources } from "../src/procedures.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const out = path.resolve(here, "../dist/agent");
@@ -18,4 +20,20 @@ await mkdir(out, { recursive: true });
 await writeFile(path.join(out, "webhook-tools.json"), JSON.stringify(buildWebhookTools(opts), null, 2));
 await writeFile(path.join(out, "client-tools.json"), JSON.stringify(buildClientTools(), null, 2));
 await writeFile(path.join(out, "agent.json"), JSON.stringify(buildAgentConfig(opts), null, 2));
+await writeFile(
+  path.join(out, "procedure-sources.json"),
+  JSON.stringify(
+    {
+      prepared_only: true,
+      sources: loadProcedureSources(),
+      note: "Resolve named tool references against the candidate tool map before upload; do not import the full new-agent config over an existing agent.",
+    },
+    null,
+    2,
+  ),
+);
+await writeFile(
+  path.join(out, "journey-simulations.json"),
+  JSON.stringify(buildJourneySimulationSuite(), null, 2),
+);
 console.log(`exported to ${out}`);

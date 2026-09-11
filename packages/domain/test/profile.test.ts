@@ -53,3 +53,14 @@ describe("history-backed customer preferences", () => {
     );
   });
 });
+
+it("infers preferred experience from actual visit frequency, breaking ties by recency", () => {
+  const visits = [
+    { cinemaId: "0002", language: "English", experience: "IMAX", showtime: "2026-09-01T20:00:00" },
+    { cinemaId: "0002", language: "English", experience: "Standard", showtime: "2026-09-02T20:00:00" },
+    { cinemaId: "0002", language: "English", experience: "IMAX", showtime: "2026-09-03T20:00:00" },
+  ];
+  expect(inferCustomerProfile(visits).preferredExperience).toBe("IMAX");
+  expect(inferCustomerProfile(visits.slice(0, 2)).preferredExperience).toBe("Standard");
+  expect(inferCustomerProfile([]).preferredExperience).toBeNull();
+});

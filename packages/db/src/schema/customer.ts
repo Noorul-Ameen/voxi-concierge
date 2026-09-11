@@ -88,7 +88,9 @@ export const loyaltyLedger = pgTable(
     balanceType: varchar("balance_type", { length: 16 }).notNull(), // SHARE_POINTS | VOX_REWARDS
     delta: pointsNumber("delta").notNull(), // SHARE points may have tenths; VOX credit remains whole fils
     reason: text("reason").notNull(),
-    reference: varchar("reference", { length: 32 }).notNull(),
+    reference: varchar("reference", { length: 64 }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    remainingValueCents: integer("remaining_value_cents"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("loyalty_ledger_member_idx").on(t.memberId)],
