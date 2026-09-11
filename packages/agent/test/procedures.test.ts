@@ -49,11 +49,20 @@ describe("scoped procedure deployment", () => {
     expect(document.steps).toHaveLength(1);
     const branch = document.steps[0];
     expect(branch.type).toBe("branch");
-    expect(branch.branches).toHaveLength(1);
-    expect(branch.branches[0].condition).toMatchObject({ type: "llm" });
-    expect(branch.branches[0].condition.condition).toContain("latest full user sentence");
+    expect(branch.branches).toHaveLength(2);
+    for (const arm of branch.branches) {
+      expect(arm.condition).toMatchObject({ type: "llm" });
+      expect(arm.condition.condition).toContain("latest user turn");
+      expect(arm.condition.condition).toContain("details are already visible");
+      expect(arm.condition.condition).toContain(
+        "no substantive question, requested action, approval, pause or wait request",
+      );
+      expect(arm.condition.condition).toContain("'what is IMAX, briefly?' does NOT qualify");
+    }
     expect(branch.branches[0].steps).toEqual([{ type: "say", message: "تمام، باختصر." }]);
-    expect(branch.fallback).toEqual([{ type: "say", message: "Got it, I’ll keep it brief." }]);
+    expect(branch.branches[1].steps).toEqual([{ type: "say", message: "Got it, I’ll keep it brief." }]);
+    // A mistaken trigger selection must return silently, never replace a real question with an acknowledgement.
+    expect(branch.fallback).toBeUndefined();
     expect(systemPrompt()).not.toContain('"type": "branch"');
   });
 
