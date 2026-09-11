@@ -51,7 +51,7 @@ Synthetic reporting history is separate from purchase history and customer prefe
 
 ## Booking, authentication and continuation
 
-Sign-in is the secure email/password sheet. `login_customer` directs guests to that sheet and never collects credentials in chat/voice. Widget identity comes from its authenticated token and database state; supplied customer/member/conversation IDs do not grant access.
+Sign-in is the host page's secure email/password surface, outside the widget. `login_customer` opens that page surface and never collects credentials in chat/voice. Widget identity comes from its authenticated token and database state; supplied customer/member/conversation IDs do not grant access. After login the widget displays only signed-in status, while account details remain on the page.
 
 Conversation transport, account login, booking order and seat hold have separate lifecycles. Three minutes without user activity closes the conversation only. Reconnection retains authenticated same-device state and revalidates the actual order. Valid holds retain their original expiry; an expired hold preserves choices and requires explicit agreement before checking and holding seats again.
 

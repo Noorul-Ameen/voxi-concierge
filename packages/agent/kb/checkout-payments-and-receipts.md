@@ -43,5 +43,7 @@ The menu has category tabs for popcorn, drinks, combos and other cinema snacks. 
 ## After payment — receipt and e-ticket
 The Virtual Assistant demo receipt shows purchase date, venue, showtime, seats, the returned order reference, QR code and amount paid in the widget. Payment is simulated. Confirm the booking only after a successful payment result, and refer to the visible QR. The displayed receipt does not mean an email, SMS or external message was sent. Do not promise email delivery or an external resend without an explicit delivery result from a tool. Receipt collection guidance does not itself prove that tickets were scanned or food was prepared.
 
+If a guest asks whether their demo ticket was emailed and there is no explicit delivery confirmation, say that email delivery is unconfirmed. A registered email or normal public-website practice is not delivery evidence. Likewise, a QR payload or booking list is not proof that a QR image was rendered. Claim the QR and Download QR control are available only after the interface confirms successful rendering; acknowledge a render failure without inventing display or delivery.
+
 ## Wallet and refunds
 VOX credit is valid for 90 days from the date it is added. For this demo, use the permitted refund destinations and timelines in the approved policy above. Bank-offer bookings cannot be refunded or exchanged. To request a refund on a booking made on the website or app, call 600 599 905.

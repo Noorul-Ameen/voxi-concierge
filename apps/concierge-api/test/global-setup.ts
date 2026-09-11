@@ -32,6 +32,15 @@ export default async function setup() {
   }
   source.pathname = `/${databaseName}`;
   process.env.DATABASE_URL = source.toString();
+  // Completed mock orders reference their verified customer. Remove only this
+  // guarded local test database's orders before recreating the fixture customers.
+  const fixtures = createDb(source.toString(), { max: 1 });
+  try {
+    const existingOrders = await fixtures.db.execute(sql`select to_regclass('public.orders') as name`);
+    if (existingOrders[0]?.name) await fixtures.db.execute(sql`delete from orders`);
+  } finally {
+    await fixtures.close();
+  }
   const root = path.resolve(__dirname, "../../..");
   const tsx = path.join(root, "node_modules/tsx/dist/cli.mjs");
   // Only the isolated local *_test database is reset. No package-manager install is needed.

@@ -19,7 +19,7 @@ These identifiers belong to the existing VOX Cinemas Virtual Assistant deploymen
 - Preserve the verified live Gemini 3.6 Flash / temperature 0 / minimal reasoning and v3 conversational expressive/speculative voice configuration. Existing-agent synchronization patches prompt/tool IDs only. The old flash-v2 requirement below was superseded.
 - Tool calls use the configured `x-voxi-key`/HMAC credentials. Do not expose these in source, browser diagnostics, exports or documentation.
 - The shared embed remains `/embed/voxi.js`; technical global/asset/package names retain compatibility while visible copy uses VOX Cinemas Virtual Assistant.
-- Provision the three email/password accounts through private environment variables. The secure widget is the only credential-entry path. Guest booking remains available.
+- Provision the three email/password accounts through private environment variables. Credentials are entered on the host page's sign-in surface; the widget reflects the verified session and contains no profile or login form. Guest booking remains available.
 - Read seat expiry from the actual backend order. Three minutes closes the conversation only; no local expiry reset or automatic re-hold is allowed.
 - Normal bootstrap applies migrations and bounded demo-profile updates. Full seeding is destructive to demo tables and is not a routine deployment step; leave `SEED_FORCE` disabled.
 - Synthetic future schedule refresh requires both `VISTA_PROVIDER=mock` and `DEMO_SCHEDULE_REFRESH=true`. Keep it disabled for real provider integration.

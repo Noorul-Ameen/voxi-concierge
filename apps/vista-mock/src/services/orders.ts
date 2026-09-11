@@ -1026,6 +1026,8 @@ export async function completeOrder(db: Db, req: CompleteReq, cfg: OrderCfg = DE
       .set({
         state: "paid",
         completedBookingId: bookingId,
+        customerId: booking!.customerId,
+        customer: booking!.customer,
         version: order.version + 1,
         lastUpdatedAt: new Date(),
       })

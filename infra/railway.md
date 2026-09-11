@@ -14,4 +14,6 @@ For the premium journeys release, mock and worker inspect the committed database
 
 Provision the three private `DEMO_SARA_PASSWORD`, `DEMO_RAHUL_PASSWORD` and `DEMO_JAMES_PASSWORD` values on concierge-api. The bounded updater fills missing password hashes and upgrades only the known demo personas. Enable `DEMO_SCHEDULE_REFRESH=true` with `VISTA_PROVIDER=mock` there to add seven days of synthetic bookable sessions without replacing existing sessions or bookings. Keep `DEV_TOOL_BRIDGE=false` on the hosted API.
 
+Set `REFUND_METHODS=VOX_CREDIT,ORIGINAL_PAYMENT` on both concierge-api and worker for the agreed demo cancellation journey. An older service override can otherwise hide original-card refunds despite the current code default. Eligibility still validates the booking and original tender; this setting does not make bank-offer bookings self-service eligible. The demo policy describes wallet credit as valid for 90 days and card refunds as 5–10 days to the same original card.
+
 The Railway web bundle is also loaded by the linked Cloudflare website at `/embed/voxi.js`. Verify both entry points after deployment; the existing embed cache can retain the previous bundle for up to five minutes. Follow [the current runbook](../docs/02-runbook.md) for deployment and verification.

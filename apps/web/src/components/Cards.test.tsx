@@ -110,6 +110,26 @@ describe("concierge decision cards", () => {
     await expect(createTicketQr(" ")).rejects.toThrow("confirmed QR payload");
   });
 
+  it("immediately renders and downloads the prepared PNG of the exact verified receipt", async () => {
+    const payload = "CONFIRMED:QR:BOOK-OWNED";
+    const src = await createTicketQr(payload);
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "qr", items: [{ bookingId: "BOOK-OWNED", status: "confirmed", qrPayload: payload, totalCents: 9700 }], meta: { receiptLookup: true, qrPayload: payload, preparedQr: { payload, src } } }} />);
+    expect(html).toContain(`src="${src}"`);
+    expect(html).toContain(`href="${src}"`);
+    expect(html).toContain('download="VOX-QR-BOOK-OWNED.png"');
+    expect(html).toContain("Download QR Code");
+    expect(html).toContain("AED 97");
+    expect(html).not.toContain("Loading your QR code");
+  });
+
+  it("never displays a prepared QR belonging to a different receipt", async () => {
+    const src = await createTicketQr("OTHER-BOOKING-PAYLOAD");
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "qr", items: [{ bookingId: "BOOK-OWNED", qrPayload: "OWNED-PAYLOAD", totalCents: 9700 }], meta: { preparedQr: { payload: "OTHER-BOOKING-PAYLOAD", src } } }} />);
+    expect(html).not.toContain(src);
+    expect(html).not.toContain("download=");
+    expect(html).toContain("Loading your QR code");
+  });
+
   it("keeps the receipt, actual amount and reference together without invented fulfilment claims or purchase date", () => {
     const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "qr", items: [{ bookingId: "W4PU9V6", filmTitle: "The Journey", cinemaName: "Mall of the Emirates", showtimeLabel: "Friday, 7 PM", seats: "D8, D9", totalCents: 16200 }] }} />);
     for (const value of ["Booking confirmed", "W4PU9V6", "The Journey", "D8, D9", "AED 162", "QR code isn&#x27;t available"]) expect(html).toContain(value);

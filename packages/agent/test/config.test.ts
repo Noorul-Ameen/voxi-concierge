@@ -16,6 +16,15 @@ describe("agent configuration contracts", () => {
     expect(map.response_timeout_secs).toBeGreaterThanOrEqual(20);
     expect(map.parameters.required).toContain("sessionKey");
   });
+  it("waits for a verified QR receipt render and accepts only the booking reference", () => {
+    const qr = buildClientTools().find((tool) => tool.name === "render_qr")!;
+    expect(qr.expects_response).toBe(true);
+    expect(qr.response_timeout_secs).toBeGreaterThanOrEqual(20);
+    expect(qr.parameters.required).toEqual(["bookingId"]);
+    expect(Object.keys(qr.parameters.properties ?? {})).toEqual(["bookingId"]);
+    expect(qr.description).toContain("ok:true and rendered:true");
+    expect(qr.description).toContain("without claiming it is displayed");
+  });
   it("keeps film language free of the UI language enum and includes booking refinements", () => {
     const tools = buildWebhookTools(opts);
     const props = (name: string) =>

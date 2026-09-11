@@ -4,12 +4,14 @@
  */
 import { type DisconnectionDetails, useConversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { type BookingHistory, type CustomerProfile, type Customer, type Lang, type Session, type UiHint, type WidgetEvent, createSession, devTool, getCustomerProfile, getSignedUrl, getState, isAuthorizationError, linkConversation, sendCommand, sessionExpiryHandler, subscribe, widgetLogin, widgetLogout } from "../lib/api";
 import { isRtl, t } from "../lib/i18n";
-import { type CardActions, Cards, Feedback, seatRange } from "./Cards";
+import { type CardActions, Cards, createTicketQr, Feedback, seatRange } from "./Cards";
 import { type Loc, LocationBar } from "./LocationBar";
 import { ACCOUNT_ACTIVITY_EVENT, AUTH_CHANGE_SIGNAL, notifyPageAuthChange, pageSession, usePageSession, type PageSessionRuntime } from "../lib/page-session";
 import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, directSeatMapFeedback, holdSeconds, isCurrentHold, recordUserActivity, renderVerifiedSeatMap, verifyHoldNotice, type HoldNoticeSnapshot, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
+import { receiptCompletesCurrentOrder, renderVerifiedReceipt } from "../lib/receipt";
 
 
 const nid = () => crypto.randomUUID();
@@ -260,7 +262,18 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       },
       render_order_summary: async () => "The order summary is shown after each order step.",
       render_payment_sheet: async () => "The payment sheet appears after prepare_payment.",
-      render_qr: async () => "The QR is shown when payment succeeds.",
+      render_qr: async (p: { bookingId?: unknown }) => {
+        const s = sessionRef.current;
+        const epoch = authEpochRef.current;
+        if (!s) return JSON.stringify({ ok: false, rendered: false, error: "The widget is not ready. Sign in to view your receipt." });
+        return JSON.stringify(await renderVerifiedReceipt(
+          p?.bookingId,
+          (bookingId) => sendCommand(s, { type: "booking.receipt", bookingId }),
+          createTicketQr,
+          (ui) => { flushSync(() => push({ kind: "cards", ui })); },
+          () => sessionRef.current?.token === s.token && authEpochRef.current === epoch && !authBusyRef.current,
+        ));
+      },
       render_feedback: async () => {
         push({ kind: "feedback" });
         return "feedback shown";
@@ -394,7 +407,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     if (!ui) return;
     if (ui.type === "login") { setAuthOpen(true); return; }
     if (ui.type === "qr") {
-      commitOrder(null);
+      if (receiptCompletesCurrentOrder(ui)) commitOrder(null);
       return;
     }
     const m = ui.meta ?? {};

@@ -92,7 +92,15 @@ const booking = {
   ticketCount: 2,
   totalCents: 12000,
   paid: true,
+  qrPayload: "fixture-qr-only",
   food: [],
+};
+const bankBooking = {
+  ...booking,
+  bookingId: "fixture_bank_booking",
+  bookingRef: "WBANK12",
+  experience: "IMAX",
+  bankOffer: true,
 };
 const receipt = {
   type: "receipt",
@@ -107,6 +115,8 @@ type Journey = {
   en: [string, string];
   ar: [string, string];
   criteria: string[];
+  positiveCriteria?: string[];
+  negativeCriteria?: string[];
   positive: Record<string, SimulationMock[]>;
   negative: Record<string, SimulationMock[]>;
 };
@@ -123,8 +133,13 @@ const journeys: Journey[] = [
       "قولي: باختصار، أرى التفاصيل على الشاشة. ثم: انتظري عشرين ثانية حتى أقرأ. ثم أرسلي …",
     ],
     criteria: [
-      "Answer briefly in the requested language; no unsolicited next-step, booking or help question.",
+      "Answer briefly in the requested language and do not invent a booking, rating, completion event or extended seat hold.",
+    ],
+    positiveCriteria: [
+      "Answer briefly in the requested language. After thanks, no unsolicited follow-up question, offer of additional help or booking prompt; a brief polite acknowledgment or farewell is allowed.",
       "Do not read a booking recap, invoke business tools, invent a feedback rating or log completion after thanks.",
+    ],
+    negativeCriteria: [
       "On an explicit pause acknowledge once, then native skip_turn may wait; do not promise extended seat holds. Simulation silence is not physical 20-second audio proof.",
     ],
     positive: {},
@@ -143,20 +158,31 @@ const journeys: Journey[] = [
     ],
     criteria: [
       "Use history-grounded get_recommendations then read-only propose_booking; the complete suggestion contains actual cinema/experience/time and seating preview.",
-      "Known parent plus one child means two people, with age rules checked; do not manufacture an adult/child price category unsupported by the tools.",
       "No quick_book, hold, payment, or invented exact seats/total when quantity is unknown. Answer why from returned reasons; do not repeat a quantity question or claim nearest-home distance without location.",
+    ],
+    positiveCriteria: [
+      "Known parent plus one seven-year-old child means two people: pass the known adult/child quantities, check get_age_rules before claiming suitability, and do not manufacture a different ticket composition.",
+    ],
+    negativeCriteria: [
+      "Quantity and child attendance are unknown. Ask quantity once if needed; answer why without repeating that pending question. No child-age check is required for a child who was not mentioned.",
     ],
     positive: {
       get_recommendations: mock({ movies: [{ ...show, why: [proposal.reason], sessions: [show] }] }),
-      get_age_rules: mock({ rating: "PG", allowed: true, age: 7, description: "With an accompanying adult" }),
+      get_age_rules: mock(
+        { rating: "PG", allowed: true, age: 7, description: "With an accompanying adult" },
+        { rating: "PG", childAge: 7 },
+      ),
       propose_booking: mock(
         {
           proposal: { ...proposal, tickets: 1, childTickets: 1 },
           proposalToken: "fixture_proposal",
           needs: "proposal_acceptance",
         },
-        {},
-        { type: "booking_proposal", items: [proposal] },
+        { tickets: 1, childTickets: 1 },
+        {
+          type: "booking_proposal",
+          items: [{ ...proposal, tickets: 1, childTickets: 1, ticketQuantity: 2, adultTickets: 1 }],
+        },
       ),
     },
     negative: {
@@ -185,12 +211,18 @@ const journeys: Journey[] = [
     criteria: [
       "Check saved-card eligibility without guessing or asking for a BIN; use tool-returned savings and total.",
       "Wait for an explicit separate apply consent before apply_offer. Only after its success suggest usual snacks once; add them only when chosen.",
-      "Await queued edits before final prepare_payment. Never call pay_order or fabricate payment tokens/customer contacts; no repeat snack pitch.",
+      "Poll get_action_result only if an edit explicitly returned queued/running with an actionId; inline completed edits need no poll. A requested final unpaid review may call prepare_payment; it does not execute payment. Never call pay_order or fabricate identifiers, payment tokens or customer contacts; no repeat snack pitch.",
+    ],
+    negativeCriteria: [
+      "After the guest declines applying the offer, snacks and payment, stop with a brief acknowledgement. Do not propose another booking, restart film discovery or append an offer to book.",
     ],
     positive: {
       list_offers: mock({ offers: [offer] }),
       check_offer_eligibility: mock(offer),
-      apply_offer: mock({ ...offer, applied: true, totalCents: 9600 }, { offerId: "FIX_OFFER" }),
+      apply_offer: mock(
+        { ...offer, applied: true, totalCents: 9600 },
+        { offerId: "FIX_OFFER", userSessionId: "fixture_order", confirmed: true },
+      ),
       suggest_fnb: mock({
         usual: [
           { itemId: "FIX_POPCORN", name: "Salted popcorn", quantity: 1 },
@@ -234,8 +266,13 @@ const journeys: Journey[] = [
     ],
     criteria: [
       "Explain bank offer versus credit/points exclusivity; do not pretend they stack or silently remove an offer.",
-      "Obtain payment_switch_confirmation and explain authoritative old/new totals before removal consent. Removal consumes its specific confirmation; fresh preparation is needed afterward.",
       "Do not call pay_order or treat a method question as removal/payment consent; preserve a refused change.",
+    ],
+    positiveCriteria: [
+      "Obtain payment_switch_confirmation and explain authoritative old/new totals before removal consent. Remove with that confirmation, then show the updated basket only: the guest explicitly excludes opening payment options. No second prepare_payment is allowed after removal in this case.",
+    ],
+    negativeCriteria: [
+      "Keep the active offer and saved card unchanged after the refusal. Do not open payment options or re-ask to apply an already active offer. No removal consent or new payment review is required because no switch was accepted.",
     ],
     positive: {
       prepare_payment: mock(
@@ -250,8 +287,20 @@ const journeys: Journey[] = [
         { method: "VOX_CREDIT" },
       ),
       apply_offer: mock(
-        { removed: true, totalCents: 12000, total: "AED 120.00", needs: "review_updated_basket" },
-        { remove: true, confirmed: true, confirmationId: "fixture_switch" },
+        {
+          action: { status: "succeeded", type: "apply_offer" },
+          result: {
+            order: { ...order, offers: [], totalCents: 12000, total: "AED 120.00" },
+            removedOfferIds: ["FIX_OFFER"],
+            nextPaymentMethod: "VOX_CREDIT",
+            needs: "review_updated_basket",
+          },
+        },
+        { userSessionId: "fixture_order", remove: true, confirmed: true, confirmationId: "fixture_switch" },
+      ),
+      get_order: mock(
+        { order: { ...order, offers: [], totalCents: 12000, total: "AED 120.00" } },
+        { userSessionId: "fixture_order" },
       ),
     },
     negative: {
@@ -281,9 +330,14 @@ const journeys: Journey[] = [
       "قولي: هل أرسلتم التذكرة بالبريد؟ أرى الإيصال هنا فقط. ثم: اتركيها هنا، لا حجز جديد.",
     ],
     criteria: [
-      "Use the verified paid result to show the same reference, QR and amount together; explain the visible Download QR control briefly.",
       "Do not claim email/SMS delivery, a downloaded file, renewed hold or second payment without actual evidence.",
-      "This fixture validates conversation/tool provenance; actual image download and receipt layout require browser verification.",
+      "Do not invent order/booking identifiers or treat a tool error as proof that no booking exists. Do not start a new booking or payment.",
+    ],
+    positiveCriteria: [
+      "Use the verified paid booking to request its QR; say it is shown or downloadable only after a result confirms rendered:true, with the same reference and amount. Do not judge browser layout or actual image download in this text simulation.",
+    ],
+    negativeCriteria: [
+      "Answer the email-delivery question without claiming a ticket was sent: no delivery evidence exists. A brief acknowledgement after the guest says leave it there is sufficient; do not require an unsolicited QR redisplay or refund timing.",
     ],
     positive: {
       list_my_bookings: mock({ bookings: [booking] }),
@@ -294,6 +348,15 @@ const journeys: Journey[] = [
         receipt,
       ),
       resume_order: mock({ order: { ...order, status: "Paid", booking }, receipt }, {}, receipt),
+      render_qr: [
+        {
+          parameter_conditions: [
+            { path: "bookingId", eval: { type: "exact", expected_value: "fixture_booking" } },
+          ],
+          is_error: false,
+          mock_result: JSON.stringify({ ok: true, rendered: true, bookingId: "fixture_booking", receipt }),
+        },
+      ],
     },
     negative: {
       get_order: mock(
@@ -325,9 +388,15 @@ const journeys: Journey[] = [
       "قولي: ألغي حجز آيماكس بعرض البنك ورجعي المبلغ للمحفظة. إذا رُفض: وصليني بخدمة العملاء. لا توافقي على إلغاء الحجز الآخر أو استثناء مختلق.",
     ],
     criteria: [
-      "Select the correct verified booking; eligibility precedes preparation and explicit cancellation consent.",
+      "Select the correct verified booking and check eligibility. Never cancel another booking or bypass restrictions.",
+      "Any cancellation requires explicit consent to the returned amount and permitted destination; no invented refund outcome.",
+    ],
+    positiveCriteria: [
       "Offer only permitted destinations. Original-card demo ETA is 5–10 days, never working days; wallet validity is 90 days when relevant.",
+    ],
+    negativeCriteria: [
       "Bank-offer restriction cannot be bypassed by wallet refund. Transfer the identified booking/reason only when requested; no other booking is cancelled.",
+      "No refund is eligible in this case, so no refund ETA or wallet-validity explanation is required.",
     ],
     positive: {
       check_cancellation_eligibility: mock(
@@ -339,17 +408,31 @@ const journeys: Journey[] = [
         },
         { bookingId: "fixture_booking" },
       ),
-      prepare_cancellation: mock(
-        {
-          confirmationId: "fixture_cancel",
-          booking,
-          amountCents: 12000,
-          refundMethod: "ORIGINAL_PAYMENT",
-          eta: "5–10 days",
-          permittedRefundMethods: ["ORIGINAL_PAYMENT", "VOX_CREDIT"],
-        },
-        { bookingId: "fixture_booking", refundMethod: "ORIGINAL_PAYMENT" },
-      ),
+      prepare_cancellation: [
+        ...mock(
+          {
+            confirmationId: "fixture_cancel",
+            booking,
+            amountCents: 12000,
+            refundMethod: "ORIGINAL_PAYMENT",
+            eta: "5–10 days",
+            permittedRefundMethods: ["ORIGINAL_PAYMENT", "VOX_CREDIT"],
+          },
+          { bookingId: "fixture_booking", refundMethod: "ORIGINAL_PAYMENT" },
+        ),
+        ...mock(
+          {
+            needs: "refund_method",
+            bookingId: "fixture_booking",
+            requestedMethodAllowed: true,
+            refundMethods: [
+              { method: "ORIGINAL_PAYMENT", amountCents: 12000, eta: "5–10 days", cardLast4: "1234" },
+              { method: "VOX_CREDIT", amountCents: 12000, eta: "within 30 minutes", validityDays: 90 },
+            ],
+          },
+          { bookingId: "fixture_booking" },
+        ),
+      ],
       cancel_booking: mock(
         {
           action: { status: "succeeded" },
@@ -386,10 +469,24 @@ const journeys: Journey[] = [
     ],
     criteria: [
       "Investigate records before handover or requesting financial details. A found booking requires a guest match confirmation.",
-      "If the match is rejected, retain that fact, collect only required reference/last4 and attach the verified investigationId to handover.",
       "No repeated charge, invented debit/refund status, full-card/PIN/OTP collection or claim of human connection before tool success.",
     ],
+    positiveCriteria: [
+      "After the guest confirms the found booking, acknowledge it without an unnecessary handover. Do not require rejected-match detail collection in this matched-booking scenario.",
+    ],
+    negativeCriteria: [
+      "After the match is rejected, retain that fact, collect only required reference/last4 and attach the verified investigationId to handover.",
+    ],
     positive: {
+      render_qr: [
+        {
+          parameter_conditions: [
+            { path: "bookingId", eval: { type: "exact", expected_value: "fixture_booking" } },
+          ],
+          is_error: false,
+          mock_result: JSON.stringify({ ok: true, rendered: true, bookingId: "fixture_booking", receipt }),
+        },
+      ],
       investigate_payment: mock(
         {
           status: "found",
@@ -471,12 +568,39 @@ const journeys: Journey[] = [
       ),
       swap_booking: mock(
         {
-          action: { status: "succeeded" },
-          booking: { ...booking, sessionKey: "FIX_SWAP_SHOW", bookingRef: "WDEF456", totalCents: 13000 },
-          differenceCents: 1000,
-          extraPaidCents: 1000,
+          action: { actionId: "fixture_swap_action", type: "swap_booking", status: "succeeded" },
+          result: {
+            newBookingId: "fixture_swapped",
+            differenceCents: 1000,
+            settlement: {
+              method: "CARD",
+              direction: "charge",
+              amountCents: 1000,
+              originalPaidValueTransferredCents: 12000,
+            },
+            idempotent: false,
+          },
         },
         { bookingId: "fixture_booking", confirmationId: "fixture_swap", confirmed: true },
+        {
+          type: "qr",
+          items: [
+            {
+              ...booking,
+              bookingId: "fixture_swapped",
+              bookingRef: undefined,
+              status: "confirmed",
+              sessionKey: "FIX_SWAP_SHOW",
+              date: "2030-06-04",
+              showtime: "2030-06-04T19:05:00+04:00",
+              seats: "D8, D9",
+              totalCents: 13000,
+              total: "AED 130.00",
+              qrPayload: "fixture-swapped-qr-only",
+              swappedFrom: "fixture_booking",
+            },
+          ],
+        },
       ),
     },
     negative: {
@@ -527,19 +651,7 @@ export function buildJourneySimulationSuite(): SimulationSuite {
             ...(["06", "08"].includes(journey.number)
               ? {
                   list_my_bookings: mock({
-                    bookings:
-                      journey.persona === "James"
-                        ? [
-                            booking,
-                            {
-                              ...booking,
-                              bookingId: "fixture_bank_booking",
-                              bookingRef: "WBANK12",
-                              experience: "IMAX",
-                              bankOffer: true,
-                            },
-                          ]
-                        : [booking],
+                    bookings: journey.persona === "James" ? [booking, bankBooking] : [booking],
                   }),
                   find_booking: mock({ booking }, { bookingId: "fixture_booking" }),
                 }
@@ -559,9 +671,18 @@ export function buildJourneySimulationSuite(): SimulationSuite {
               greetingEn: `Hi ${journey.persona}, what are you in the mood to watch?`,
               greetingAr: "أهلاً، ماذا تحب أن تشاهد؟",
             },
-            chat_history: [],
-            success_conditions: journey.criteria,
-            simulation_scenario: `You are the signed-in synthetic ${journey.persona}. Speak only ${language === "ar" ? "Arabic" : "English"}. ${journey[language][path === "positive" ? 0 : 1]} Never add consent, payment clicks, profile facts, food choices or identifiers not explicitly supplied. Stop after the stated goal/refusal. All tools are mocked; never ask for a real purchase.`,
+            chat_history:
+              journey.number === "03" || journey.number === "04"
+                ? establishedContext(
+                    alignResponseShapes(initial, language).get_session_context![0]!.mock_result,
+                  )
+                : [],
+            success_conditions: [
+              ...journey.criteria,
+              ...(path === "positive" ? (journey.positiveCriteria ?? []) : []),
+              ...(path === "negative" ? (journey.negativeCriteria ?? []) : []),
+            ],
+            simulation_scenario: `You are the signed-in synthetic ${journey.persona}. Speak only ${language === "ar" ? "Arabic" : "English"}. ${journey[language][path === "positive" ? 0 : 1]} Send the stated user utterances faithfully; do not paraphrase away a payment method, age, quantity or refusal. Never add consent, payment clicks, profile facts, food choices or identifiers not explicitly supplied. Stop after the stated goal/refusal. ${journey.number === "01" && path === "negative" ? "After the pause request send only an ellipsis; never resume, invent a movie or ask to book." : ""} All tools are mocked; never ask for a real purchase.`,
             simulation_max_turns: 5,
             tool_mock_config: {
               mocking_strategy: "all" as const,
@@ -639,7 +760,7 @@ export function buildJourneySimulationSuite(): SimulationSuite {
       {
         propose_booking: mock(
           { proposal, proposalToken: "fixture_proposal", needs: "proposal_acceptance" },
-          {},
+          { tickets: 2 },
           { type: "booking_proposal", items: [proposal] },
         ),
       },
@@ -663,6 +784,8 @@ export function buildJourneySimulationSuite(): SimulationSuite {
       language === "en"
         ? "The previous bank offer was already removed with consent; the verified current basket has no offer and totals AED120. Say 'Show a fresh VOX credit payment review for this updated basket, but do not pay.' Then 'Thanks, do not charge anything.' Do not authorize a payment."
         : "أزيل عرض البنك سابقاً بموافقة، والسلة الحالية المؤكدة بدون عرض وإجماليها 120 درهماً. قولي: اعرضي مراجعة جديدة للدفع برصيد فوكس للسلة المحدثة، ولا تدفعي. ثم: شكراً، لا تخصمي شيئاً. لا تسمحي بالدفع.";
+    review.simulation_scenario +=
+      " Say the requested VOX credit method explicitly in the first user message, using the stated wording; do not replace it with a generic payment review. Never authorize payment.";
     review.success_conditions = [
       "Verify the current offer-free basket and use its AED120 total, not the old AED96 consent.",
       "Prepare a fresh VOX_CREDIT review with a new confirmation; never remove an offer again or execute payment.",
@@ -670,6 +793,7 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     const context = JSON.parse(review.tool_mock_overrides.get_session_context![0]!.mock_result);
     context.data.activeOrder.summary = { ...order, offers: [] };
     review.tool_mock_overrides.get_session_context = mock(context.data);
+    review.chat_history = establishedContext(JSON.stringify(context));
     review.tool_mock_overrides.get_order = mock(
       { order: { ...order, offers: [] } },
       { userSessionId: "fixture_order" },
@@ -690,6 +814,54 @@ export function buildJourneySimulationSuite(): SimulationSuite {
       { type: "payment", items: [], meta: { confirmationId: "fixture_fresh_payment", totalCents: 12000 } },
     );
     suite.tests.push(review);
+
+    const qrFailure = structuredClone(suite.tests.find((test) => test.id === `05-positive-${language}`)!);
+    qrFailure.id = `05-negative-${language}-render-failure`;
+    qrFailure.name = `VOX Journey ${qrFailure.id}`;
+    qrFailure.success_conditions = [
+      "Use only the verified fixture_booking identifier for the requested QR; a render error must not be described as a visible or downloadable QR.",
+      "Briefly acknowledge the inability to open the QR. Preserve the paid booking; do not claim email delivery, retry payment, or start another booking.",
+    ];
+    qrFailure.tool_mock_overrides.render_qr = [
+      {
+        parameter_conditions: [
+          { path: "bookingId", eval: { type: "exact", expected_value: "fixture_booking" } },
+        ],
+        is_error: true,
+        mock_result: JSON.stringify({
+          ok: false,
+          rendered: false,
+          error: "The receipt could not be opened.",
+        }),
+      },
+    ];
+    qrFailure.tool_mock_overrides.find_booking = mock(
+      { bookings: [booking] },
+      { bookingId: "fixture_booking" },
+    );
+    qrFailure.tool_mock_overrides.get_order = mock(
+      { order: { ...order, status: "Paid", booking } },
+      { userSessionId: "fixture_order" },
+    );
+    qrFailure.tool_mock_overrides.resume_order = mock({ order: { ...order, status: "Paid", booking } });
+    suite.tests.push(qrFailure);
+  }
+  for (const test of suite.tests) {
+    const language = test.dynamic_variables.language === "ar" ? "Arabic" : "English";
+    test.simulation_scenario = `Speak only ${language}; use the supplied ${language} user utterances without omitting stated quantities, methods or refusals. ${test.simulation_scenario}`;
+    if (test.scenario_group === "journey-07") {
+      const mocks = test.tool_mock_overrides.investigate_payment!;
+      const broad = mocks.findIndex((entry) => entry.parameter_conditions.length === 0);
+      if (broad >= 0)
+        mocks.splice(
+          broad,
+          0,
+          ...["transactionReference", "bookingId"].map((path) => ({
+            ...deny,
+            parameter_conditions: [{ path, eval: { type: "regex" as const, pattern: ".+" } }],
+          })),
+        );
+    }
   }
   return suite;
 }
@@ -706,6 +878,41 @@ function mockContext(customer: unknown, activeOrder: unknown) {
     }),
     get_order: mock({ order: activeOrder }, { userSessionId: "fixture_order" }),
   };
+}
+
+/** The continuation fixture begins after the established basket was read, as its scenario states. */
+function establishedContext(result: string) {
+  return [
+    {
+      role: "agent",
+      time_in_call_secs: 0,
+      tool_calls: [
+        {
+          type: "webhook",
+          request_id: "fixture_context_read",
+          tool_name: "get_session_context",
+          params_as_json: "{}",
+          tool_has_been_called: true,
+        },
+      ],
+      tool_results: [],
+    },
+    {
+      role: "agent",
+      time_in_call_secs: 0,
+      tool_calls: [],
+      tool_results: [
+        {
+          type: "webhook",
+          request_id: "fixture_context_read",
+          tool_name: "get_session_context",
+          result_value: result,
+          is_error: false,
+          tool_has_been_called: true,
+        },
+      ],
+    },
+  ];
 }
 
 /** Keep readable fixture facts above while using the current backend response envelopes. */
@@ -767,7 +974,14 @@ function alignResponseShapes(overrides: Record<string, SimulationMock[]>, langua
         }
         if (name === "check_cancellation_eligibility" && typeof data.eligible === "boolean") {
           result.data = {
-            booking,
+            booking: entry.parameter_conditions.some(
+              (condition) =>
+                condition.path === "bookingId" &&
+                condition.eval.type === "exact" &&
+                condition.eval.expected_value === "fixture_bank_booking",
+            )
+              ? bankBooking
+              : booking,
             eligibility: {
               eligible: data.eligible,
               reasons: data.reason ? [data.reason] : [],
@@ -821,7 +1035,11 @@ function alignResponseShapes(overrides: Record<string, SimulationMock[]>, langua
               targetShowtime: "2030-06-04T19:05:00+04:00",
               targetExperience: "Premier",
               originalSeats: ["D8", "D9"],
-              selectedSeats: seats,
+              selectedSeats: seats.map((seat) => ({
+                Row: seat.row,
+                Number: seat.number,
+                TicketTypeCode: "FIX_TICKET",
+              })),
               ticketCount: 2,
               originalTotalCents: 12000,
               newTotalCents: 13000,

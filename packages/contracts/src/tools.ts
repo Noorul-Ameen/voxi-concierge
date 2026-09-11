@@ -860,8 +860,15 @@ export const CLIENT_TOOLS = {
     params: z.object({ userSessionId: z.string(), confirmationId: z.string(), method: PaymentMethod }),
   },
   render_qr: {
-    description: "Show the booking confirmation with QR code.",
-    params: z.object({ bookingId: z.string() }),
+    description:
+      "Retrieve and display the exact verified booking receipt and its real QR code in the widget. Await the result; say the receipt or QR is shown only when ok:true and rendered:true. If unavailable, explain the returned error without claiming it is displayed or asking the guest to pay again. This read-only view does not change any booking or current basket.",
+    params: z.object({
+      bookingId: z
+        .string()
+        .describe(
+          "Exact booking reference returned by a verified booking lookup. Never invent a reference or supply QR content.",
+        ),
+    }),
   },
   render_feedback: { description: "Show the feedback survey.", params: z.object({}) },
   request_location: {
