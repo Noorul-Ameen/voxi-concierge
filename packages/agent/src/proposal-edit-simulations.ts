@@ -1,4 +1,4 @@
-import type { SimulationMock, SimulationSuite } from "./simulations.js";
+import { type SimulationMock, type SimulationSuite, rejectUnexpectedFilters } from "./simulations.js";
 import { buildUiAcknowledgementSuite } from "./ui-acknowledgement-simulations.js";
 
 type CapturedProposal = {
@@ -108,27 +108,39 @@ export function buildProposalEditSuite(
             activeOrder: null,
           }),
         ],
-        get_recommendations: [
-          ok({
-            movies: [
-              {
-                title: initial.filmTitle,
-                hoCode: initial.hoCode,
-                rating: "PG13",
-                family: true,
-                suggestedSession: initial,
-                why: ["preferred KIDS experience; the only KIDS showing is late"],
+        get_recommendations: rejectUnexpectedFilters(
+          [
+            ok({
+              movies: [
+                {
+                  title: initial.filmTitle,
+                  hoCode: initial.hoCode,
+                  rating: "PG13",
+                  family: true,
+                  suggestedSession: initial,
+                  why: ["preferred KIDS experience; the only KIDS showing is late"],
+                },
+              ],
+              profile: {
+                inferred: {
+                  preferredExperience: "KIDS",
+                  weekday: { from: "18:00", to: "20:00", around: "19:00" },
+                },
               },
-            ],
-            profile: {
-              inferred: {
-                preferredExperience: "KIDS",
-                weekday: { from: "18:00", to: "20:00", around: "19:00" },
-              },
-            },
-            date: initial.date,
-          }),
-        ],
+              date: initial.date,
+            }),
+          ],
+          {
+            cinemaId: [initial.cinemaId],
+            cinemaName: [initial.cinemaName, "MOE"],
+            time: [],
+            timeFrom: [],
+            timeTo: [],
+            experience: [],
+            filmLanguage: ["English"],
+            language: [],
+          },
+        ),
         search_films: [ok({ films: [{ title: initial.filmTitle, hoCode: initial.hoCode, rating: "PG13" }] })],
         get_film: [ok({ film: { title: initial.filmTitle, hoCode: initial.hoCode, rating: "PG13" } })],
         get_age_rules: [

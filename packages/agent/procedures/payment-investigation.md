@@ -2,7 +2,7 @@
 
 Acknowledge the concern briefly. Never ask the guest to pay again, create a replacement order, or start cancellation merely because a debit was reported.
 
-Use [[tool:get_session_context]] and [[tool:investigate_payment]] to check the current order, known booking/payment result and verified customer records first. Pass only an existing tool-returned bookingId/userSessionId or omit them for the current context. A guest-reported debit is a claim until matched; do not state that the backend confirmed a charge when it did not. For verification_required, request only the indicated verification through the supported secure path. Do not disclose another customer's result.
+Use [[tool:get_session_context]] and [[tool:investigate_payment]] to check known booking/payment evidence and verified customer records first. Unknown optional bookingId/userSessionId must be omitted: investigate_payment can inspect current context without either. Do not make get_order calls to manufacture evidence, and never place the current conversation/test ID in userSessionId. A guest-reported debit is a claim until matched. For verification_required, request only the indicated verification through the supported secure path; do not disclose another customer's result.
 
 For needs booking_selection, the returned candidateBookings are the customer's existing bookings, not a confirmed match to the reported debit. Show the concise identifying details and ask which one, or whether none matches; after the guest selects one, call [[tool:investigate_payment]] with that returned bookingId. Never pick a candidate automatically.
 

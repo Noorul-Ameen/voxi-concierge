@@ -67,8 +67,10 @@ describe("agent configuration contracts", () => {
       tools.find((tool) => tool.name === name)!.api_schema.request_body_schema.properties;
     expect(props("get_recommendations").filmLanguage).not.toHaveProperty("enum");
     expect(props("get_recommendations")).not.toHaveProperty("language");
-    expect(props("search_films").language).not.toHaveProperty("enum");
-    expect(props("propose_booking").language).not.toHaveProperty("enum");
+    for (const name of ["search_films", "get_film", "search_sessions", "propose_booking"]) {
+      expect(props(name)).not.toHaveProperty("language");
+      expect(props(name).filmLanguage).not.toHaveProperty("enum");
+    }
     expect(props("quick_book")).not.toHaveProperty("language");
     expect(props("get_session_context").language).toMatchObject({ enum: ["en", "ar"] });
     expect(props("get_recommendations")).toHaveProperty("withChildren");

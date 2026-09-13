@@ -2,7 +2,12 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { CLIENT_TOOLS, TOOL_REGISTRY } from "@voxi/contracts";
 
-export const PROCEDURE_DEFINITIONS = [
+export const PROCEDURE_DEFINITIONS: readonly {
+  key: string;
+  type: "free_form" | "deterministic";
+  name: string;
+  trigger: string;
+}[] = [
   {
     key: "booking",
     type: "free_form",
@@ -30,13 +35,6 @@ export const PROCEDURE_DEFINITIONS = [
     name: "VOX · Investigate a missing booking",
     trigger:
       "The guest reports a debit, pending/failed payment, or missing confirmation and cannot identify the corresponding booking. Also continue this investigation when a found booking is rejected as the wrong purchase. Excludes ordinary booking discovery, an identified cancellation request, or a known-booking date change.",
-  },
-  {
-    key: "brief-acknowledgement",
-    type: "deterministic",
-    name: "VOX · Acknowledge visible details briefly",
-    trigger:
-      "The latest user turn only asks you to keep it brief because they can already see the details, without asking a substantive question or requesting any new action. Examples: 'Keep it brief; I can see the details' or 'باختصار، أنا شايفة التفاصيل'. Excludes a booking or payment request, approval, modification, cancellation, a question needing an answer, a request to pause or wait, thanks alone, and a [widget] event requiring acknowledgement of its actual result. A mention of visible details is not evidence that a particular option or ticket quantity exists.",
   },
 ] as const;
 

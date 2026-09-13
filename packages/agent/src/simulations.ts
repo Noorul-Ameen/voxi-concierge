@@ -36,6 +36,42 @@ export type SimulationSuite = {
 };
 export type AttachedSimulationTool = { id: string; name: string };
 
+/** Keep omitted optional inputs valid, but never let a broad mock silently ignore
+ * an explicit filter/identifier that conflicts with the returned fixture facts. */
+export function rejectUnexpectedFilters(
+  mocks: SimulationMock[],
+  allowed: Record<string, readonly string[]>,
+): SimulationMock[] {
+  return [
+    ...Object.entries(allowed).map(
+      ([path, values]): SimulationMock => ({
+        parameter_conditions: [
+          {
+            path,
+            eval: {
+              type: "regex",
+              pattern: values.length
+                ? `^(?!(?:${values.map((value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})$).+`
+                : ".+",
+            },
+          },
+        ],
+        mock_result: JSON.stringify({
+          ok: false,
+          error: {
+            code: "UNEXPECTED_SIMULATION_PARAMETER",
+            message:
+              "The supplied filter or identifier does not match the verified fixture; it was not ignored.",
+            retryable: false,
+          },
+        }),
+        is_error: true,
+      }),
+    ),
+    ...mocks,
+  ];
+}
+
 export function loadSimulationSuite(): SimulationSuite {
   return JSON.parse(
     readFileSync(fileURLToPath(new URL("../coaching/elevenlabs-simulations.json", import.meta.url)), "utf8"),

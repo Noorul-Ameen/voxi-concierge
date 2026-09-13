@@ -132,11 +132,25 @@ const SILENT_TOOLS = new Set<string>([
   "submit_feedback",
 ]);
 
+const FILM_FILTER_TOOLS = new Set<string>([
+  "get_recommendations",
+  "search_films",
+  "get_film",
+  "search_sessions",
+  "propose_booking",
+]);
+
 // These instructions sit beside the operation that can be misused, rather than
 // relying on a distant conversation example to override the generic API label.
 const AGENT_TOOL_USAGE: Partial<Record<ToolName, string>> = {
   get_age_rules:
     "Use the actual returned film rating and include childAge whenever the guest already supplied it. For a family rating enquiry, explain the rating's meaning as well as its label; if age is unknown, explain the general rule then ask age once. Unknown classification does not establish child admission.",
+  get_recommendations:
+    "Omit every optional cinema, time/window, experience, seat or film-language filter that the guest did not specify. 'Usual' requests server-side profile inference, not a guessed input. Only a prior verified context/result can supply a preference; a greeting, example or conversation language cannot.",
+  list_offers:
+    "For 'my saved card', omit bank and cardBin: the authenticated backend resolves the card. bank means an actual named bank, never saved_card or another sentinel. Quote only the returned eligible saving; it remains potential until applied.",
+  investigate_payment:
+    "For an initial missing-booking/debit report, omit unknown optional IDs and inspect authenticated context. userSessionId is an actual returned order ID, never the current conversation/test ID. A failed get_order does not validate its input for this tool. A known paid booking with a QR rendering error needs receipt assistance, not a new payment investigation.",
   propose_booking:
     "Carry known composition on every proposal/edit: tickets is ADULT count, childTickets is CHILD count. One parent with one child means tickets:1, childTickets:1, not tickets:2 or totalTickets. Use only declared parameters. A failed proposal supplies no price, seats or acceptance token: explain the unresolved preview; never quote a replacement price or ask to hold an unreturned proposal.",
   prepare_payment:
@@ -164,7 +178,7 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
     const def = TOOL_REGISTRY[name];
     const { prop } = zodToProp(def.input as unknown as z.ZodTypeAny);
     const obj = prop as ObjectProp;
-    // Recommendations expose only filmLanguage. Their legacy language alias stays server-side;
+    // Film tools expose only filmLanguage. Their legacy language alias stays server-side;
     // reply/interface language already belongs to the authenticated conversation.
     const exposedProperties =
       name === "quick_book"
@@ -173,13 +187,43 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
               ["proposalToken", "idempotencyKey"].includes(field),
             ),
           )
-        : name === "get_recommendations"
+        : FILM_FILTER_TOOLS.has(name)
           ? Object.fromEntries(Object.entries(obj.properties).filter(([field]) => field !== "language"))
           : obj.properties;
     const properties: Record<string, Prop> = {
       ...CONTEXT_PROPS,
       ...exposedProperties,
     };
+    if (FILM_FILTER_TOOLS.has(name))
+      for (const field of [
+        "cinemaId",
+        "cinemaName",
+        "time",
+        "timeFrom",
+        "timeTo",
+        "experience",
+        "seatPreference",
+        "filmLanguage",
+      ])
+        if (properties[field])
+          properties[field] = {
+            ...properties[field],
+            description: `${properties[field].description ?? ""} Optional: omit unless explicitly requested/selected or supplied by a current verified result. 'Usual' alone means backend inference, not an invented filter.`,
+          } as Prop;
+    if (name === "get_order" || name === "investigate_payment")
+      properties.userSessionId = {
+        ...properties.userSessionId,
+        description:
+          name === "investigate_payment"
+            ? "Optional actual order ID from a successful activeOrder/order result. OMIT when unknown, including the initial debit enquiry. Never use conversationId, test-run ID, or a failed lookup's guessed input."
+            : "Actual unpaid order ID copied from activeOrder.userSessionId or a successful order result. Never a conversation/test ID or booking reference; read context first if absent.",
+      } as Prop;
+    if (name === "list_offers")
+      properties.bank = {
+        ...properties.bank,
+        description:
+          "Optional actual bank name explicitly named by the guest or a verified card result. Omit for 'my saved card'; saved_card is not a bank name.",
+      } as Prop;
     if (name === "propose_booking") {
       properties.tickets = {
         ...properties.tickets,
@@ -192,7 +236,7 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
           "Child tickets, separate from adult tickets. Preserve the guest's known children on every proposal/edit; one parent with one child means 1 here and tickets:1.",
       } as Prop;
     }
-    if (name !== "get_recommendations" && !Object.hasOwn(obj.properties, "language")) {
+    if (!FILM_FILTER_TOOLS.has(name) && !Object.hasOwn(obj.properties, "language")) {
       // Other tools keep their existing film-language contract or shared UI language.
       properties.language = {
         type: "string",

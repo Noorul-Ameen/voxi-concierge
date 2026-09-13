@@ -11,6 +11,8 @@ This change follows live checks of the supplied customer journeys on the linked 
 - Confirmed-booking changes first look up the authenticated customer's bookings. Swap previews prioritize the original cinema and experience, closest requested time, exact seats where available, then the verified seating preference within the original tier. The preview still requires consent to its actual charge or refund.
 - Model-reported cancellation/refund/swap completion requires a successful same-session backend action. A refusal or handover cannot mark a financial journey completed.
 - Agent prompts, tool descriptions and existing Procedures handle verified widget decisions briefly, distinguish suggestions from completed actions, disclose meaningful time/experience changes, and avoid inventing prices, transaction references, QR alternatives or completed outcomes after failed tools.
+- Four task Procedures remain: booking, cancellation, changing a paid booking and missing-payment investigation. The optional structured brevity Procedure is removed because transcript tests showed it suppressing real questions and verified widget outcomes. Brief responses are handled in the normal conversation instructions.
+- Film-language filters use an explicit `filmLanguage` field in agent tools, separate from English/Arabic conversation language. Existing API film-language aliases remain compatible; the old general language hint on `get_film` keeps its previous behavior. Unknown cinema, bank, time and order values are omitted rather than guessed.
 
 ## Test approach
 

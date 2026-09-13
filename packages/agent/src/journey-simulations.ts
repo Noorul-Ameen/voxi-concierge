@@ -1,5 +1,5 @@
 import { CLIENT_TOOLS, TOOL_REGISTRY } from "@voxi/contracts";
-import type { SimulationMock, SimulationSuite } from "./simulations.js";
+import { type SimulationMock, type SimulationSuite, rejectUnexpectedFilters } from "./simulations.js";
 
 const deny: SimulationMock = {
   parameter_conditions: [],
@@ -136,6 +136,7 @@ const journeys: Journey[] = [
       "Answer briefly in the requested language and do not invent a booking, rating, completion event or extended seat hold.",
     ],
     positiveCriteria: [
+      "Actually explain what IMAX is in one short sentence. A promise to keep replies brief is not an answer to that factual question, even if a procedure produces it.",
       "Answer briefly in the requested language. After thanks, no unsolicited follow-up question, offer of additional help or booking prompt; a brief polite acknowledgment or farewell is allowed.",
       "Do not read a booking recap, invoke business tools, invent a feedback rating or log completion after thanks.",
     ],
@@ -947,6 +948,37 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     suite.tests.push(qrFailure);
   }
   for (const test of suite.tests) {
+    if (test.tool_mock_overrides.list_offers)
+      test.tool_mock_overrides.list_offers = rejectUnexpectedFilters(test.tool_mock_overrides.list_offers, {
+        bank: [offer.savedCard.bank],
+      });
+    if (test.scenario_group === "journey-02" && test.tool_mock_overrides.get_recommendations)
+      test.tool_mock_overrides.get_recommendations = rejectUnexpectedFilters(
+        test.tool_mock_overrides.get_recommendations,
+        {
+          cinemaId: [show.cinemaId],
+          cinemaName: [show.cinemaName, "MOE"],
+          experience: [],
+          filmLanguage: [show.language],
+          language: [],
+          timeFrom: [],
+          timeTo: [],
+        },
+      );
+    if (test.scenario_group === "journey-08" && test.tool_mock_overrides.search_sessions)
+      test.tool_mock_overrides.search_sessions = rejectUnexpectedFilters(
+        test.tool_mock_overrides.search_sessions,
+        {
+          cinemaId: [show.cinemaId],
+          cinemaName: [show.cinemaName, "MOE"],
+          hoCode: [show.hoCode],
+          filmLanguage: [show.language],
+          language: [],
+        },
+      );
+    if (test.id.startsWith("06-negative-"))
+      test.simulation_scenario +=
+        " Do not invent a film title. Select only the returned bank-offer booking by its verified reference when asked; a returned different film cannot silently match an unreturned title.";
     if (test.id.startsWith("03-negative-") && !test.id.endsWith("offer-error"))
       test.success_conditions.push(
         "After offer refusal, any saving is hypothetical until successful application. If the user asks what they saved, clarify the discount would save the returned amount and remains unapplied; do not affirm completed saving or a changed total.",
@@ -966,7 +998,10 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     const language = test.dynamic_variables.language === "ar" ? "Arabic" : "English";
     test.simulation_scenario = `Speak only ${language}; use the supplied ${language} user utterances without omitting stated quantities, methods or refusals. ${test.simulation_scenario}`;
     if (test.scenario_group === "journey-07") {
-      const mocks = test.tool_mock_overrides.investigate_payment!;
+      const mocks = rejectUnexpectedFilters(test.tool_mock_overrides.investigate_payment!, {
+        userSessionId: ["fixture_order"],
+      });
+      test.tool_mock_overrides.investigate_payment = mocks;
       const broad = mocks.findIndex((entry) => entry.parameter_conditions.length === 0);
       if (broad >= 0)
         mocks.splice(

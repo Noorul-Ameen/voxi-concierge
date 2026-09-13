@@ -28,7 +28,7 @@
           },
           "language": {
             "type": "string",
-            "description": "Film language, e.g. English, Hindi, Arabic, Malayalam"
+            "description": "Legacy film-language alias for API clients. Prefer filmLanguage; filmLanguage takes precedence."
           },
           "channel": {
             "type": "string",
@@ -71,6 +71,10 @@
           },
           "genre": {
             "type": "string"
+          },
+          "filmLanguage": {
+            "type": "string",
+            "description": "Film language explicitly requested by the guest, such as English, Hindi, Arabic or Tamil. Never copy the conversation/interface language: speaking Arabic does not request an Arabic film. Omit when no film language was requested."
           },
           "rating": {
             "type": "string",
@@ -139,6 +143,10 @@
           },
           "title": {
             "type": "string"
+          },
+          "filmLanguage": {
+            "type": "string",
+            "description": "Film language explicitly requested by the guest, such as English, Hindi, Arabic or Tamil. Never copy the conversation/interface language: speaking Arabic does not request an Arabic film. Omit when no film language was requested."
           }
         },
         "required": [
@@ -153,7 +161,8 @@
             "minLength": 1
           },
           "language": {
-            "type": "string"
+            "type": "string",
+            "description": "Legacy film-language alias for API clients. Prefer filmLanguage; filmLanguage takes precedence."
           },
           "channel": {
             "type": "string",
@@ -227,6 +236,10 @@
               "Private",
               "Other"
             ]
+          },
+          "filmLanguage": {
+            "type": "string",
+            "description": "Film language explicitly requested by the guest, such as English, Hindi, Arabic or Tamil. Never copy the conversation/interface language: speaking Arabic does not request an Arabic film. Omit when no film language was requested."
           },
           "nearMe": {
             "type": "boolean",
@@ -1416,7 +1429,7 @@
           },
           "language": {
             "type": "string",
-            "description": "Film language when the guest specified one"
+            "description": "Legacy film-language alias for API clients. Prefer filmLanguage; filmLanguage takes precedence."
           },
           "channel": {
             "type": "string",
@@ -1503,6 +1516,10 @@
             ],
             "description": "Only when the guest asked for it (IMAX, MAX, GOLD…). Default Standard unless the profile prefers otherwise."
           },
+          "filmLanguage": {
+            "type": "string",
+            "description": "Film language explicitly requested by the guest, such as English, Hindi, Arabic or Tamil. Never copy the conversation/interface language: speaking Arabic does not request an Arabic film. Omit when no film language was requested."
+          },
           "tickets": {
             "type": "integer",
             "minimum": 1,
@@ -1548,7 +1565,7 @@
           },
           "language": {
             "type": "string",
-            "description": "Film language when the guest specified one"
+            "description": "Legacy film-language alias for API clients. Prefer filmLanguage; filmLanguage takes precedence."
           },
           "channel": {
             "type": "string",
@@ -1629,6 +1646,10 @@
               "Other"
             ],
             "description": "Only when the guest asked for it (IMAX, MAX, GOLD…). Default Standard unless the profile prefers otherwise."
+          },
+          "filmLanguage": {
+            "type": "string",
+            "description": "Film language explicitly requested by the guest, such as English, Hindi, Arabic or Tamil. Never copy the conversation/interface language: speaking Arabic does not request an Arabic film. Omit when no film language was requested."
           },
           "tickets": {
             "type": "integer",

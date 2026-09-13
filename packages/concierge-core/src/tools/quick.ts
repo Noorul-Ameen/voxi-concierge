@@ -474,7 +474,7 @@ async function resolveSession(
       kind: "result",
       result: ok({ needs: "film" }, t(lang, "Which movie would you like to see?", "أي فيلم تود مشاهدته؟")),
     };
-  const wantLang = normaliseFilmLanguage(input.language);
+  const wantLang = normaliseFilmLanguage(input.filmLanguage ?? input.language);
   const versions = new Set(
     (await ctx.catalog.films())
       .filter(
@@ -739,7 +739,7 @@ const quickHandlers: Pick<
       const recommended = await customerTools.get_recommendations(ctx, {
         kind: "movies",
         limit: 1,
-        filmLanguage: input.language,
+        filmLanguage: input.filmLanguage ?? input.language,
         cinemaId: input.cinemaId,
         cinemaName: input.cinemaName,
         date: input.date,
@@ -979,6 +979,10 @@ const quickHandlers: Pick<
     const previous = meta(ctx).pendingBooking ?? {};
     const provided = Object.fromEntries(Object.entries(incoming).filter(([, value]) => value !== undefined));
     const pending = { ...previous, ...provided };
+    // An explicit legacy argument in a later turn must replace an older canonical filter.
+    // Within one request the canonical filmLanguage field always takes precedence.
+    if (incoming.language !== undefined && incoming.filmLanguage === undefined)
+      pending.filmLanguage = undefined;
     // A newly stated movie/cinema/date/time replaces a previous exact showtime selection.
     if (
       !incoming.sessionKey &&
@@ -992,6 +996,7 @@ const quickHandlers: Pick<
         "timeFrom",
         "timeTo",
         "language",
+        "filmLanguage",
         "experience",
       ].some((key) => key in provided)
     )

@@ -98,7 +98,7 @@ export const movieTools: Pick<
   async search_films(ctx, input) {
     const films = await ctx.catalog.films();
     let scored = films
-      .map((f) => ({ f, s: matchFilm(f, input) }))
+      .map((f) => ({ f, s: matchFilm(f, { ...input, language: input.filmLanguage ?? input.language }) }))
       .filter((x) => x.s >= (input.query ? 0.45 : 0));
     if (input.cinemaId) {
       const at = new Set(
@@ -161,6 +161,16 @@ export const movieTools: Pick<
   async get_film(ctx, input) {
     let film = input.hoCode ? await ctx.catalog.film(input.hoCode) : null;
     if (!film && input.title) film = (await ctx.catalog.resolveFilms(input.title, 1))[0]?.film ?? null;
+    // get_film historically used language only as a shared UI hint, never as a film filter.
+    const wantLang = normaliseFilmLanguage(input.filmLanguage);
+    if (film && wantLang && similarity(film.language, wantLang) < 0.7) {
+      const title = film.title.toLowerCase();
+      film =
+        (await ctx.catalog.films()).find(
+          (candidate) =>
+            candidate.title.toLowerCase() === title && similarity(candidate.language, wantLang) >= 0.7,
+        ) ?? null;
+    }
     if (!film)
       return err(
         "NOT_FOUND",
@@ -233,7 +243,7 @@ export const movieTools: Pick<
     }
     // The same title can exist as several language versions (e.g. Tamil + Malayalam prints). Unless the guest
     // asked for a language, show every version's showtimes and let the cards carry the language tag.
-    const wantLangForVersions = normaliseFilmLanguage(input.language);
+    const wantLangForVersions = normaliseFilmLanguage(input.filmLanguage ?? input.language);
     const versionCodes = new Set<string>();
     if (film) {
       const sameTitle = (await ctx.catalog.films()).filter(
@@ -306,7 +316,7 @@ export const movieTools: Pick<
       : spokenDateRangeEnd(input.date, date);
     // Language is a film attribute: once the guest has named the film, don't second-guess it per session
     // (dubbed/subtitled sessions may carry a different language tag than the film itself).
-    const wantLang = film ? undefined : normaliseFilmLanguage(input.language);
+    const wantLang = film ? undefined : normaliseFilmLanguage(input.filmLanguage ?? input.language);
     const base = (await sessionsFor(ctx, cinemaIds)).filter(
       (s) =>
         (!film || versionCodes.has(s.hoCode)) &&

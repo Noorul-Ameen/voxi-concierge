@@ -171,6 +171,7 @@ export function buildBalanceContinuationSuite(clockLocal: string): SimulationSui
           ],
           success_conditions: [
             "The guest chose VOX_CREDIT. A short yes approves that exact split/review only, never SHARE_POINTS. Redeem with explicit balanceType VOX_CREDIT and amountCents12000, then prepare CARD for the returned2550 remainder. No pay_order, new hold, charge or invented method/amount is allowed.",
+            "If the actual guest instead rejects the card remainder or requests credit only, do not require a CARD review for a pass: stop at the returned insufficient-balance choice without claiming a review opened. A reservation is reserved/selected, not charged/deducted; Arabic خصم before successful payment is not a truthful reservation acknowledgement.",
             correcting
               ? "First remove the explicitly rejected SHARE reservation using the returned balanceType SHARE_POINTS, points0. Verify successful clearing before applying VOX credit. Do not retain/reuse SHARE in the new review; do not claim clearing if the tool failed."
               : "Do not call redeem_points with omitted balanceType, SHARE_POINTS, arbitrary points or a zero amount. The copied redemptionInput is the only authorized reservation.",
@@ -178,8 +179,8 @@ export function buildBalanceContinuationSuite(clockLocal: string): SimulationSui
           ],
           simulation_scenario:
             language === "ar"
-              ? `Speak Arabic only. الحالة السابقة جاهزة. قولي أولاً بالنص: ${correcting ? "نعم، أزيلي نقاط شير وتابعي برصيد فوكس فقط؛ لا تدفعي." : "نعم، اعرضي مراجعة الدفع هذه فقط، لا تدفعي."} ${correcting ? "إذا سألت عن توزيع رصيد فوكس والبطاقة وافقي على عرض المراجعة فقط." : ""} عندما تظهر المراجعة قولي: شكراً، لا تدفعي، هذا كل شيء. لا تختاري شير ولا تأذني بخصم أو حجز جديد.`
-              : `First say exactly '${correcting ? "Yes, remove SHARE and continue with VOX Credit only; do not pay." : "Yes, show me that payment review only; do not pay."}' ${correcting ? "If asked about the VOX Credit/card split, approve showing that review only." : ""} After the review say 'Thanks, do not pay; that is all.' Never select SHARE or authorize a charge or new booking.`,
+              ? `Speak Arabic only. الحالة السابقة جاهزة. قولي أولاً بالنص: ${correcting ? "نعم، أزيلي نقاط شير وتابعي برصيد فوكس مع باقي المبلغ بالبطاقة؛ اعرضي المراجعة فقط ولا تدفعي." : "نعم، اعرضي مراجعة رصيد فوكس وباقي المبلغ بالبطاقة فقط، لا تدفعي."} ${correcting ? "إذا سألت عن توزيع رصيد فوكس والبطاقة وافقي على عرض المراجعة فقط." : ""} عندما تظهر المراجعة قولي: شكراً، لا تدفعي، هذا كل شيء. لا تختاري شير ولا تأذني بخصم أو حجز جديد. لا تغيّري موافقتك على مراجعة باقي المبلغ بالبطاقة إلى طلب رصيد فوكس وحده.`
+              : `First say exactly '${correcting ? "Yes, remove SHARE and use VOX Credit with the remainder by card; show that review only, do not pay." : "Yes, show that VOX Credit plus card remainder review only; do not pay."}' ${correcting ? "If asked about the VOX Credit/card split, approve showing that review only." : ""} After the review say 'Thanks, do not pay; that is all.' Never select SHARE or authorize a charge or new booking. Do not paraphrase the approved card-remainder review as credit-only or no-card.`,
           simulation_max_turns: 5,
           tool_mock_config: {
             mocking_strategy: "all" as const,
