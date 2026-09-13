@@ -35,7 +35,7 @@ describe("scoped procedure deployment", () => {
         tools.map((t) => t.id),
         { proceduresEnabled: true },
       ),
-    ).not.toHaveProperty("conversation_config.tts");
+    ).toHaveProperty("conversation_config.tts", { text_normalisation_type: "elevenlabs" });
   });
 
   it("keeps only task procedures so brief questions and result acknowledgements remain in normal conversation", () => {
@@ -91,7 +91,7 @@ describe("scoped procedure deployment", () => {
             tools: [{ name: "prior-expanded-tool" }],
           },
         },
-        tts: { voice_id: "user-chosen-voice" },
+        tts: { voice_id: "user-chosen-voice", text_normalisation_type: "system_prompt" },
         turn: { silence_end_call_timeout: 180 },
         language_presets: { ar: { voice: "unchanged-Arabic" } },
       },
@@ -133,6 +133,7 @@ describe("scoped procedure deployment", () => {
           conversation_config: {
             ...agent.conversation_config,
             ...patch.conversation_config,
+            tts: { ...agent.conversation_config.tts, ...patch.conversation_config.tts },
             agent: {
               ...agent.conversation_config.agent,
               ...patch.conversation_config.agent,
@@ -161,6 +162,7 @@ describe("scoped procedure deployment", () => {
       "PATCH /v1/convai/agents/agent_fixture?branch_id=candidate",
     ]);
     expect(agent.conversation_config.tts.voice_id).toBe("user-chosen-voice");
+    expect(agent.conversation_config.tts.text_normalisation_type).toBe("elevenlabs");
     expect(agent.workflow).toMatchObject({ nodes: { entry: { type: "start" } } });
     expect(agent.conversation_config).not.toHaveProperty("workflow");
     expect(loadProcedureSources().every((p) => !p.content.includes('[tool id="'))).toBe(true);

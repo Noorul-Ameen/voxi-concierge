@@ -144,7 +144,7 @@ const FILM_FILTER_TOOLS = new Set<string>([
 // relying on a distant conversation example to override the generic API label.
 const AGENT_TOOL_USAGE: Partial<Record<ToolName, string>> = {
   get_age_rules:
-    "Use the actual returned film rating and include childAge whenever the guest already supplied it. For a family rating enquiry, explain the rating's meaning as well as its label; if age is unknown, explain the general rule then ask age once. Unknown classification does not establish child admission.",
+    "First fetch the film's actual rating code; never pass its title as rating. Include a known childAge. Explain data.allowed:false as refusal, null as unconfirmed admission, and true using its exact conditions. For a family enquiry explain the rating and ask age once only if missing.",
   get_recommendations:
     "Omit every optional cinema, time/window, experience, seat or film-language filter that the guest did not specify. 'Usual' requests server-side profile inference, not a guessed input. Only a prior verified context/result can supply a preference; a greeting, example or conversation language cannot.",
   list_offers:
@@ -154,13 +154,13 @@ const AGENT_TOOL_USAGE: Partial<Record<ToolName, string>> = {
   propose_booking:
     "Carry known composition on every proposal/edit: tickets is ADULT count, childTickets is CHILD count. One parent with one child means tickets:1, childTickets:1, not tickets:2 or totalTickets. Use only declared parameters. A failed proposal supplies no price, seats or acceptance token: explain the unresolved preview; never quote a replacement price or ask to hold an unreturned proposal.",
   prepare_payment:
-    "This can open payment options. A booking request, saved-card mention, offer enquiry or current total is not a request to open payment. Read the existing basket first. Call only for an explicit checkout/review request, or to obtain the consent required for an explicitly requested balance-method switch. Preserve that exact requested method; do not substitute SHARE for VOX Credit.",
+    "This can open payment options. A booking request, saved-card mention, offer enquiry or current total is not a request to open payment. Call for an explicit review request or the consent preview for a requested balance switch. A balance_split_confirmation is not an open review: after acceptance execute its redemptionInput, wait for success, then prepare the returned remainder method. Only the successful review result proves a sheet is open; preserve VOX versus SHARE.",
   get_order:
     "Requires a real unpaid order userSessionId copied from activeOrder or an earlier order result. A conversation ID, test-run ID, booking reference or placeholder is invalid. If no order ID is available, use get_session_context; for a member's existing paid booking use list_my_bookings instead.",
   resume_order:
     "This inspects an UNPAID basket/hold only. An empty result does not mean the customer has no confirmed bookings. For 'change/cancel my current booking', use list_my_bookings even when there is no active basket; ask which booking only when several match.",
   list_my_bookings:
-    "Use for a signed-in guest's existing/current booking, including a reference-free change or cancellation request. An absent activeOrder is not evidence of no bookings. If several cards are returned, ask which film/date without reading all their details aloud.",
+    "Actually call this for a signed-in guest's existing/current booking, including a reference-free change or cancellation request; announcing a lookup is insufficient. An absent activeOrder is not evidence of no bookings. Match the known film/date/experience first; ask only if several still match, without reading every card aloud.",
   log_journey:
     "Do not log booking or payment; their backend records completion. Cancellation is completed only after successful cancel_booking, never after an eligibility refusal, explanation or handover. A thanks/goodbye supplies no reporting action. Preserve a failed or unresolved outcome instead of calling it completed.",
 };
@@ -322,6 +322,7 @@ export const SKIP_TURN = {
 export function buildAgentBehaviorPatch(toolIds: string[], options: { proceduresEnabled?: boolean } = {}) {
   return {
     conversation_config: {
+      tts: { text_normalisation_type: "elevenlabs" as const },
       agent: {
         prompt: {
           prompt: systemPrompt(options),
@@ -435,6 +436,7 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
         },
       },
       tts: {
+        text_normalisation_type: "elevenlabs",
         voice_id: opts.voiceIdEn ?? "cgSgspJ2msm6clMCkdW9",
         model_id: "eleven_v3_conversational",
         expressive_mode: true,

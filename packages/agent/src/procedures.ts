@@ -34,7 +34,7 @@ export const PROCEDURE_DEFINITIONS: readonly {
     type: "free_form",
     name: "VOX · Investigate a missing booking",
     trigger:
-      "The guest reports a debit, pending/failed payment, or missing confirmation and cannot identify the corresponding booking. Also continue this investigation when a found booking is rejected as the wrong purchase. Excludes ordinary booking discovery, an identified cancellation request, or a known-booking date change.",
+      "The guest reports a debit or uncertain payment and cannot identify the corresponding booking, or rejects a found booking as the wrong purchase. Excludes a known paid booking whose receipt/QR failed to render, a known unpaid basket awaiting balance consent, ordinary discovery, cancellation and a booked-show change.",
   },
 ] as const;
 

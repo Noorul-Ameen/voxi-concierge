@@ -808,7 +808,7 @@ export const TOOL_REGISTRY = {
     input: SwapBookingInput,
     kind: "write",
     description:
-      "Execute the prepared swap (refund original, rebook new session). Requires confirmationId and confirmed=true.",
+      "Execute the prepared exchange, retaining the original paid value and settling only its verified difference. Requires the current confirmationId and confirmed=true; no full-charge/refund replacement workaround.",
   },
   start_order: {
     input: StartOrderInput,
@@ -864,7 +864,7 @@ export const TOOL_REGISTRY = {
     input: TransferToAgentInput,
     kind: "write",
     description:
-      "Hand the conversation to a human agent with a summary. Use on explicit request, frustration, or after two failed answers.",
+      "Hand the conversation to a human agent with a factual summary only after the guest explicitly requests a person or accepts an offered transfer. Frustration, policy limits or failed answers justify offering help, not executing it without acceptance. After asking, wait for the guest's answer.",
   },
   log_journey: {
     input: LogJourneyInput,
