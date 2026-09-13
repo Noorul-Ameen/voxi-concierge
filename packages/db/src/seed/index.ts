@@ -466,6 +466,7 @@ async function main() {
   );
 
   // ---- customers, loyalty ----
+  await db.delete(s.orders); // in-progress baskets reference customers (added with the proposal flow)
   await db.delete(s.purchaseHistory);
   await db.delete(s.refunds);
   await db.delete(s.bookings);
