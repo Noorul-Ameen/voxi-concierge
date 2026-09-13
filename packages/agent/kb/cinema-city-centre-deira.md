@@ -15,6 +15,7 @@ Map coordinates: 25.2521, 55.3311
 
 ## Experiences available
 - GOLD
+- KIDS
 - MAX
 - Standard
 

@@ -14,6 +14,7 @@ Website: https://uae.voxcinemas.com/cinemas/city-centre-sharjah
 Map coordinates: 25.3251, 55.3999
 
 ## Experiences available
+- KIDS
 - MAX
 - Premium
 - Standard

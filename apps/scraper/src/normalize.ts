@@ -106,6 +106,7 @@ const CINEMA_AR: Record<string, string> = {
   "0057": "وافي مول",
   "0104": "ريم مول - أبوظبي",
   "0105": "دبي فستيفال سيتي مول",
+  "0110": "سيتي سنتر معيصم",
 };
 
 const SHORT_CODES: Record<string, string> = {
@@ -131,6 +132,7 @@ const SHORT_CODES: Record<string, string> = {
   "0057": "WAF",
   "0104": "REM",
   "0105": "DFC",
+  "0110": "CCM",
 };
 
 /** Fallback coordinates for cinema pages that do not embed a map link. */
@@ -143,6 +145,83 @@ const GEO_FALLBACK: Record<string, [string, string]> = {
   "0015": ["25.2245", "55.3223"], // Grand Hyatt Dubai
   "0002": ["25.1181", "55.2004"],
   "0105": ["25.2222", "55.3520"], // Dubai Festival City Mall
+};
+
+/**
+ * Curated fields for cinema pages the site renders without address/map data (or with another
+ * cinema's data). Applied after the page values so a re-capture never regresses them.
+ */
+const CINEMA_OVERRIDES: Record<
+  string,
+  Partial<
+    Pick<SeedCinema, "address1" | "latitude" | "longitude" | "parkingInfo" | "cinemaLocation" | "description">
+  >
+> = {
+  "0055": {
+    address1: "Sheikh Mohammed Bin Zayed Rd, Al Zahia, Sharjah",
+    latitude: "25.3113",
+    longitude: "55.4809",
+    parkingInfo: "Free mall parking with 4,000+ spaces",
+    cinemaLocation: "Level 1",
+    description:
+      "VOX Cinemas City Centre Al Zahia is located in City Centre Al Zahia (Sharjah), offering Couch, GOLD, KIDS, MAX, Standard screens with online booking, food & drinks ordering and SHARE rewards.",
+  },
+  "0001": {
+    address1: "Baniyas Rd, Port Saeed, Deira, Dubai",
+    latitude: "25.2521",
+    longitude: "55.3311",
+    parkingInfo:
+      "Mall parking (Al Maktoum Rd and Baniyas Rd entrances); Deira City Centre Metro station is a 3-minute walk",
+    cinemaLocation: "Level 2",
+    description:
+      "VOX Cinemas City Centre Deira is located in City Centre Deira (Dubai), offering GOLD, MAX, Standard screens with online booking, food & drinks ordering and SHARE rewards.",
+  },
+  "0006": {
+    address1: "Sheikh Khalifa Bin Zayed Rd, Fujairah",
+    latitude: "25.1213",
+    longitude: "56.3363",
+    parkingInfo: "Free mall parking",
+    cinemaLocation: "Level 1",
+    description:
+      "VOX Cinemas City Centre Fujairah is located in City Centre Fujairah (Fujairah), offering MAX, Premium, Standard screens with online booking, food & drinks ordering and SHARE rewards.",
+  },
+  "0005": {
+    address1: "Sheikh Mohammed Bin Zayed Rd, Mirdif, Dubai",
+    latitude: "25.2166",
+    longitude: "55.4075",
+    parkingInfo:
+      "Mall parking (P1\u2013P5), cinema entrance closest to the Sheikh Mohammed Bin Zayed Rd side",
+    cinemaLocation: "Level 2, next to Magic Planet",
+    description:
+      "VOX Cinemas City Centre Mirdif is located in City Centre Mirdif (Dubai), offering IMAX, KIDS, MAX, Standard, THEATRE screens with online booking, food & drinks ordering and SHARE rewards.",
+  },
+  "0035": {
+    address1: "Al Wahda St, Industrial Area 1, Sharjah",
+    latitude: "25.3251",
+    longitude: "55.3999",
+    parkingInfo: "Free mall parking",
+    cinemaLocation: "Level 1",
+    description:
+      "VOX Cinemas City Centre Sharjah is located in City Centre Sharjah (Sharjah), offering MAX, Premium, Standard screens with online booking, food & drinks ordering and SHARE rewards.",
+  },
+  "0017": {
+    address1: "Al Khaleej St, Al Shindagha, Dubai",
+    latitude: "25.2694",
+    longitude: "55.2926",
+    parkingInfo: "Mall parking; Al Ghubaiba Metro station is nearby",
+    cinemaLocation: "Level 2",
+    description:
+      "VOX Cinemas City Centre Shindagha is located in City Centre Shindagha (Dubai), offering Standard screens with online booking, food & drinks ordering and SHARE rewards.",
+  },
+  "0110": {
+    address1: "Sheikh Mohammed Bin Zayed Rd, Me'aisem, Dubai Production City, Dubai",
+    latitude: "25.0364",
+    longitude: "55.1868",
+    parkingInfo: "Free mall parking",
+    cinemaLocation: "Level 1",
+    description:
+      "VOX Cinemas City Centre Me'aisem is located in City Centre Me'aisem (Dubai Production City, Dubai), offering Premier and Standard screens with online booking, food & drinks ordering and SHARE rewards.",
+  },
 };
 
 function emirateOf(name: string): string {
@@ -176,9 +255,11 @@ export function normalize(raw: RawCapture, capturedAt = new Date().toISOString()
   const bySlug = new Map(raw.cinemas.map((c) => [c.href.replace("/cinemas/", ""), c]));
   const findPage = (name: string): RawCinema | undefined => {
     const key = slugify(name.replace(/\(.*?\)/g, "").replace(/-/g, " "));
-    for (const [slug, c] of bySlug)
-      if (slug.startsWith(key.slice(0, 12)) || key.startsWith(slug.slice(0, 12))) return c;
-    return undefined;
+    const exact = bySlug.get(key);
+    if (exact) return exact;
+    // Fuzzy match only when exactly one page shares the prefix (never "city-centre-*" → Ajman).
+    const hits = [...bySlug].filter(([slug]) => slug.startsWith(key) || key.startsWith(slug));
+    return hits.length === 1 ? hits[0]![1] : undefined;
   };
   const expByCinema = new Map<string, Set<string>>();
   for (const s of raw.sessions) {
@@ -209,6 +290,7 @@ export function normalize(raw: RawCapture, capturedAt = new Date().toISOString()
         description: page?.paras.join("\n\n") ?? "",
         experiences: [...(expByCinema.get(id) ?? [])].sort(),
         websiteUrl: `${SITE}/cinemas/${page?.href.replace("/cinemas/", "") ?? slugify(name)}`,
+        ...CINEMA_OVERRIDES[id],
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name));

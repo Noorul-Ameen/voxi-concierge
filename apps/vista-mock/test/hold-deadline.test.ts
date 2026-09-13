@@ -14,8 +14,12 @@ let memberId: string;
 
 beforeAll(async () => {
   await app.auth();
+  // The deadline test advances the clock by a full hold, so pick a show that is still at least an
+  // hour away — otherwise the renewed hold hits "Session has already started" on a fresh capture.
+  const soonest = new Date(`${nowLocalIso()}Z`);
+  soonest.setUTCHours(soonest.getUTCHours() + 1);
   const shows = await app.get(
-    `/OData/Sessions?$filter=Experience eq 'Standard' and Showtime gt DATETIME'${nowLocalIso()}'&$orderby=Showtime asc&$top=100`,
+    `/OData/Sessions?$filter=Experience eq 'Standard' and Showtime gt DATETIME'${soonest.toISOString().slice(0, 19)}'&$orderby=Showtime asc&$top=100`,
   );
   const show = shows.json.value.find(
     (row: { SeatsAvailable: number; AllowTicketSales?: boolean }) =>

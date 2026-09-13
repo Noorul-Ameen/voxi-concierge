@@ -1,20 +1,20 @@
 ---
-title: "VOX Cinemas City Centre Fujairah — location, hours, parking, accessibility"
+title: "VOX Cinemas City Centre Meaisem — location, hours, parking, accessibility"
 language: "en"
 category: "in_mall"
-source: "https://uae.voxcinemas.com/cinemas/city-centre-fujairah"
+source: "https://uae.voxcinemas.com/cinemas/city-centre-meaisem"
 ---
 
-# VOX Cinemas City Centre Fujairah (Fujairah)
+# VOX Cinemas City Centre Meaisem (Dubai)
 
-Arabic name: سيتي سنتر الفجيرة
-Cinema ID: 0006
-Address: Sheikh Khalifa Bin Zayed Rd, Fujairah, UAE
-Website: https://uae.voxcinemas.com/cinemas/city-centre-fujairah
-Map coordinates: 25.1213, 56.3363
+Arabic name: سيتي سنتر معيصم
+Cinema ID: 0110
+Address: Sheikh Mohammed Bin Zayed Rd, Me'aisem, Dubai Production City, Dubai, UAE
+Website: https://uae.voxcinemas.com/cinemas/city-centre-meaisem
+Map coordinates: 25.0364, 55.1868
 
 ## Experiences available
-- Premium
+- Premier
 - Standard
 
 ## Opening hours
@@ -37,7 +37,7 @@ Nearest parking: Free mall parking.
 Step-free access via mall lifts; wheelchair-accessible seating available in every screen (please ask staff for assistance); accessible restrooms nearby.
 
 ## About
-VOX Cinemas City Centre Fujairah is located in City Centre Fujairah (Fujairah), offering MAX, Premium, Standard screens with online booking, food & drinks ordering and SHARE rewards.
+VOX Cinemas City Centre Me'aisem is located in City Centre Me'aisem (Dubai Production City, Dubai), offering Premier and Standard screens with online booking, food & drinks ordering and SHARE rewards.
 
 ## Contact
 VOX Customer Care: 600 599 905 (UAE), customercare@voxcinemas.com. Ticket collection: scan the QR code from your email or app at the entrance; kiosks are available in the foyer.

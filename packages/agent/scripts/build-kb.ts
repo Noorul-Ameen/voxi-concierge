@@ -192,12 +192,12 @@ ${Object.entries(catalog.EXPERIENCE_AGE_RULES)
   );
   // how-to-book-and-manage.md is a reviewed source, not a generated scrape/template.
   // ---- Arabic glossary ----
-  const glossary = `# مصطلحات فوكس سينما — Arabic glossary for Voxi
+  const glossary = `# مصطلحات فوكس سينما — Arabic glossary for the VOX Cinemas Virtual Assistant
 
 | English | العربية |
 |---|---|
 | VOX Cinemas | فوكس سينما |
-| Voxi (the concierge) | فوكسي |
+| Virtual assistant | المساعد الافتراضي |
 | SHARE / Share Points | شير / نقاط شير |
 | VOX credit / VOX Rewards wallet | رصيد فوكس / محفظة فوكس |
 | Booking reference | الرقم المرجعي للحجز |
