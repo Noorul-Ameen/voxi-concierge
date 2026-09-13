@@ -1,0 +1,11 @@
+# 13 — Codex merge and showtime refresh (13 Sep 2026)
+
+## Codex work merged by the user (10–11 Sep, PRs #1–#9, commits 5ac424c … 780de63)
+- 35 commits authored outside this session (premium concierge journeys, page-owned sign-in, proposal guard before booking mutations, hold-deadline preservation, session recovery, receipt/payment-retry fixes, brevity procedure, validation simulations under `packages/agent/coaching/`, `packages/agent/procedures/`, insert-only synthetic demo schedule `DEMO_SCHEDULE_REFRESH`, SHARE cents→points fix). Tests now require a local database named `*_test` (`DATABASE_URL=…/voxi_test`); suite is ~460 tests across web/contracts/agent/domain/db/vista-mock/concierge-api.
+
+## Showtime refresh (2026-09-13, commits 9a5bf00 + 5ee180e) — live, reseeded
+- Fresh capture from uae.voxcinemas.com via `browser-capture.js` in the user's Chrome; the 214 KB export was saved as a Chrome download and staged through the desktop bridge (tool results truncate long strings and base64 is blocked, so chunked copy is the fallback). 23 cinemas (new **City Centre Me'aisem `0110`**), 93 films, 4,401 sessions 13–23 Sep (full schedules 13–16 Sep, sparse advance dates after).
+- `normalize.ts`: exact-slug cinema page matching (the prefix match gave every "City Centre …" the Ajman page) + `CINEMA_OVERRIDES` with the curated address/coords/parking/description so re-captures never regress; Me'aisem AR name/short code added. KB cinema docs rebuilt (`kb:build`; generator's Arabic glossary now says Virtual Assistant). `hold-deadline.test.ts` picks a show ≥1 h out (was data-dependent).
+- Forced reseed failed once: the new `orders` table references customers → seed now deletes orders before customers (5ee180e). Second reseed OK: real 4,401 sessions + 4,365 synthetic template sessions (`DEMO_SCHEDULE_REFRESH` is on in production, fills the next 7 days from each cinema's busiest captured day; ids start with `D`). `SEED_FORCE` back to `false`. Demo bookings/balances reset.
+- Verified via the API from Chrome: MOE 14 Sep 46 real + 14 synthetic, 16 Sep 60 real, 17–19 Sep mostly synthetic, 20–23 Sep advance-only; Me'aisem returns sessions; a date with no data falls back to the nearest day (existing relaxation).
+- Deployed commit is now `5ee180e`; `claude/12-current-build.md` (written for `09cee73`) is stale for everything except the ElevenLabs section.
