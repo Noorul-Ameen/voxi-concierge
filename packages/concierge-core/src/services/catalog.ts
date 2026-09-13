@@ -164,8 +164,8 @@ export class Catalog {
   films() {
     return this.filmsCache.get();
   }
-  async film(hoCode: string) {
-    return (await this.films()).find((f) => f.hoCode === hoCode) ?? null;
+  async film(hoCode: string, fresh = false) {
+    return (await (fresh ? this.loadFilms() : this.films())).find((f) => f.hoCode === hoCode) ?? null;
   }
   async cinema(id: string) {
     return (await this.cinemas()).find((c) => c.id === id) ?? null;

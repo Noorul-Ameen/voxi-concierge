@@ -9,7 +9,7 @@ import {
   shortId,
 } from "@voxi/db";
 import { flattenLayout, nowLocalDate } from "@voxi/db";
-import { balanceMethod, centsToPoints, isCardOffer } from "@voxi/domain";
+import { allowsChildTickets, balanceMethod, centsToPoints, isCardOffer } from "@voxi/domain";
 /**
  * Order lifecycle (Vista V1 Ticketing/Order semantics) with real seat holds.
  * Every mutation runs in a transaction holding a Postgres advisory lock on the session's seat map,
@@ -267,6 +267,13 @@ export async function addTickets(
       .select()
       .from(S.ticketTypes)
       .where(and(eq(S.ticketTypes.cinemaId, req.CinemaId), eq(S.ticketTypes.experience, sess.experience)));
+    // Check authoritative classification inside the same transaction as the hold. This also
+    // protects legacy callers and recovery; client/core filtering alone is not admission evidence.
+    const [film] = await tx
+      .select({ rating: S.films.rating })
+      .from(S.films)
+      .where(eq(S.films.hoCode, sess.hoCode))
+      .for("share");
     const seats = state.seats;
     // Replace (Vista ReorderSessionTickets semantics): drop previous tickets & holds for this session
     releaseHolds(seats, req.UserSessionId);
@@ -281,6 +288,12 @@ export async function addTickets(
           RC.GENERAL,
           RC.TICKET_TYPE_INVALID,
           `Ticket type ${t.TicketTypeCode} is not valid for this session`,
+        );
+      if (type.isChildOnlyTicket && !allowsChildTickets(film?.rating))
+        throw new VistaError(
+          RC.GENERAL,
+          RC.TICKET_TYPE_INVALID,
+          "Child tickets are not permitted by this film's current or unconfirmed classification",
         );
       if (t.Qty < 1 || t.Qty > (type.quantityAvailablePerOrder ?? 10))
         throw new VistaError(

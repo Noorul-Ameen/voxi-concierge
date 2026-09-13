@@ -8,6 +8,42 @@ import { buildJourneySimulationSuite } from "../src/journey-simulations.js";
 import { materializeSimulations } from "../src/simulations.js";
 
 describe("eight approved journeys", () => {
+  it("does not let broad mocks hide invented preferences, saved-card sentinels or conversation IDs", () => {
+    const tests = buildJourneySimulationSuite().tests;
+    const invoke = (id: string, tool: string, args: Record<string, unknown>) => {
+      const matches = tests.find((test) => test.id === id)!.tool_mock_overrides[tool];
+      const mock = matches.find((entry) =>
+        entry.parameter_conditions.every(({ path, eval: check }) => {
+          const value = args[path];
+          if (value === undefined) return false;
+          return check.type === "exact"
+            ? String(value) === check.expected_value
+            : new RegExp(check.pattern).test(String(value));
+        }),
+      );
+      return mock ? JSON.parse(mock.mock_result) : { ok: false };
+    };
+    expect(invoke("02-positive-ar", "get_recommendations", {})).toMatchObject({ ok: true });
+    for (const args of [{ cinemaName: "Mirdif" }, { timeFrom: "16:00" }, { language: "ar" }])
+      expect(invoke("02-positive-ar", "get_recommendations", args)).toMatchObject({ ok: false });
+    expect(invoke("03-negative-ar-offer-error", "list_offers", { bank: "saved_card" })).toMatchObject({
+      ok: false,
+    });
+    expect(invoke("03-positive-ar", "list_offers", { bank: "Fixture Bank" })).toMatchObject({ ok: true });
+    expect(
+      invoke("07-negative-ar", "investigate_payment", { userSessionId: "test-trun_unowned" }),
+    ).toMatchObject({ ok: false });
+    expect(invoke("07-negative-ar", "investigate_payment", {})).toMatchObject({ ok: true });
+    expect(
+      invoke("07-negative-ar", "investigate_payment", {
+        transactionReference: "DEMO-TXN-22",
+        cardLast4: "1234",
+      }),
+    ).toMatchObject({ ok: true, data: { status: "unresolved" } });
+    expect(invoke("08-positive-ar", "search_sessions", { cinemaId: "0001", language: "ar" })).toMatchObject({
+      ok: false,
+    });
+  });
   it("matches asynchronous offer edits, valid title lookups and consistent switch amounts", () => {
     const tests = buildJourneySimulationSuite().tests;
     for (const language of ["en", "ar"]) {
@@ -16,7 +52,9 @@ describe("eight approved journeys", () => {
       expect(apply.parameter_conditions.some((condition) => condition.path === "confirmed")).toBe(false);
       const queued = JSON.parse(apply.mock_result).data.action;
       expect(queued.status).toBe("queued");
-      expect(JSON.parse(offer.tool_mock_overrides.list_offers[0].mock_result).speech).toContain("96");
+      expect(
+        JSON.parse(offer.tool_mock_overrides.list_offers.find((mock) => !mock.is_error)!.mock_result).speech,
+      ).toContain("96");
       expect(JSON.parse(offer.tool_mock_overrides.get_order[0].mock_result).data.order.totalCents).toBe(
         12600,
       );
@@ -143,7 +181,11 @@ describe("eight approved journeys", () => {
       for (const [name, mocks] of Object.entries(test.tool_mock_overrides)) {
         const schema = schemas.get(name);
         if (!schema) continue;
-        for (const condition of mocks.flatMap((mock) => mock.parameter_conditions)) {
+        // Denial guards deliberately catch undeclared arguments; only successful
+        // responses may assert that an input is a supported contract field.
+        for (const condition of mocks
+          .filter((mock) => !mock.is_error)
+          .flatMap((mock) => mock.parameter_conditions)) {
           const prop = schema[condition.path];
           expect(prop, `${test.id}/${name}.${condition.path}`).toBeDefined();
           if (prop && "enum" in prop && prop.enum && condition.eval.type === "exact")

@@ -1,5 +1,5 @@
 import { CLIENT_TOOLS, TOOL_REGISTRY } from "@voxi/contracts";
-import type { SimulationMock, SimulationSuite } from "./simulations.js";
+import { type SimulationMock, type SimulationSuite, rejectUnexpectedFilters } from "./simulations.js";
 
 const deny: SimulationMock = {
   parameter_conditions: [],
@@ -136,6 +136,7 @@ const journeys: Journey[] = [
       "Answer briefly in the requested language and do not invent a booking, rating, completion event or extended seat hold.",
     ],
     positiveCriteria: [
+      "Actually explain what IMAX is in one short sentence. A promise to keep replies brief is not an answer to that factual question, even if a procedure produces it.",
       "Answer briefly in the requested language. After thanks, no unsolicited follow-up question, offer of additional help or booking prompt; a brief polite acknowledgment or farewell is allowed.",
       "Do not read a booking recap, invoke business tools, invent a feedback rating or log completion after thanks.",
     ],
@@ -211,7 +212,8 @@ const journeys: Journey[] = [
     criteria: [
       "Check saved-card eligibility without guessing or asking for a BIN; use tool-returned savings and total.",
       "Wait for an explicit separate apply consent before apply_offer. Only after its success suggest usual snacks once; add them only when chosen.",
-      "Poll get_action_result only if an edit explicitly returned queued/running with an actionId; inline completed edits need no poll. This guest requests only the total: answer from the current order without prepare_payment or opening options. Never call pay_order or fabricate identifiers, payment tokens or customer contacts; no repeat snack pitch.",
+      "Poll get_action_result only if an edit explicitly returned queued/running with an actionId; inline completed edits need no poll. When the guest actually requests only the total, answer from the current order without prepare_payment or opening options. Evaluate the restriction from the actual user turn, not an omitted simulator instruction or a later refusal. Never call pay_order or fabricate identifiers, payment tokens or customer contacts; no repeat snack pitch.",
+      "After the initial visible basket, do not repeat the unchanged film, cinema, date/time or seats at offer, snack and total stages. State only the verified saving/new amount and apply question; after success acknowledge once and ask about usual snacks once; after food give its change and total. A requested detail or an actual changed term may be explained.",
     ],
     negativeCriteria: [
       "After the guest declines applying the offer, snacks and payment, stop with a brief acknowledgement. Do not propose another booking, restart film discovery or append an offer to book.",
@@ -919,7 +921,7 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     qrFailure.name = `VOX Journey ${qrFailure.id}`;
     qrFailure.success_conditions = [
       "Use only the verified fixture_booking identifier for the requested QR; a render error must not be described as a visible or downloadable QR.",
-      "Briefly acknowledge the inability to open the QR. Preserve the paid booking; do not claim email delivery, retry payment, or start another booking.",
+      "Briefly acknowledge the inability to open the QR. Preserve the known paid booking; do not claim email/app delivery, tell the user to scan a plain booking reference, retry payment, start another booking, or investigate a new payment merely because receipt rendering failed.",
     ];
     qrFailure.tool_mock_overrides.render_qr = [
       {
@@ -946,10 +948,60 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     suite.tests.push(qrFailure);
   }
   for (const test of suite.tests) {
+    if (test.tool_mock_overrides.list_offers)
+      test.tool_mock_overrides.list_offers = rejectUnexpectedFilters(test.tool_mock_overrides.list_offers, {
+        bank: [offer.savedCard.bank],
+      });
+    if (test.scenario_group === "journey-02" && test.tool_mock_overrides.get_recommendations)
+      test.tool_mock_overrides.get_recommendations = rejectUnexpectedFilters(
+        test.tool_mock_overrides.get_recommendations,
+        {
+          cinemaId: [show.cinemaId],
+          cinemaName: [show.cinemaName, "MOE"],
+          experience: [],
+          filmLanguage: [show.language],
+          language: [],
+          timeFrom: [],
+          timeTo: [],
+        },
+      );
+    if (test.scenario_group === "journey-08" && test.tool_mock_overrides.search_sessions)
+      test.tool_mock_overrides.search_sessions = rejectUnexpectedFilters(
+        test.tool_mock_overrides.search_sessions,
+        {
+          cinemaId: [show.cinemaId],
+          cinemaName: [show.cinemaName, "MOE"],
+          hoCode: [show.hoCode],
+          filmLanguage: [show.language],
+          language: [],
+        },
+      );
+    if (test.id.startsWith("06-negative-"))
+      test.simulation_scenario +=
+        " Do not invent a film title. Select only the returned bank-offer booking by its verified reference when asked; a returned different film cannot silently match an unreturned title.";
+    if (test.id.startsWith("03-negative-") && !test.id.endsWith("offer-error"))
+      test.success_conditions.push(
+        "After offer refusal, any saving is hypothetical until successful application. If the user asks what they saved, clarify the discount would save the returned amount and remains unapplied; do not affirm completed saving or a changed total.",
+      );
+    if (test.id.startsWith("04-negative-"))
+      test.success_conditions.push(
+        "A preloaded basket, saved card or stated bank offer does not request payment options: no prepare_payment for CARD/SAVED_CARD before an explicit review/checkout request. Do not reapply an offer already present or imply the finite hold lasts indefinitely.",
+      );
+    if (test.id.startsWith("06-negative-"))
+      test.success_conditions.push(
+        "An ineligible cancellation or successful handover is not completed cancellation. No log_journey with journey cancellation/status completed without successful cancel_booking; reject that call as a real error even if the mock blocks it.",
+      );
+    if (test.id.startsWith("07-"))
+      test.success_conditions.push(
+        "Every order ID must come from an order result; conversation/test IDs and placeholders are invalid even if the mock rejects them. Transaction references and last four come only from the guest; a rejected match is not a new transaction reference.",
+      );
     const language = test.dynamic_variables.language === "ar" ? "Arabic" : "English";
     test.simulation_scenario = `Speak only ${language}; use the supplied ${language} user utterances without omitting stated quantities, methods or refusals. ${test.simulation_scenario}`;
     if (test.scenario_group === "journey-07") {
-      const mocks = test.tool_mock_overrides.investigate_payment!;
+      const mocks = rejectUnexpectedFilters(test.tool_mock_overrides.investigate_payment!, {
+        userSessionId: ["fixture_order"],
+      });
+      test.tool_mock_overrides.investigate_payment = mocks;
       const broad = mocks.findIndex((entry) => entry.parameter_conditions.length === 0);
       if (broad >= 0)
         mocks.splice(

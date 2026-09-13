@@ -26,6 +26,7 @@ import {
   OFFERS,
   ticketTypesFor,
 } from "./catalog.js";
+import { capturedFilmClassification, filmClassificationConflictSet } from "./film-ratings.js";
 import { LAYOUTS, layoutForExperience } from "./layouts.js";
 import { type BookingScenario, PERSONAS } from "./personas.js";
 import { updateDemoProfiles } from "./profile-update.js";
@@ -225,8 +226,8 @@ async function main() {
     hoCode: f.hoCode,
     title: f.title,
     titleAlt: f.titleAlt,
-    rating: f.rating,
-    ratingDescription: AGE_RULES.find((r) => r.rating === f.rating)?.text ?? "",
+    rating: capturedFilmClassification(f.rating)?.rating ?? f.rating,
+    ratingDescription: capturedFilmClassification(f.rating)?.ratingDescription ?? "",
     synopsis: f.synopsis,
     synopsisAlt: "",
     openingDate: f.openingDate ? new Date(`${f.openingDate}Z`) : null,
@@ -277,6 +278,7 @@ async function main() {
       .onConflictDoUpdate({
         target: s.films.hoCode,
         set: {
+          ...filmClassificationConflictSet,
           title: sql`excluded.title`,
           synopsis: sql`excluded.synopsis`,
           status: sql`excluded.status`,

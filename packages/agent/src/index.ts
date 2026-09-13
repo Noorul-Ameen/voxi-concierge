@@ -132,6 +132,39 @@ const SILENT_TOOLS = new Set<string>([
   "submit_feedback",
 ]);
 
+const FILM_FILTER_TOOLS = new Set<string>([
+  "get_recommendations",
+  "search_films",
+  "get_film",
+  "search_sessions",
+  "propose_booking",
+]);
+
+// These instructions sit beside the operation that can be misused, rather than
+// relying on a distant conversation example to override the generic API label.
+const AGENT_TOOL_USAGE: Partial<Record<ToolName, string>> = {
+  get_age_rules:
+    "Use the actual returned film rating and include childAge whenever the guest already supplied it. For a family rating enquiry, explain the rating's meaning as well as its label; if age is unknown, explain the general rule then ask age once. Unknown classification does not establish child admission.",
+  get_recommendations:
+    "Omit every optional cinema, time/window, experience, seat or film-language filter that the guest did not specify. 'Usual' requests server-side profile inference, not a guessed input. Only a prior verified context/result can supply a preference; a greeting, example or conversation language cannot.",
+  list_offers:
+    "For 'my saved card', omit bank and cardBin: the authenticated backend resolves the card. bank means an actual named bank, never saved_card or another sentinel. Quote only the returned eligible saving; it remains potential until applied.",
+  investigate_payment:
+    "For an initial missing-booking/debit report, omit unknown optional IDs and inspect authenticated context. userSessionId is an actual returned order ID, never the current conversation/test ID. A failed get_order does not validate its input for this tool. A known paid booking with a QR rendering error needs receipt assistance, not a new payment investigation.",
+  propose_booking:
+    "Carry known composition on every proposal/edit: tickets is ADULT count, childTickets is CHILD count. One parent with one child means tickets:1, childTickets:1, not tickets:2 or totalTickets. Use only declared parameters. A failed proposal supplies no price, seats or acceptance token: explain the unresolved preview; never quote a replacement price or ask to hold an unreturned proposal.",
+  prepare_payment:
+    "This can open payment options. A booking request, saved-card mention, offer enquiry or current total is not a request to open payment. Read the existing basket first. Call only for an explicit checkout/review request, or to obtain the consent required for an explicitly requested balance-method switch. Preserve that exact requested method; do not substitute SHARE for VOX Credit.",
+  get_order:
+    "Requires a real unpaid order userSessionId copied from activeOrder or an earlier order result. A conversation ID, test-run ID, booking reference or placeholder is invalid. If no order ID is available, use get_session_context; for a member's existing paid booking use list_my_bookings instead.",
+  resume_order:
+    "This inspects an UNPAID basket/hold only. An empty result does not mean the customer has no confirmed bookings. For 'change/cancel my current booking', use list_my_bookings even when there is no active basket; ask which booking only when several match.",
+  list_my_bookings:
+    "Use for a signed-in guest's existing/current booking, including a reference-free change or cancellation request. An absent activeOrder is not evidence of no bookings. If several cards are returned, ask which film/date without reading all their details aloud.",
+  log_journey:
+    "Do not log booking or payment; their backend records completion. Cancellation is completed only after successful cancel_booking, never after an eligibility refusal, explanation or handover. A thanks/goodbye supplies no reporting action. Preserve a failed or unresolved outcome instead of calling it completed.",
+};
+
 /** Webhook (server) tool definitions — one per contract tool. */
 export function buildWebhookTools(opts: AgentBuildOptions) {
   const headers: Record<string, unknown> = {
@@ -145,7 +178,7 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
     const def = TOOL_REGISTRY[name];
     const { prop } = zodToProp(def.input as unknown as z.ZodTypeAny);
     const obj = prop as ObjectProp;
-    // Recommendations expose only filmLanguage. Their legacy language alias stays server-side;
+    // Film tools expose only filmLanguage. Their legacy language alias stays server-side;
     // reply/interface language already belongs to the authenticated conversation.
     const exposedProperties =
       name === "quick_book"
@@ -154,14 +187,56 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
               ["proposalToken", "idempotencyKey"].includes(field),
             ),
           )
-        : name === "get_recommendations"
+        : FILM_FILTER_TOOLS.has(name)
           ? Object.fromEntries(Object.entries(obj.properties).filter(([field]) => field !== "language"))
           : obj.properties;
     const properties: Record<string, Prop> = {
       ...CONTEXT_PROPS,
       ...exposedProperties,
     };
-    if (name !== "get_recommendations" && !Object.hasOwn(obj.properties, "language")) {
+    if (FILM_FILTER_TOOLS.has(name))
+      for (const field of [
+        "cinemaId",
+        "cinemaName",
+        "time",
+        "timeFrom",
+        "timeTo",
+        "experience",
+        "seatPreference",
+        "filmLanguage",
+      ])
+        if (properties[field])
+          properties[field] = {
+            ...properties[field],
+            description: `${properties[field].description ?? ""} Optional: omit unless explicitly requested/selected or supplied by a current verified result. 'Usual' alone means backend inference, not an invented filter.`,
+          } as Prop;
+    if (name === "get_order" || name === "investigate_payment")
+      properties.userSessionId = {
+        ...properties.userSessionId,
+        description:
+          name === "investigate_payment"
+            ? "Optional actual order ID from a successful activeOrder/order result. OMIT when unknown, including the initial debit enquiry. Never use conversationId, test-run ID, or a failed lookup's guessed input."
+            : "Actual unpaid order ID copied from activeOrder.userSessionId or a successful order result. Never a conversation/test ID or booking reference; read context first if absent.",
+      } as Prop;
+    if (name === "list_offers")
+      properties.bank = {
+        ...properties.bank,
+        description:
+          "Optional actual bank name explicitly named by the guest or a verified card result. Omit for 'my saved card'; saved_card is not a bank name.",
+      } as Prop;
+    if (name === "propose_booking") {
+      properties.tickets = {
+        ...properties.tickets,
+        description:
+          "Adult tickets only. Preserve a known count on every edit: one parent and one child is tickets:1 plus childTickets:1. Omit only if genuinely unknown.",
+      } as Prop;
+      properties.childTickets = {
+        ...properties.childTickets,
+        description:
+          "Child tickets, separate from adult tickets. Preserve the guest's known children on every proposal/edit; one parent with one child means 1 here and tickets:1.",
+      } as Prop;
+    }
+    if (!FILM_FILTER_TOOLS.has(name) && !Object.hasOwn(obj.properties, "language")) {
       // Other tools keep their existing film-language contract or shared UI language.
       properties.language = {
         type: "string",
@@ -177,6 +252,7 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
         (name === "quick_book"
           ? "Hold only the exact verified proposal the guest authorized. A proposalToken returned by propose_booking is required; copy it unchanged. Never call this tool with just ticket count, a session ID or remembered choices. Use propose_booking for discovery or edits; resume_order for the active unpaid basket. Missing or fabricated tokens are rejected before any basket or consent change."
           : def.description) +
+        (AGENT_TOOL_USAGE[name] ? ` ${AGENT_TOOL_USAGE[name]}` : "") +
         (SILENT_TOOLS.has(name)
           ? " Call silently; never announce fetching context, polling, logging or recording. Acknowledge a completed customer action only once when relevant."
           : "") +
@@ -197,7 +273,11 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
         request_body_schema: {
           type: "object" as const,
           properties,
-          required: ["conversationId", ...(name === "quick_book" ? ["proposalToken"] : (obj.required ?? []))],
+          required: [
+            "conversationId",
+            ...(name === "quick_book" ? ["proposalToken"] : (obj.required ?? [])),
+            ...(name === "redeem_points" ? ["balanceType"] : []),
+          ],
         },
       },
     };
@@ -418,7 +498,11 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
             "Comma-separated topics discussed: movie_info, cinema_info, age_restrictions, general_info, offers, booking_info, cancellation, refund, swap, in_mall, fnb, guided_booking, payment, booking_status, feedback, complaint, personalisation, transfer",
         },
         sentiment: { type: "string", description: "Overall guest sentiment: positive, neutral, negative" },
-        language_used: { type: "string", description: "Primary language spoken: en or ar" },
+        language_used: {
+          type: "string",
+          description:
+            "Primary language actually used in the guest's substantive spoken or typed sentences: en, ar, mixed or unknown. Judge the dialogue, not a profile preference, name, interface language, dynamic variable, tool result, machine-generated [widget] event or the assistant's greeting. Use mixed when substantive English and Arabic are both used without a clear primary language, and unknown when there is no usable guest sentence. A film-language request or an isolated brand name/okay is not a conversation-language change.",
+        },
       },
       evaluation: {
         criteria: [
@@ -427,7 +511,7 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
             name: "Confirmed before acting",
             type: "prompt",
             conversation_goal_prompt:
-              "Did the agent read back a summary and get an explicit yes before cancelling, swapping or paying?",
+              "Evaluate only consequential actions actually requested or executed. Before a server payment, cancellation or exchange, the guest must receive the current relevant amount/terms and explicitly approve that specific action; before a fresh hold they must accept the current proposal or fresh-hold request. The review may be visible, so a repeated spoken recap or the literal word yes is not required. A verified widget proposal.accept, order.recover or payment.token result from the corresponding explicit user control is valid UI approval; do not require a second verbal approval or penalize the agent for acknowledging its confirmed success. Opening a payment review is not charging. Passive selections, general state snapshots, a yes to snacks, pending/failed events or an unverified claim of a click do not establish payment consent or success. Changed terms require fresh consent; a refused or unconfirmed consequential action must not execute. If no such action occurs, do not invent a missing-confirmation failure.",
           },
           {
             id: "no_hallucinated_facts",
@@ -441,7 +525,7 @@ export function buildAgentConfig(opts: AgentBuildOptions) {
             name: "Answered in guest's language",
             type: "prompt",
             conversation_goal_prompt:
-              "Did the agent respond in the same language the guest used (English or Arabic)?",
+              "Did the agent answer the guest's latest substantive sentence in its actual language, English or Arabic? Ignore profile/interface preferences, tool output, machine-generated [widget] events and isolated brand names or okay when identifying the guest's language. An initial greeting before a usable guest sentence is not evidence of a language mismatch.",
           },
         ],
       },

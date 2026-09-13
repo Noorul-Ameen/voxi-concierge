@@ -1,12 +1,16 @@
 import { schema as S } from "@voxi/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { customerTools } from "../src/tools/customer.js";
 import { reviewAndPay } from "../src/tools/ordering.js";
 import { quickTools } from "../src/tools/quick.js";
 import type { ToolCtx } from "../src/tools/types.js";
 
 vi.mock("../src/services/conversation.js", () => ({ updateConversation: vi.fn() }));
 vi.mock("../src/events.js", () => ({ appendEvent: vi.fn() }));
-vi.mock("../src/tools/customer.js", () => ({ loadCustomer: vi.fn(async () => null) }));
+vi.mock("../src/tools/customer.js", () => ({
+  loadCustomer: vi.fn(async () => null),
+  customerTools: { get_recommendations: vi.fn() },
+}));
 vi.mock("../src/services/inline-mutation.js", () => ({
   beginInlineBasketMutation: vi.fn(async () => ({ action: { id: "inline-test" }, conversation: {} })),
   finishInlineBasketMutation: vi.fn(async () => true),
@@ -159,6 +163,27 @@ describe("booking decisions and holds", () => {
     expect(result.data?.reason).toBe("show_started");
     expect(ctx.vista.addTickets).not.toHaveBeenCalled();
   });
+  it.each(["18TC", "TBC", "missing-type"])(
+    "rejects expired child-ticket recovery after classification/type changes: %s",
+    async (rating) => {
+      const ctx = context({ activeOrder: "old-hold", activeSessionKey: session.key });
+      const previous = order({ State: "expired" });
+      previous.Sessions[0]!.Tickets[0]!.TicketTypeCode = "CHILD";
+      vi.mocked(ctx.vista.getOrder).mockResolvedValue({ Order: previous } as any);
+      vi.mocked(ctx.vista.ticketTypes).mockResolvedValue({
+        Tickets:
+          rating === "missing-type"
+            ? []
+            : [{ TicketTypeCode: "CHILD", IsChildOnlyTicket: true, PriceInCents: 4000 }],
+      } as any);
+      vi.mocked(ctx.catalog.film).mockResolvedValue({ hoCode: "film", rating } as any);
+      const result = await quickTools.recover_order(ctx, { confirmed: true });
+      expect(result.ok).toBe(false);
+      expect(result.data?.needs).toBe("proposal_refresh");
+      expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+      expect(ctx.vista.setSeats).not.toHaveBeenCalled();
+    },
+  );
   it("keeps snacks in the unpaid ticket order for one checkout", async () => {
     const ctx = context({ activeOrder: "old-hold", activeSessionKey: session.key });
     vi.mocked(ctx.vista.getOrder).mockResolvedValue({ Order: order() } as any);
@@ -338,6 +363,83 @@ describe("read-only booking proposal", () => {
     })) as any;
     return ctx;
   }
+  it.each([
+    { language: "English" },
+    { filmLanguage: "English" },
+    { filmLanguage: "English", language: "ar" },
+  ])("keeps proposal film selection independent from UI language for %j", async (filter) => {
+    const ctx = proposalContext();
+    ctx.lang = "ar";
+    const film = await ctx.catalog.film("film");
+    ctx.catalog.films = vi.fn(async () => [film!]);
+    const result = await quickTools.propose_booking(ctx, {
+      hoCode: "film",
+      cinemaId: cinema.id,
+      tickets: 1,
+      ...filter,
+    });
+    expect(result.data).toMatchObject({
+      needs: "proposal_acceptance",
+      proposal: { sessionKey: session.key, held: false, totalCents: 5250 },
+    });
+    expect(ctx.lang).toBe("ar");
+    expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+  });
+  it.each([
+    { language: "English" },
+    { filmLanguage: "English" },
+    { filmLanguage: "English", language: "ar" },
+  ])(
+    "supports existing internal quick selection with %j without holding an unknown quantity",
+    async (filter) => {
+      const ctx = proposalContext();
+      ctx.lang = "ar";
+      const film = await ctx.catalog.film("film");
+      ctx.catalog.films = vi.fn(async () => [film!]);
+      const result = await quickTools.quick_book(ctx, { hoCode: "film", cinemaId: cinema.id, ...filter });
+      expect(result.data).toMatchObject({ needs: "tickets", sessionKey: session.key });
+      expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+    },
+  );
+  it("lets a new explicit legacy filter replace an older pending canonical language and exact showtime", async () => {
+    const ctx = proposalContext();
+    ctx.conversation.metadata = {
+      pendingBooking: {
+        filmLanguage: "Tamil",
+        sessionKey: "stale-tamil-show",
+        hoCode: "film",
+        cinemaId: cinema.id,
+      },
+    };
+    const film = await ctx.catalog.film("film");
+    ctx.catalog.films = vi.fn(async () => [film!]);
+    const result = await quickTools.quick_book(ctx, { language: "English" });
+    expect(result.data).toMatchObject({ needs: "tickets", sessionKey: session.key });
+    expect(ctx.catalog.sessionByKey).not.toHaveBeenCalled();
+    expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+  });
+  it.each([
+    { language: "English" },
+    { filmLanguage: "English" },
+    { filmLanguage: "English", language: "ar" },
+  ])("passes the actual requested film language into profile-based proposals for %j", async (filter) => {
+    const ctx = proposalContext();
+    ctx.lang = "ar";
+    vi.mocked(customerTools.get_recommendations).mockResolvedValue({
+      ok: true,
+      data: { movies: [{ suggestedSession: { sessionKey: session.key } }] },
+    });
+    const result = await quickTools.propose_booking(ctx, { ...filter, tickets: 1 });
+    expect(customerTools.get_recommendations).toHaveBeenCalledWith(
+      ctx,
+      expect.objectContaining({ filmLanguage: "English" }),
+    );
+    expect(result.data).toMatchObject({
+      needs: "proposal_acceptance",
+      proposal: { sessionKey: session.key, held: false },
+    });
+    expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+  });
   it("quotes actual available adult and child seats including fees without creating or editing an order", async () => {
     const ctx = proposalContext();
     const result = await quickTools.propose_booking(ctx, {
@@ -372,6 +474,39 @@ describe("read-only booking proposal", () => {
     } as any);
     expect(alternative.data?.proposal).toMatchObject({ isAlternative: true, requested: { time: "19:00" } });
     expect(alternative.speech).toMatch(/alternative to your requested time/);
+  });
+  it.each(["18TC", "15TC", "TBC", "", "15+", "18+", "21+"])(
+    "rejects %s child tickets in proposals and direct widget holds before provider mutation",
+    async (rating) => {
+      const ctx = proposalContext();
+      const original = await ctx.catalog.film("film");
+      vi.mocked(ctx.catalog.film).mockResolvedValue({ ...original!, rating });
+      const input = { sessionKey: session.key, tickets: 1, childTickets: 1 };
+      const proposal = await quickTools.propose_booking(ctx, input);
+      expect(proposal).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+      expect(proposal.data?.proposalToken).toBeUndefined();
+      const direct = await quickTools.quick_book(ctx, input);
+      expect(direct.ok).toBe(false);
+      expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+      expect(ctx.vista.setSeats).not.toHaveBeenCalled();
+    },
+  );
+  it("rechecks child classification when accepting a previously valid proposal", async () => {
+    const ctx = proposalContext();
+    const proposed = await quickTools.propose_booking(ctx, {
+      sessionKey: session.key,
+      tickets: 1,
+      childTickets: 1,
+    });
+    expect(proposed.data?.proposalToken).toEqual(expect.any(String));
+    const original = await ctx.catalog.film("film");
+    vi.mocked(ctx.catalog.film).mockResolvedValue({ ...original!, rating: "18TC" });
+    const accepted = await quickTools.quick_book(ctx, {
+      proposalToken: String(proposed.data?.proposalToken),
+    });
+    expect(accepted).toMatchObject({ ok: false, data: { needs: "proposal_refresh" } });
+    expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+    expect(ctx.vista.setSeats).not.toHaveBeenCalled();
   });
   it("asks for missing quantity without assuming one or issuing an acceptance token", async () => {
     const ctx = proposalContext();

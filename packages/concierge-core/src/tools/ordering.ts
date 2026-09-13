@@ -1,6 +1,14 @@
 import { DomainError, ErrorCodes } from "@voxi/contracts";
 import { prefixedId } from "@voxi/db";
-import { type Offer, balanceMethod, describeBenefit, isCardOffer } from "@voxi/domain";
+import {
+  type Offer,
+  allowsChildTickets,
+  balanceMethod,
+  centsToPoints,
+  classification,
+  describeBenefit,
+  isCardOffer,
+} from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 import { enqueue, findByKey, idem, toRef } from "../actions/ledger.js";
 import { assertCheckoutSnapshot, checkoutSnapshot, pendingBasketActions } from "../services/checkout.js";
@@ -12,9 +20,22 @@ import { loadCustomer } from "./customer.js";
 import { experienceLabel } from "./movies.js";
 import { type ToolCtx, type ToolHandlers, err, ok } from "./types.js";
 
-/** Child-only ticket types make no sense for 15+/18+/21+ films — hide them so the agent never offers them. */
-function adultsOnly(rating: string | undefined) {
-  return /^(15|18|21)\+?$/.test((rating ?? "").trim());
+/** Only a supported child-admitting classification can expose child-only ticket types. */
+const adultsOnly = (rating: string | undefined) => !allowsChildTickets(rating);
+
+function restrictedTicketQuestion(rating: string | undefined, lang: ToolCtx["lang"]) {
+  const rule = classification(rating);
+  if (rule.known && !rule.provisional && rule.minimumAge && rule.minimumAge > 0)
+    return t(
+      lang,
+      `This film is for ages ${rule.minimumAge} and over${rule.minimumAge >= 18 ? " — adults only" : ""}. How many adult tickets?`,
+      `هذا الفيلم للأعمار ${rule.minimumAge} فما فوق. كم عدد تذاكر الكبار؟`,
+    );
+  return t(
+    lang,
+    "Child eligibility cannot be confirmed for this classification. How many adult tickets?",
+    "لا يمكن تأكيد أهلية الأطفال لهذا التصنيف. كم عدد تذاكر الكبار؟",
+  );
 }
 
 export { orderSummary, type VistaOrder } from "../services/order-state.js";
@@ -260,6 +281,51 @@ export async function reviewAndPay(
         "يرجى تسجيل الدخول من الصفحة لاستخدام رصيد VOX أو نقاط SHARE.",
       ),
     );
+  if (balanceMethod(method)) {
+    const paymentPreference = { userSessionId: input.userSessionId, method };
+    await updateConversation(ctx.db, ctx.conversation.id, {
+      metadata: { ...ctx.conversation.metadata, paymentPreference },
+    });
+    ctx.conversation.metadata = { ...ctx.conversation.metadata, paymentPreference };
+  }
+  const reserved = (r.Order.AppliedOffers ?? []).find((offer: any) => offer.type === "loyalty_redeem");
+  const reservedMethod =
+    reserved?.offerId === "VOX_REWARDS"
+      ? "VOX_CREDIT"
+      : reserved?.offerId === "SHARE_POINTS"
+        ? "SHARE_POINTS"
+        : undefined;
+  const reservedCents = Number(r.Order.LoyaltyPointsPayableValueInCents ?? reserved?.discountCents ?? 0);
+  const balancePayment =
+    reservedMethod && reservedCents > 0
+      ? {
+          method: reservedMethod,
+          amountCents: reservedCents,
+          remainingCents: s.totalCents,
+          totalCents: s.totalCents + reservedCents,
+        }
+      : undefined;
+  if (balanceMethod(method) && balancePayment && reservedMethod !== method)
+    return err(
+      ErrorCodes.CONFIRMATION_REQUIRED,
+      t(
+        ctx.lang,
+        "A different balance is reserved on this order. Remove that reservation before reviewing your selected payment method.",
+        "هناك رصيد مختلف محجوز في هذا الطلب. أزل ذلك الحجز قبل مراجعة طريقة الدفع التي اخترتها.",
+      ),
+      false,
+      {
+        needs: "balance_reset_confirmation",
+        requestedMethod: method,
+        balancePayment,
+        redemptionInput: {
+          userSessionId: input.userSessionId,
+          balanceType: reservedMethod,
+          ...(reservedMethod === "VOX_CREDIT" ? { amountCents: 0 } : { points: 0 }),
+        },
+        nextPaymentMethod: method,
+      },
+    );
   const conflictingOffers = (r.Order.AppliedOffers ?? []).filter(isCardOffer);
   if (balanceMethod(method) && conflictingOffers.length) {
     const { Preview: preview } = await ctx.vista.previewOfferRemoval(
@@ -304,6 +370,7 @@ export async function reviewAndPay(
       ],
     });
   }
+  if (balancePayment && reservedMethod === method && s.totalCents > 0) method = "CARD";
   if (method === "SAVED_CARD" && !savedCards.length) method = "CARD";
   const sheetMethods = ["CARD", "SAVED_CARD", "APPLE_PAY", "SAMSUNG_PAY", "GOOGLE_PAY"];
   const usesSheet = sheetMethods.includes(method);
@@ -331,15 +398,39 @@ export async function reviewAndPay(
     const b = bal.Balances.find(
       (x) => x.BalanceTypeId === (method === "VOX_CREDIT" ? "VOX_REWARDS" : "SHARE_POINTS"),
     )!;
-    if (b.ValueCents < s.totalCents)
+    if (!b || b.ValueCents < s.totalCents) {
+      const amountCents = Math.max(0, b?.ValueCents ?? 0);
       return err(
-        ErrorCodes.INSUFFICIENT_POINTS,
+        ErrorCodes.CONFIRMATION_REQUIRED,
         t(
           ctx.lang,
-          `Your ${method === "VOX_CREDIT" ? "VOX credit" : "Share Points"} cover ${money(b.ValueCents, ctx.lang)} of the ${s.total} total. I can apply them and take the rest by card — shall I?`,
-          `رصيدك يغطي ${money(b.ValueCents, "ar")} من الإجمالي ${s.total}. يمكنني تطبيقه ودفع الباقي بالبطاقة — هل أفعل؟`,
+          amountCents > 0
+            ? `Your ${method === "VOX_CREDIT" ? "VOX credit" : "SHARE Points"} can cover ${money(amountCents, ctx.lang)}, leaving ${money(s.totalCents - amountCents, ctx.lang)} by card. Shall I reserve that balance and open the card review?`
+            : "That balance has no available value. Please choose another payment method.",
+          amountCents > 0
+            ? `${method === "VOX_CREDIT" ? "رصيد فوكس" : "نقاط شير"} يغطي ${money(amountCents, "ar")}، ويتبقى ${money(s.totalCents - amountCents, "ar")} بالبطاقة. هل أحجز هذا الرصيد وأفتح مراجعة البطاقة؟`
+            : "لا توجد قيمة متاحة في هذا الرصيد. يرجى اختيار طريقة دفع أخرى.",
         ),
+        false,
+        {
+          needs: amountCents > 0 ? "balance_split_confirmation" : "payment_method",
+          requestedMethod: method,
+          amountCents,
+          remainingCents: s.totalCents - amountCents,
+          totalCents: s.totalCents,
+          ...(amountCents > 0
+            ? {
+                redemptionInput: {
+                  userSessionId: input.userSessionId,
+                  balanceType: method,
+                  ...(method === "VOX_CREDIT" ? { amountCents } : { points: centsToPoints(amountCents) }),
+                },
+                nextPaymentMethod: "CARD",
+              }
+            : {}),
+        },
       );
+    }
   }
   const isGuest = !c;
   const sessionKey = (ctx.conversation.metadata as { activeSessionKey?: string })?.activeSessionKey;
@@ -382,6 +473,7 @@ export async function reviewAndPay(
     userSessionId: input.userSessionId,
     method,
     amountCents: s.totalCents,
+    balancePayment,
     checkoutSnapshot: checkoutSnapshot(r.Order),
     customer: customer ?? { name: "", email: "", phone: "" },
     memberId: ctx.conversation.memberId ?? undefined,
@@ -399,8 +491,8 @@ export async function reviewAndPay(
   const spoken = usesSheet
     ? t(
         ctx.lang,
-        `${s.total} — ${items}. ${preferredToken && method === "SAVED_CARD" ? `Your ${brandName(savedCards.find((x) => x.token === preferredToken)?.brand ?? "")} ending ${(savedCards.find((x) => x.token === preferredToken)?.masked ?? "").slice(-4)} is selected — tap Pay when ready.` : isGuest && !customer ? "Pop your name, email and mobile into the sheet, choose card, Apple Pay or Samsung Pay, and tap Pay." : "Complete the payment in the sheet on screen."}`,
-        `${s.total} — ${items}. ${preferredToken && method === "SAVED_CARD" ? "بطاقتك المحفوظة محددة — اضغط ادفع عندما تكون جاهزاً." : isGuest && !customer ? "أدخل اسمك وبريدك ورقم جوالك في النافذة، اختر طريقة الدفع، ثم اضغط ادفع." : "أكمل الدفع في النافذة على الشاشة."}`,
+        `${balancePayment ? `${money(balancePayment.amountCents, ctx.lang)} ${balancePayment.method === "VOX_CREDIT" ? "VOX credit" : "SHARE Points value"} reserved; ${s.total} left by card` : s.total} — ${items}. ${preferredToken && method === "SAVED_CARD" ? `Your ${brandName(savedCards.find((x) => x.token === preferredToken)?.brand ?? "")} ending ${(savedCards.find((x) => x.token === preferredToken)?.masked ?? "").slice(-4)} is selected — tap Pay when ready.` : isGuest && !customer ? "Pop your name, email and mobile into the sheet, choose card, Apple Pay or Samsung Pay, and tap Pay." : "Complete the payment in the sheet on screen."}`,
+        `${balancePayment ? `تم حجز ${money(balancePayment.amountCents, "ar")} من ${balancePayment.method === "VOX_CREDIT" ? "رصيد فوكس" : "نقاط شير"}؛ المتبقي بالبطاقة ${s.total}` : s.total} — ${items}. ${preferredToken && method === "SAVED_CARD" ? "بطاقتك المحفوظة محددة — اضغط ادفع عندما تكون جاهزاً." : isGuest && !customer ? "أدخل اسمك وبريدك ورقم جوالك في النافذة، اختر طريقة الدفع، ثم اضغط ادفع." : "أكمل الدفع في النافذة على الشاشة."}`,
       )
     : t(
         ctx.lang,
@@ -461,7 +553,12 @@ export async function reviewAndPay(
         userSessionId: input.userSessionId,
         method,
         amountCents: s.totalCents,
-        vat: { beforeVatCents: s.totalCents - s.taxCents, vatCents: s.taxCents, rate: 5 },
+        balancePayment,
+        vat: {
+          beforeVatCents: (balancePayment?.totalCents ?? s.totalCents) - s.taxCents,
+          vatCents: s.taxCents,
+          rate: 5,
+        },
         savedCards,
         preferredToken,
         offerHint: hint ?? undefined,
@@ -630,7 +727,7 @@ export const orderingTools: Pick<
     const r = await ctx.vista.ticketTypes(s.cinemaId, s.sessionId);
     if (r.ResponseCode !== 0)
       return err(ErrorCodes.VISTA_ERROR, r.ErrorDescription ?? "Ticket types unavailable");
-    const filmRating = (await ctx.catalog.film(s.hoCode))?.rating;
+    const filmRating = (await ctx.catalog.film(s.hoCode, true))?.rating;
     const noKids = adultsOnly(filmRating);
     const types = r.Tickets.filter(
       (x) =>
@@ -656,11 +753,11 @@ export const orderingTools: Pick<
     const tiers = types.filter((x) => x.area !== "regular" && !x.isChild && !x.membersOnly);
     const speech = t(
       ctx.lang,
-      `For ${s.filmTitle} ${experienceLabel(s.experience, "en")} at ${fmtDateTime(s.showtime, "en", ctx.nowLocal)}: ${joinList(regular.map((x) => `${x.description.replace(/^[A-Z0-9 ]+? /, "").toLowerCase()} ${x.price}`))}${tiers.length ? `, ${joinList(tiers.map((x) => `${x.description.replace(/^[A-Z0-9]+ /, "").toLowerCase()} ${x.price}`))}` : ""}. ${noKids ? `This film is rated ${filmRating}, so adults only. How many tickets?` : "How many tickets, and adults or children?"}`,
+      `For ${s.filmTitle} ${experienceLabel(s.experience, "en")} at ${fmtDateTime(s.showtime, "en", ctx.nowLocal)}: ${joinList(regular.map((x) => `${x.description.replace(/^[A-Z0-9 ]+? /, "").toLowerCase()} ${x.price}`))}${tiers.length ? `, ${joinList(tiers.map((x) => `${x.description.replace(/^[A-Z0-9]+ /, "").toLowerCase()} ${x.price}`))}` : ""}. ${noKids ? restrictedTicketQuestion(filmRating, "en") : "How many tickets, and adults or children?"}`,
       `لفيلم ${s.filmTitle} ${experienceLabel(s.experience, "ar")} في ${fmtDateTime(s.showtime, "ar", ctx.nowLocal)}: ${joinList(
         regular.map((x) => `${x.descriptionAlt || x.description} ${x.price}`),
         "ar",
-      )}. كم عدد التذاكر، للكبار أم الأطفال؟`,
+      )}. ${noKids ? restrictedTicketQuestion(filmRating, "ar") : "كم عدد التذاكر، للكبار أم الأطفال؟"}`,
     );
     return ok(
       {
@@ -844,7 +941,7 @@ export const orderingTools: Pick<
       activeSessionKey: s.key,
     };
     const tt = await ctx.vista.ticketTypes(s.cinemaId, s.sessionId);
-    const filmRating = (await ctx.catalog.film(s.hoCode))?.rating;
+    const filmRating = (await ctx.catalog.film(s.hoCode, true))?.rating;
     const noKids = adultsOnly(filmRating);
     const types = tt.Tickets.filter(
       (x) =>
@@ -879,14 +976,14 @@ export const orderingTools: Pick<
           .filter((x) => x.area === "regular")
           .slice(0, 3)
           .map((x) => `${x.description.toLowerCase()} ${x.price}`),
-      )}. ${noKids ? `It's rated ${filmRating}, so adults only — how many tickets?` : "How many, and any children?"}`,
+      )}. ${noKids ? restrictedTicketQuestion(filmRating, "en") : "How many, and any children?"}`,
       `بدأت حجزك لفيلم ${s.filmTitle}، ${experienceLabel(s.experience, "ar")} في ${await cinemaName(ctx, s.cinemaId)} ${fmtDateTime(s.showtime, "ar", ctx.nowLocal)}. التذاكر: ${joinList(
         types
           .filter((x) => x.area === "regular")
           .slice(0, 3)
           .map((x) => `${x.description} ${x.price}`),
         "ar",
-      )}. ${noKids ? `الفيلم مصنف ${filmRating} للكبار فقط — كم عدد التذاكر؟` : "كم عدد التذاكر، وهل هناك أطفال؟"}`,
+      )}. ${noKids ? restrictedTicketQuestion(filmRating, "ar") : "كم عدد التذاكر، وهل هناك أطفال؟"}`,
     );
     return ok(
       {
@@ -1028,28 +1125,63 @@ export const orderingTools: Pick<
 
   async redeem_points(ctx, input) {
     const memberId = ctx.conversation.memberId;
-    if (input.memberId && input.memberId !== memberId)
-      return err(ErrorCodes.LOGIN_REQUIRED, "Only the signed-in member's points can be used.");
-    const basket = (await ctx.vista.getOrder(input.userSessionId)).Order;
-    if (basket?.AppliedOffers?.some(isCardOffer))
-      return reviewAndPay(ctx, { userSessionId: input.userSessionId, method: "SHARE_POINTS" }, {});
-    if (!memberId)
+    if (!memberId || (input.memberId && input.memberId !== memberId))
       return err(
         ErrorCodes.LOGIN_REQUIRED,
         t(
           ctx.lang,
-          "Please log in to your SHARE account first so I can use your points.",
-          "يرجى تسجيل الدخول إلى حساب شير أولاً لاستخدام نقاطك.",
+          "Please sign in on the page to use your own balance.",
+          "يرجى تسجيل الدخول من الصفحة لاستخدام رصيدك.",
         ),
       );
-    const key = input.idempotencyKey ?? `redeem_points:${input.userSessionId}:${input.points ?? "max"}`;
+    const preference = ctx.conversation.metadata?.paymentPreference as
+      | { userSessionId?: string; method?: string }
+      | undefined;
+    if (
+      !input.balanceType &&
+      preference?.userSessionId === input.userSessionId &&
+      preference.method === "VOX_CREDIT"
+    )
+      return err(
+        ErrorCodes.VALIDATION,
+        "VOX credit was selected. Supply balanceType VOX_CREDIT and amountCents; SHARE Points cannot replace it.",
+        false,
+        { needs: "explicit_balance_type", requestedMethod: "VOX_CREDIT" },
+      );
+    const balanceType = input.balanceType ?? "SHARE_POINTS";
+    if (
+      (balanceType === "VOX_CREDIT" && input.points != null) ||
+      (balanceType === "SHARE_POINTS" && input.amountCents != null)
+    )
+      return err(
+        ErrorCodes.VALIDATION,
+        "Use amountCents for VOX_CREDIT, or points for SHARE_POINTS, never both.",
+      );
+    const clear = input.points === 0 || input.amountCents === 0;
+    const basket = (await ctx.vista.getOrder(input.userSessionId)).Order;
+    if (!clear && basket?.AppliedOffers?.some(isCardOffer))
+      return reviewAndPay(ctx, { userSessionId: input.userSessionId, method: balanceType }, {});
+    const quantity = balanceType === "VOX_CREDIT" ? input.amountCents : input.points;
+    const key =
+      input.idempotencyKey ??
+      `redeem_points:${input.userSessionId}:${balanceType}:${quantity ?? "max"}:v${basket?.Version ?? ""}`;
     return enqueueOrderAction(
       ctx,
       "redeem_points",
       input.userSessionId,
-      { memberId, points: input.points },
+      {
+        memberId,
+        balanceType,
+        ...(balanceType === "VOX_CREDIT" ? { amountCents: input.amountCents } : { points: input.points }),
+      },
       key,
-      t(ctx.lang, "Applying your Share Points…", "أطبق نقاط شير…"),
+      t(
+        ctx.lang,
+        clear
+          ? "Removing the reserved balance…"
+          : `Reserving your ${balanceType === "VOX_CREDIT" ? "VOX credit" : "SHARE Points"}…`,
+        clear ? "أزيل حجز الرصيد…" : `أحجز ${balanceType === "VOX_CREDIT" ? "رصيد فوكس" : "نقاط شير"}…`,
+      ),
     );
   },
 

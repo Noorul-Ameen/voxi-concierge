@@ -128,7 +128,7 @@ export async function syncCandidateAgent(
   await api("PATCH", agentPath, {
     ...patch,
     workflow: compiled.workflow,
-    version_description: "VOX: four journey procedures and one fixed brief acknowledgement",
+    version_description: "VOX: four task procedures with direct conversational acknowledgements",
   });
   const after = await api<Agent>("GET", agentPath);
   if (!after.version_id || after.version_id === expectedVersion)

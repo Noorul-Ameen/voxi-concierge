@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { schema as S, createDb } from "@voxi/db";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { assertLocalTestDatabase } from "../../../infra/test-db-guard.js";
 import { executeAction } from "../src/actions/executor.js";
@@ -35,6 +35,96 @@ afterAll(async () => {
 });
 
 describe("durable worker ownership and replies", () => {
+  it("cannot resurrect a queued transfer when its reply races a committed end", async () => {
+    const conversationId = await conversation();
+    const transferId = `tr_${randomUUID().replaceAll("-", "").slice(0, 24)}`;
+    await db.insert(S.transfers).values({
+      id: transferId,
+      conversationId,
+      reason: "customer_request",
+      summary: "Help",
+      adapter: "simulated",
+      status: "queued",
+    });
+    await new SimulatedHandover(db).sendCustomerMessage(`sim_${transferId}`, "Hi", {
+      transferId,
+      conversationId,
+    });
+    const [queued] = await db.select().from(S.actions).where(eq(S.actions.conversationId, conversationId));
+    const [claimed] = await db
+      .update(S.actions)
+      .set({
+        status: "running",
+        attempts: 1,
+        lockedBy: "race-worker",
+        leaseUntil: new Date(Date.now() + 60000),
+        input: { ...queued!.input, at: Date.now() },
+      })
+      .where(eq(S.actions.id, queued!.id))
+      .returning();
+    const workerName = `handover-race-${randomUUID()}`;
+    const workerUrl = new URL(assertLocalTestDatabase());
+    workerUrl.searchParams.set("application_name", workerName);
+    const workerDb = createDb(workerUrl.toString(), { max: 2 });
+    const worker = createContext(workerDb.db);
+    worker.log.level = "silent";
+    let unlock!: () => void;
+    let locked!: () => void;
+    const lockReady = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    const canCommit = new Promise<void>((resolve) => {
+      unlock = resolve;
+    });
+    const ending = db.transaction(async (tx) => {
+      await tx.select().from(S.conversations).where(eq(S.conversations.id, conversationId)).for("update");
+      await tx
+        .update(S.transfers)
+        .set({ status: "ended", endedAt: new Date() })
+        .where(eq(S.transfers.id, transferId));
+      locked();
+      await canCommit;
+    });
+    let running: ReturnType<typeof executeAction> | undefined;
+    try {
+      await lockReady;
+      running = executeAction(worker, {} as Catalog, claimed!);
+      let waiting = false;
+      for (let attempt = 0; attempt < 60; attempt++) {
+        const rows = await db.execute(
+          sql`select 1 from pg_stat_activity where application_name = ${workerName} and wait_event_type = 'Lock'`,
+        );
+        if (rows.length) {
+          waiting = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      expect(waiting).toBe(true);
+      unlock();
+      await ending;
+      expect(await running).toMatchObject({ status: "succeeded", result: { delivered: false } });
+      expect((await db.select().from(S.transfers).where(eq(S.transfers.id, transferId)))[0]?.status).toBe(
+        "ended",
+      );
+      expect(
+        await db
+          .select()
+          .from(S.conversationEvents)
+          .where(
+            and(
+              eq(S.conversationEvents.conversationId, conversationId),
+              inArray(S.conversationEvents.type, ["transfer.status", "human.message"]),
+            ),
+          ),
+      ).toHaveLength(0);
+    } finally {
+      unlock();
+      await ending;
+      await running;
+      await workerDb.close();
+    }
+  });
   it("serializes simultaneous quick-book requests and reuses a matching live hold without extending it", async () => {
     const conversationId = await conversation();
     const [state] = await db.select().from(S.conversations).where(eq(S.conversations.id, conversationId));

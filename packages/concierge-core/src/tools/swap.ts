@@ -4,6 +4,7 @@ import { createConfirmation } from "../services/confirmations.js";
 import { fmtDateTime, money, t } from "../services/format.js";
 import { previewSeats } from "../services/seat-preview.js";
 import { bookingCard, toSnapshot, verifyOwnership } from "./bookings.js";
+import { loadCustomer } from "./customer.js";
 import { sessionCard } from "./movies.js";
 import { type ToolCtx, err, ok } from "./types.js";
 
@@ -24,6 +25,7 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
   const cinemaName = ctx.lang === "ar" ? cinema?.nameAlt || cinema?.name : cinema?.name;
   const date = resolveSpokenDate(input.date ?? b.Showtime.slice(0, 10), ctx.nowLocal);
   const wanted = `${date}T${input.time ?? b.Showtime.slice(11, 16)}:00`;
+  const preferredExperience = input.experience ?? b.Experience;
   const sessions = (await ctx.catalog.sessions(b.CinemaId))
     .filter(
       (s) =>
@@ -37,10 +39,14 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
         (!input.experience || s.experience === input.experience),
     )
     .sort(
-      (a, b) =>
+      (a, other) =>
+        Number(a.showtime.slice(0, 10) !== date) - Number(other.showtime.slice(0, 10) !== date) ||
+        (preferredExperience
+          ? Number(a.experience !== preferredExperience) - Number(other.experience !== preferredExperience)
+          : 0) ||
         Math.abs(Date.parse(`${a.showtime}Z`) - Date.parse(`${wanted}Z`)) -
-          Math.abs(Date.parse(`${b.showtime}Z`) - Date.parse(`${wanted}Z`)) ||
-        a.showtime.localeCompare(b.showtime),
+          Math.abs(Date.parse(`${other.showtime}Z`) - Date.parse(`${wanted}Z`)) ||
+        a.showtime.localeCompare(other.showtime),
     );
   const alternatives = sessions.slice(0, 3).map((s) => sessionCard(s, ctx.lang, ctx.nowLocal, cinemaName));
   const target = input.targetSessionKey ? await ctx.catalog.sessionByKey(input.targetSessionKey) : undefined;
@@ -74,6 +80,11 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
       "This provider cannot quote the complete exchange price. Customer Care can help without changing your booking.",
     );
   const originalTickets = b.Tickets as Record<string, any>[];
+  const customer = await loadCustomer(ctx);
+  const savedPreference = customer?.profile?.seatPreference ?? customer?.preferences?.seatPreference;
+  const preference = ["front", "middle", "back", "aisle", "any"].includes(savedPreference ?? "")
+    ? savedPreference
+    : undefined;
   const seats: { Row: string; Number: string; TicketTypeCode: string }[] = [];
   const tickets: { TicketTypeCode: string; Qty: number }[] = [];
   let ticketsCents = 0;
@@ -86,7 +97,17 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
     };
     const previous = group.map((t) => ({ row: String(t.SeatRowId), number: String(t.SeatNumber) }));
     const same = input.keepSeatsIfPossible ? previewSeats(layout, group.length, "middle", previous) : null;
-    const selected = same ?? previewSeats(layout, group.length, "middle", undefined, previous);
+    // Exact original seats remain first. If unavailable, honour verified profile
+    // preference; passing "near" here would override its target row.
+    const selected =
+      same ??
+      previewSeats(
+        layout,
+        group.length,
+        preference ?? "middle",
+        undefined,
+        preference ? undefined : previous,
+      );
     if (!selected)
       return err(
         ErrorCodes.SEATS_UNAVAILABLE,

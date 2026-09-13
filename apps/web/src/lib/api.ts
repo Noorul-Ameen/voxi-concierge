@@ -54,17 +54,9 @@ export async function getState(session: Session, signal?: AbortSignal) {
   return json<{ conversation: Record<string, any>; transfer?: Record<string, any> }>(await fetch(`${API_BASE}/widget/state`, { headers: { authorization: `Bearer ${session.token}` }, signal }));
 }
 
-export async function getSignedUrl(session: Session): Promise<{ signedUrl?: string; agentId: string; wsOrigin?: string }> {
-  const res = await fetch(`${API_BASE}/widget/signed-url`, { headers: { authorization: `Bearer ${session.token}` } });
-  if (!res.ok) {
-    try {
-      const j = (await res.json()) as { wsOrigin?: string };
-      return { agentId: session.agentId, wsOrigin: j.wsOrigin };
-    } catch {
-      return { agentId: session.agentId };
-    }
-  }
-  return (await res.json()) as { signedUrl?: string; agentId: string; wsOrigin?: string };
+export type ConnectionDetails = { signedUrl?: string; agentId: string; wsOrigin?: string; isLoggedIn?: boolean; dynamicVariables?: Record<string, string> };
+export async function getSignedUrl(session: Session, welcomeVariant = 0): Promise<ConnectionDetails> {
+  return json(await fetch(`${API_BASE}/widget/signed-url?welcomeVariant=${encodeURIComponent(welcomeVariant)}`, { headers: { authorization: `Bearer ${session.token}` } }));
 }
 
 /** An old expiry result must never clear a newer account, login attempt or conversation. */

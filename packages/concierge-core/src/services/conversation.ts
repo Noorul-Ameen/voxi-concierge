@@ -124,8 +124,17 @@ const bookingCompletionNames = new Set([
   "checkout",
   "payment",
 ]);
+const cancellationCompletionNames = new Set([
+  "cancellation",
+  "cancel_booking",
+  "booking_cancellation",
+  "refund",
+  "refund_booking",
+  "partial_refund",
+]);
+const swapCompletionNames = new Set(["swap", "swap_booking", "booking_swap", "exchange", "booking_exchange"]);
 
-/** Model-reported checkout success needs a completed server payment, never merely a seat hold. */
+/** Model-reported financial success needs completed server evidence, never a request or handover. */
 export async function markAgentJourney(
   db: Db,
   id: string,
@@ -137,7 +146,12 @@ export async function markAgentJourney(
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, "_");
-  if (status !== "completed" || !bookingCompletionNames.has(normalized)) {
+  const financialAction = cancellationCompletionNames.has(normalized)
+    ? "cancel_booking"
+    : swapCompletionNames.has(normalized)
+      ? "swap_booking"
+      : undefined;
+  if (status !== "completed" || (!bookingCompletionNames.has(normalized) && !financialAction)) {
     await markJourney(db, id, name, status);
     return { logged: true };
   }
@@ -146,6 +160,59 @@ export async function markAgentJourney(
     const metadata = current?.metadata ?? {};
     if (!current || Number(metadata.widgetAuthGeneration ?? 0) !== expectedAuthGeneration)
       return { logged: false, reason: "session_changed" };
+    if (financialAction) {
+      const actions = await tx
+        .select()
+        .from(S.actions)
+        .where(
+          and(
+            eq(S.actions.conversationId, current.id),
+            eq(S.actions.type, financialAction),
+            eq(S.actions.status, "succeeded"),
+          ),
+        );
+      const confirmed = actions.some((action) => {
+        if (
+          Number(action.input._widgetAuthGeneration ?? 0) !== expectedAuthGeneration ||
+          typeof action.input.bookingId !== "string" ||
+          !action.input.bookingId ||
+          action.resourceKey !== `booking:${action.input.bookingId}`
+        )
+          return false;
+        if (financialAction === "swap_booking")
+          return (
+            typeof action.result?.newBookingId === "string" &&
+            !!action.result.newBookingId &&
+            action.result.newBookingId !== action.input.bookingId &&
+            Number.isFinite(action.result.differenceCents)
+          );
+        const refund = action.result?.refund as { reference?: unknown; amountCents?: unknown } | undefined;
+        return (
+          typeof refund?.reference === "string" &&
+          !!refund.reference &&
+          typeof refund.amountCents === "number" &&
+          Number.isFinite(refund.amountCents) &&
+          refund.amountCents >= 0
+        );
+      });
+      if (!confirmed)
+        return {
+          logged: false,
+          reason: financialAction === "cancel_booking" ? "cancellation_not_confirmed" : "swap_not_confirmed",
+        };
+      if (current.journeys?.some((journey) => journey.name === normalized && journey.status === "completed"))
+        return { logged: false, reason: "already_recorded" };
+      await tx
+        .update(S.conversations)
+        .set({
+          journeys: [
+            ...(current.journeys ?? []),
+            { name: normalized, status: "completed", at: new Date().toISOString() },
+          ],
+        })
+        .where(eq(S.conversations.id, current.id));
+      return { logged: true };
+    }
     const paymentJourney = normalized === "payment" || normalized === "checkout";
     const active = paymentJourney ? (metadata.fnbOrder ?? metadata.activeOrder) : metadata.activeOrder;
     const orderId = typeof active === "string" && active ? active : undefined;

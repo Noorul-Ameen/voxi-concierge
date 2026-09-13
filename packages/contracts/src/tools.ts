@@ -19,6 +19,18 @@ const dateStr = z
     "YYYY-MM-DD or today/tomorrow/weekday",
   );
 const timeStr = z.string().regex(/^\d{2}:\d{2}$/, "HH:mm");
+const filmLanguage = z
+  .string()
+  .optional()
+  .describe(
+    "Film language explicitly requested by the guest, such as English, Hindi, Arabic or Tamil. Never copy the conversation/interface language: speaking Arabic does not request an Arabic film. Omit when no film language was requested.",
+  );
+const legacyFilmLanguage = z
+  .string()
+  .optional()
+  .describe(
+    "Legacy film-language alias for API clients. Prefer filmLanguage; filmLanguage takes precedence.",
+  );
 
 // ---------- Phase 1: movies, cinemas, information ----------
 
@@ -26,7 +38,8 @@ export const SearchFilmsInput = z.object({
   query: z.string().optional().describe("Free-text title, actor, keyword. Fuzzy matched."),
   status: z.enum(["now_showing", "coming_soon", "advance", "any"]).default("now_showing"),
   genre: z.string().optional(),
-  language: z.string().optional().describe("Film language, e.g. English, Hindi, Arabic, Malayalam"),
+  filmLanguage,
+  language: legacyFilmLanguage,
   rating: z.string().optional().describe("Classification such as G, PG, PG13, PG15, 15+, 18+"),
   maxAge: z.number().int().optional().describe("Customer's child age; filters to suitable ratings"),
   cinemaId: z.string().optional(),
@@ -34,7 +47,7 @@ export const SearchFilmsInput = z.object({
 });
 
 export const GetFilmInput = z
-  .object({ hoCode: z.string().optional(), title: z.string().optional() })
+  .object({ hoCode: z.string().optional(), title: z.string().optional(), filmLanguage })
   .refine((v) => v.hoCode || v.title, "hoCode or title required");
 
 export const SearchSessionsInput = z.object({
@@ -56,7 +69,8 @@ export const SearchSessionsInput = z.object({
   timeFrom: timeStr.optional(),
   timeTo: timeStr.optional(),
   experience: Experience.optional(),
-  language: z.string().optional(),
+  filmLanguage,
+  language: legacyFilmLanguage,
   nearMe: z
     .boolean()
     .optional()
@@ -284,7 +298,28 @@ export const ApplyOfferInput = z.object({
 export const RedeemPointsInput = z.object({
   userSessionId: z.string(),
   memberId: z.string().optional(),
-  points: z.number().int().positive().optional().describe("Omit to redeem max"),
+  balanceType: z
+    .enum(["SHARE_POINTS", "VOX_CREDIT"])
+    .optional()
+    .describe(
+      "Use the balance explicitly selected by the guest. VOX_CREDIT is wallet money; SHARE_POINTS is a different balance. Never substitute one for the other. Omitted type is legacy SHARE-only behavior.",
+    ),
+  points: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      "SHARE_POINTS only, in points: 10 points = AED 1. Omit for maximum. Explicit 0 removes the current reservation; use only when the guest asks to remove/correct it.",
+    ),
+  amountCents: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      "VOX_CREDIT only, in fils: 100 = AED 1. Use the amountCents returned by balance_split_confirmation. Omit for maximum. Explicit 0 removes the current reservation; never default to zero.",
+    ),
   idempotencyKey: z.string().optional(),
 });
 export const GetOrderInput = z.object({ userSessionId: z.string() });
@@ -353,7 +388,8 @@ export const QuickBookInput = z.object({
   experience: Experience.optional().describe(
     "Only when the guest asked for it (IMAX, MAX, GOLD…). Default Standard unless the profile prefers otherwise.",
   ),
-  language: z.string().optional().describe("Film language when the guest specified one"),
+  filmLanguage,
+  language: legacyFilmLanguage,
   tickets: z
     .number()
     .int()
@@ -799,7 +835,8 @@ export const TOOL_REGISTRY = {
   redeem_points: {
     input: RedeemPointsInput,
     kind: "write",
-    description: "Redeem Share Points or VOX Rewards against the order.",
+    description:
+      "Reserve the guest's explicitly selected VOX_CREDIT or SHARE_POINTS balance against an unpaid order; this does not charge or confirm a booking. After balance_split_confirmation and guest consent, use its exact redemptionInput, wait for success, then prepare_payment with its nextPaymentMethod. Never replace requested VOX credit with points. Explicit zero removes a mistaken reservation and restores the payable amount before a fresh review.",
   },
   pay_order: {
     input: PayOrderInput,

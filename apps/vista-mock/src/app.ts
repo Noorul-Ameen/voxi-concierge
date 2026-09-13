@@ -579,6 +579,20 @@ export function createApp(db: Db, cfg: MockConfig) {
       Points?: number;
       BalanceType?: "SHARE_POINTS" | "VOX_REWARDS";
     };
+    const type = body.BalanceType ?? "SHARE_POINTS";
+    const suppliedAmount = body.Points;
+    const amountInCents =
+      typeof suppliedAmount === "number" ? suppliedAmount * (type === "SHARE_POINTS" ? 10 : 1) : undefined;
+    if (
+      (body.BalanceType !== undefined && !["SHARE_POINTS", "VOX_REWARDS"].includes(body.BalanceType)) ||
+      (suppliedAmount !== undefined &&
+        (typeof suppliedAmount !== "number" ||
+          !Number.isFinite(suppliedAmount) ||
+          suppliedAmount < 0 ||
+          !Number.isSafeInteger(Math.round(amountInCents!)) ||
+          Math.abs(amountInCents! - Math.round(amountInCents!)) > 1e-7))
+    )
+      throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Invalid loyalty redemption amount or balance type");
     const redeemed = await db.transaction(async (tx) => {
       await tx.select().from(S.orders).where(eq(S.orders.userSessionId, body.UserSessionId)).for("update");
       const db = tx as unknown as Db;
@@ -586,6 +600,28 @@ export function createApp(db: Db, cfg: MockConfig) {
       if (!order) throw new VistaError(RC.GENERAL, RC.ORDER_NOT_FOUND, "Order not found");
       if (["paid", "cancelled", "expired"].includes(order.state))
         throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Order is closed or expired");
+      const acct = (
+        await db.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, body.MemberId))
+      )[0];
+      if (!acct) throw new VistaError(RC.GENERAL, RC.INSUFFICIENT_FUNDS, "Loyalty account not found");
+      if (order.customerId && order.customerId !== acct.customerId)
+        throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "The order belongs to another customer");
+      // Zero explicitly removes a reservation. It never spends a balance or extends the hold.
+      if (suppliedAmount === 0) {
+        const appliedOffers = order.appliedOffers.filter((a) => a.type !== "loyalty_redeem");
+        const totals = recalc({ ...order, appliedOffers, loyaltyPointsPayableValueInCents: 0 }, cfg.order);
+        await db
+          .update(S.orders)
+          .set({
+            appliedOffers,
+            loyaltyPointsPayableValueInCents: 0,
+            ...totals,
+            version: order.version + 1,
+            lastUpdatedAt: new Date(),
+          })
+          .where(eq(S.orders.userSessionId, order.userSessionId));
+        return { Type: type, Amount: 0 };
+      }
       if (order.appliedOffers.some(isCardOffer))
         throw new VistaError(
           RC.GENERAL,
@@ -593,15 +629,15 @@ export function createApp(db: Db, cfg: MockConfig) {
           "Remove the bank-card offer after confirming the repriced total before using VOX credit or SHARE Points",
         );
       await expireWalletCredits(tx, body.MemberId);
-      const acct = (
+      const availableAccount = (
         await db.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, body.MemberId))
-      )[0];
-      if (!acct) throw new VistaError(RC.GENERAL, RC.INSUFFICIENT_FUNDS, "Loyalty account not found");
+      )[0]!;
       const gross = recalc({ ...order, loyaltyPointsPayableValueInCents: 0 }, cfg.order).totalValueCents;
-      const type = body.BalanceType ?? "SHARE_POINTS";
       // Share Points are valued at 10 points = AED 1; VOX credit is already in fils
       const available =
-        type === "SHARE_POINTS" ? pointsToCents(acct.sharePointsBalance) : acct.voxRewardsBalanceCents;
+        type === "SHARE_POINTS"
+          ? pointsToCents(availableAccount.sharePointsBalance)
+          : availableAccount.voxRewardsBalanceCents;
       const want = Math.min(
         body.Points != null
           ? type === "SHARE_POINTS"

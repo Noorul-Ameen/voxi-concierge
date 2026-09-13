@@ -104,6 +104,28 @@ const movies = (result: Awaited<ReturnType<typeof customerTools.get_recommendati
   result.data?.movies as Recommendation[];
 
 describe("recommendation precedence and available results", () => {
+  it("excludes provisional, unknown and adult ratings when children join while retaining confirmed guidance ratings", async () => {
+    const { ctx } = fixture();
+    const candidates = ["18TC", "15TC", "TBC", "", "15+", "18+", "21+", "G", "PG", "PG 13", "PG15"].map(
+      (rating) => ({ ...film(rating || "Unknown", "Tamil"), rating, genres: ["Family"] }),
+    );
+    ctx.catalog.films = async () => candidates;
+    ctx.catalog.sessions = async (id) => (id === "0013" ? candidates.map((f) => show(f, "21:00")) : []);
+    const result = await customerTools.get_recommendations(ctx, {
+      kind: "movies",
+      limit: 10,
+      withChildren: true,
+    });
+    expect((result.data?.movies as { rating: string }[]).map((f) => f.rating).sort()).toEqual([
+      "G",
+      "PG",
+      "PG 13",
+      "PG15",
+    ]);
+    const unconstrained = await customerTools.get_recommendations(ctx, { kind: "movies", limit: 20 });
+    expect((unconstrained.data?.movies as { rating: string }[]).some((f) => f.rating === "18TC")).toBe(true);
+  });
+
   it("offers one nearest future alternative when the requested window is empty without changing cinema, language or date", async () => {
     const { ctx } = fixture();
     const result = await customerTools.get_recommendations(ctx, {
