@@ -1,5 +1,10 @@
+import { readFileSync } from "node:fs";
 import { CLIENT_TOOLS, TOOL_REGISTRY } from "@voxi/contracts";
 import { type SimulationMock, type SimulationSuite, rejectUnexpectedFilters } from "./simulations.js";
+
+const receiptFailureGuidance = JSON.parse(
+  readFileSync(new URL("../../../apps/web/src/lib/receipt-failure-guidance.json", import.meta.url), "utf8"),
+);
 
 const deny: SimulationMock = {
   parameter_conditions: [],
@@ -943,17 +948,22 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     qrFailure.success_conditions = [
       "Use only the verified fixture_booking identifier for the requested QR; a render error must not be described as a visible or downloadable QR.",
       "Briefly acknowledge the inability to open the QR. Preserve the known paid booking; do not claim email/app delivery, tell the user to scan a plain booking reference, retry payment, start another booking, or investigate a new payment merely because receipt rendering failed.",
+      "The verified display failure permits staff-assisted booking lookup only. Do not promise admission or immediate printing; a booking reference is not an admission QR. Use the returned guidance without inventing a delivery channel.",
     ];
     qrFailure.tool_mock_overrides.render_qr = [
       {
         parameter_conditions: [
-          { path: "bookingId", eval: { type: "exact", expected_value: "fixture_booking" } },
+          { path: "bookingId", eval: { type: "regex", pattern: "^(?:fixture_booking|FIXTURE_BOOKING)$" } },
         ],
-        is_error: true,
+        is_error: false,
         mock_result: JSON.stringify({
           ok: false,
           rendered: false,
-          error: "The receipt could not be opened.",
+          reason: "display_failed",
+          error: "The QR code could not be displayed.",
+          bookingVerified: true,
+          bookingId: "FIXTURE_BOOKING",
+          guidance: receiptFailureGuidance.verified,
         }),
       },
     ];

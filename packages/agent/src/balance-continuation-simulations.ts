@@ -1,4 +1,4 @@
-import type { SimulationMock, SimulationSuite } from "./simulations.js";
+import { type SimulationMock, type SimulationSuite, rejectUnexpectedFilters } from "./simulations.js";
 import { buildUiAcknowledgementSuite } from "./ui-acknowledgement-simulations.js";
 
 /** Synthetic continuations of the captured AED145.50 basket/AED120 VOX balance.
@@ -223,6 +223,22 @@ export function buildBalanceContinuationSuite(clockLocal: string): SimulationSui
             redeem_points: [
               ...(correcting
                 ? [
+                    // Reset inputs carry no durable split proof. Reject invented extras before
+                    // the broad zero-clear match, without blocking the confirmed VOX branch.
+                    ...rejectUnexpectedFilters([], {
+                      confirmationId: [],
+                      confirmed: [],
+                      amountCents: [],
+                    }).map(
+                      (mock): SimulationMock => ({
+                        ...mock,
+                        parameter_conditions: [
+                          { path: "balanceType", eval: { type: "exact", expected_value: "SHARE_POINTS" } },
+                          { path: "points", eval: { type: "exact", expected_value: "0" } },
+                          ...mock.parameter_conditions,
+                        ],
+                      }),
+                    ),
                     success(
                       {
                         action: { actionId: "fixture_clear_share", status: "succeeded" },
