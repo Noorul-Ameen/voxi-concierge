@@ -287,7 +287,17 @@ describe("eight approved journeys", () => {
     expect(JSON.parse(failed.tool_mock_overrides.render_qr[0].mock_result)).toMatchObject({
       ok: false,
       rendered: false,
+      reason: "display_failed",
+      bookingVerified: true,
+      bookingId: "FIXTURE_BOOKING",
+      guidance: JSON.parse(
+        readFileSync(
+          new URL("../../../apps/web/src/lib/receipt-failure-guidance.json", import.meta.url),
+          "utf8",
+        ),
+      ).verified,
     });
+    expect(failed.tool_mock_overrides.render_qr[0].is_error).toBe(false);
     expect(JSON.parse(failed.tool_mock_overrides.find_booking[0].mock_result).ui).toBeUndefined();
     const bank = tests.find((test) => test.id === "06-negative-en")!;
     expect(

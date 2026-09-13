@@ -1,0 +1,30 @@
+{
+  "verified": {
+    "qrVisible": false,
+    "bookingChanged": false,
+    "nextStep": "staff_booking_lookup",
+    "canScanBookingReference": false,
+    "canGuaranteeAdmission": false,
+    "canGuaranteeImmediatePrinting": false,
+    "deliveryEvidence": "none",
+    "canConfirmEmailOrAppDelivery": false,
+    "response": {
+      "en": "I cannot display the QR right now. Cinema staff can help locate your verified booking using its reference. A booking reference is not a scannable ticket; entry or immediate printing is not guaranteed.",
+      "ar": "لا أستطيع عرض الرمز حالياً. يمكن لموظفي السينما المساعدة في العثور على حجزك المؤكد باستخدام رقمه المرجعي. الرقم المرجعي ليس تذكرة قابلة للمسح، ولا يمكن ضمان الدخول أو الطباعة الفورية."
+    }
+  },
+  "unverified": {
+    "qrVisible": false,
+    "bookingChanged": false,
+    "nextStep": "verify_booking",
+    "canScanBookingReference": false,
+    "canGuaranteeAdmission": false,
+    "canGuaranteeImmediatePrinting": false,
+    "deliveryEvidence": "none",
+    "canConfirmEmailOrAppDelivery": false,
+    "response": {
+      "en": "I could not display a verified receipt. Check the booking and sign-in details before trying again. Do not treat a booking reference as a scannable ticket or a guarantee of entry or immediate printing.",
+      "ar": "تعذر عرض إيصال تم التحقق منه. تحقق من بيانات الحجز وتسجيل الدخول قبل المحاولة مجدداً. الرقم المرجعي ليس تذكرة قابلة للمسح ولا يضمن الدخول أو الطباعة الفورية."
+    }
+  }
+}

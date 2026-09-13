@@ -16,12 +16,15 @@ This change follows live checks of the supplied customer journeys on the linked 
 - Film-language filters use an explicit `filmLanguage` field in agent tools, separate from English/Arabic conversation language. Existing API film-language aliases remain compatible; the old general language hint on `get_film` keeps its previous behavior. Unknown cinema, bank, time and order values are omitted rather than guessed.
 - Monetary digits are preserved while ElevenLabs handles voice text normalization after generation. This replaces the competing platform instruction to spell numbers out in the prompt. Candidate deployment verifies this authored setting while still protecting selected voices, models, other voice settings and cascade timing. Expressive voice controls remain enabled.
 - Handover instructions consistently require a customer request or acceptance; an eligibility refusal alone does not authorize transfer. Existing booking details are matched before asking which booking, and a balance-split consent preview is explicitly distinguished from an actually opened payment review. These corrections follow manual transcript findings, including provider-labelled false passes.
+- Failed QR display now returns an explicit verified/unverified result and factual next steps. Only an exact, active receipt from the current signed-in session can be described as verified. A booking reference is not a scannable ticket, and a failed display does not establish admission, immediate printing or delivery through another channel. The agent simulation uses the same static guidance as the widget; successful receipt rendering and downloading remain unchanged.
 
 ## Test approach
 
 The regression suite covers authenticated greetings, account/transfer races, payment consent and reservations, classification refresh/admission, exchange preference and price preservation, and truthful financial reporting. Hosted checks use fresh synthetic guest transactions for actual payment/refund/swap execution; named spreadsheet bookings remain read-only and member balance checks stop before payment.
 
 ElevenLabs simulations exercise the existing journeys plus verified widget acknowledgements, child-rating boundaries, proposal edits, VOX/card continuation and explicit card refusal, correction of rejected SHARE selection, and reference-less confirmed-booking lookup in English and Arabic. Provider pass counters are reviewed against tool results and spoken facts; a provider pass alone does not establish acceptance.
+
+The balance-correction mocks reject invented confirmation fields on a zero SHARE reset before matching success, while accepting the exact server-issued proof for a consented VOX/card split. Matched four- and eight-second failover trials did not show a consistent conversation-quality advantage, so the existing four-second setting is retained. Final sequential batches preserve all 68 authored cases; the earlier burst-run failures remain separate evidence of unresolved variability, rather than being discarded or relabelled as passes.
 
 ## Data and acceptance boundaries
 

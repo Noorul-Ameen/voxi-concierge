@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CommandResult, UiHint } from "../src/lib/api";
 import { receiptCompletesCurrentOrder, renderVerifiedReceipt } from "../src/lib/receipt";
+import failureGuidance from "../src/lib/receipt-failure-guidance.json";
 
 const png = "data:image/png;base64,c3ludGhldGljLWltYWdl";
 const booking = { bookingId: "BOOK-A", status: "confirmed", qrPayload: "actual-provider-ticket", totalCents: 9700 };
@@ -40,7 +41,7 @@ describe("verified existing-booking QR display", () => {
 
   it.each([undefined, null, "", "  ", { bookingId: "BOOK-A" }])("rejects an absent or malformed booking reference: %s", async (id) => {
     const load = vi.fn();
-    expect(await renderVerifiedReceipt(id, load, vi.fn(), vi.fn(), () => true)).toMatchObject({ ok: false, rendered: false });
+    expect(await renderVerifiedReceipt(id, load, vi.fn(), vi.fn(), () => true)).toMatchObject({ ok: false, rendered: false, reason: "reference_missing", bookingVerified: false, guidance: failureGuidance.unverified });
     expect(load).not.toHaveBeenCalled();
   });
 
@@ -57,7 +58,9 @@ describe("verified existing-booking QR display", () => {
   ])("never draws an unverified, unavailable, cancelled or mismatched receipt: %#", async (response) => {
     const generate = vi.fn();
     const render = vi.fn();
-    expect(await renderVerifiedReceipt("BOOK-A", async () => response, generate, render, () => true)).toMatchObject({ ok: false, rendered: false });
+    const failure = await renderVerifiedReceipt("BOOK-A", async () => response, generate, render, () => true);
+    expect(failure).toMatchObject({ ok: false, rendered: false, bookingVerified: false, guidance: failureGuidance.unverified });
+    expect(failure).not.toHaveProperty("bookingId");
     expect(generate).not.toHaveBeenCalled();
     expect(render).not.toHaveBeenCalled();
   });
@@ -73,7 +76,9 @@ describe("verified existing-booking QR display", () => {
     const load = vi.fn(async () => { if (stage === "after lookup") current = false; return receipt(); });
     const generate = vi.fn(async () => { if (stage === "after QR preparation") current = false; return png; });
     const render = vi.fn(async () => { if (stage === "during render") current = false; });
-    expect(await renderVerifiedReceipt("BOOK-A", load, generate, render, () => current)).toMatchObject({ ok: false, rendered: false });
+    const failure = await renderVerifiedReceipt("BOOK-A", load, generate, render, () => current);
+    expect(failure).toMatchObject({ ok: false, rendered: false, reason: "session_changed", bookingVerified: false, guidance: failureGuidance.unverified });
+    expect(failure).not.toHaveProperty("bookingId");
     if (stage === "before lookup") expect(load).not.toHaveBeenCalled();
     if (stage === "after lookup") expect(generate).not.toHaveBeenCalled();
     if (stage !== "during render") expect(render).not.toHaveBeenCalled();
@@ -98,11 +103,15 @@ describe("verified existing-booking QR display", () => {
     const result = await renderVerifiedReceipt("BOOK-A", async () => stage === "lookup" ? failure() : receipt(),
       async () => stage === "image" ? failure() : png, async () => { if (stage === "render") failure(); }, () => true);
     expect(result).toMatchObject({ ok: false, rendered: false });
+    if (stage === "lookup") {
+      expect(result).toMatchObject({ reason: "lookup_failed", bookingVerified: false, guidance: failureGuidance.unverified });
+      expect(result).not.toHaveProperty("bookingId");
+    } else expect(result).toMatchObject({ reason: "display_failed", bookingVerified: true, bookingId: "BOOK-A", guidance: failureGuidance.verified });
   });
 
   it("does not claim an image appeared when QR generation returned no valid PNG", async () => {
     const render = vi.fn();
-    expect(await renderVerifiedReceipt("BOOK-A", async () => receipt(), async () => "BOOK-A", render, () => true)).toMatchObject({ ok: false, rendered: false });
+    expect(await renderVerifiedReceipt("BOOK-A", async () => receipt(), async () => "BOOK-A", render, () => true)).toMatchObject({ ok: false, rendered: false, reason: "display_failed", bookingVerified: true, guidance: failureGuidance.verified });
     expect(render).not.toHaveBeenCalled();
   });
 
@@ -121,5 +130,33 @@ describe("verified existing-booking QR display", () => {
     await renderVerifiedReceipt("BOOK-A", async () => result, async () => png, (ui) => { displayed = ui; }, () => true);
     expect(displayed).not.toHaveProperty("actions");
     expect(JSON.stringify(displayed)).not.toContain("must-not-render");
+  });
+
+  it("does not retain old-account booking verification when image failure races an account switch", async () => {
+    let current = true;
+    const render = vi.fn();
+    const result = await renderVerifiedReceipt("BOOK-A", async () => receipt(), async () => {
+      current = false;
+      throw new Error("image failed during account switch");
+    }, render, () => current);
+    expect(result).toMatchObject({ ok: false, rendered: false, reason: "session_changed", bookingVerified: false, guidance: failureGuidance.unverified });
+    expect(result).not.toHaveProperty("bookingId");
+    expect(render).not.toHaveBeenCalled();
+  });
+
+  it("returns factual staff guidance without retrying or promising entry, scanning a reference or immediate printing", async () => {
+    const load = vi.fn(async () => receipt());
+    const generate = vi.fn(async () => { throw new Error("image unavailable"); });
+    const render = vi.fn();
+    const result = await renderVerifiedReceipt("BOOK-A", load, generate, render, () => true);
+    expect(result).toMatchObject({ reason: "display_failed", bookingVerified: true, guidance: {
+      qrVisible: false, bookingChanged: false, nextStep: "staff_booking_lookup",
+      canScanBookingReference: false, canGuaranteeAdmission: false, canGuaranteeImmediatePrinting: false,
+      deliveryEvidence: "none", canConfirmEmailOrAppDelivery: false,
+      response: { en: expect.any(String), ar: expect.any(String) },
+    } });
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(render).not.toHaveBeenCalled();
   });
 });

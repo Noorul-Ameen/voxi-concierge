@@ -96,6 +96,48 @@ describe("verified UI acknowledgement regression fixtures", () => {
     }
   });
 
+  it("rejects invented zero-clear confirmation fields before success while accepting the exact split proof", () => {
+    const tests = materializeSimulations(buildBalanceContinuationSuite(clock), tools).filter((test) =>
+      test.id.includes("correct-share"),
+    );
+    expect(tests).toHaveLength(2);
+    for (const test of tests) {
+      const mocks = test.body.tool_mock_overrides.fixture_redeem_points;
+      const firstMatch = (input: Record<string, unknown>) =>
+        mocks.find((mock) =>
+          mock.parameter_conditions.every(({ path, eval: condition }) => {
+            if (input[path] === undefined) return false;
+            return condition.type === "exact"
+              ? String(input[path]) === condition.expected_value
+              : new RegExp(condition.pattern).test(String(input[path]));
+          }),
+        );
+      const clear = { userSessionId: "fixture_balance_order", balanceType: "SHARE_POINTS", points: 0 };
+      expect(JSON.parse(firstMatch(clear)!.mock_result).data.result.cleared).toBe(true);
+      for (const extra of [
+        { confirmationId: "balance_reset_confirmation", confirmed: true },
+        { confirmationId: "fixture_balance_split" },
+        { confirmed: true },
+        { confirmed: false },
+        { amountCents: 0 },
+        { amountCents: 12000 },
+      ]) {
+        const match = firstMatch({ ...clear, ...extra })!;
+        expect(match.is_error).toBe(true);
+        expect(JSON.parse(match.mock_result).error.code).toBe("UNEXPECTED_SIMULATION_PARAMETER");
+      }
+      const confirmedSplit = firstMatch({
+        userSessionId: "fixture_balance_order",
+        balanceType: "VOX_CREDIT",
+        amountCents: 12000,
+        confirmationId: "fixture_balance_split",
+        confirmed: true,
+      })!;
+      expect(confirmedSplit.is_error).toBe(false);
+      expect(JSON.parse(confirmedSplit.mock_result).data.result.paymentReviewOpened).toBe(true);
+    }
+  });
+
   it("covers every member and a guest in both languages with bounded non-executing controls", () => {
     const suite = buildUiAcknowledgementSuite(clock);
     expect(suite.fixture.clock_local).toBe(clock);
