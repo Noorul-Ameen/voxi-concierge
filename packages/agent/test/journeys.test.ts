@@ -75,6 +75,29 @@ describe("eight approved journeys", () => {
       const current = JSON.parse(switching.tool_mock_overrides.get_session_context[0].mock_result).data
         .activeOrder.summary;
       expect(current).toMatchObject({ totalCents: 9600, total: "AED 96.00" });
+      const initialRead = JSON.parse(switching.tool_mock_overrides.get_order[0].mock_result).data.order;
+      expect(initialRead).toMatchObject(current);
+      expect(initialRead.offers).toHaveLength(1);
+      const removed = JSON.parse(switching.tool_mock_overrides.apply_offer[0].mock_result);
+      expect(removed.data.result.order).toMatchObject({
+        totalCents: 12000,
+        total: "AED 120.00",
+        offers: [],
+      });
+      expect(removed.ui).toMatchObject({ type: "order", items: [removed.data.result.order] });
+      const rendered = switching.tool_mock_overrides.render_order_summary[0];
+      expect(rendered.parameter_conditions).toEqual([
+        { path: "userSessionId", eval: { type: "exact", expected_value: "fixture_order" } },
+      ]);
+      expect(rendered.is_error).toBe(false);
+      expect(JSON.parse(rendered.mock_result)).toBe("The order summary is shown after each order step.");
+      expect(switching.success_conditions.join(" ")).toContain("static fixture");
+      const fresh = tests.find((test) => test.id === `04-positive-${language}-after-removal`)!;
+      expect(JSON.parse(fresh.tool_mock_overrides.get_order[0].mock_result).data.order).toMatchObject({
+        totalCents: 12000,
+        total: "AED 120.00",
+        offers: [],
+      });
       const preview = JSON.parse(switching.tool_mock_overrides.prepare_payment[0].mock_result);
       expect(preview.speech).toContain("96");
       expect(preview.speech).toContain("120");
@@ -154,6 +177,33 @@ describe("eight approved journeys", () => {
         time: "19:05",
       });
       expect(completed.data.booking).toBeUndefined();
+      for (const path of ["positive", "negative"]) {
+        const swap = buildJourneySimulationSuite().tests.find(
+          (item) => item.id === `08-${path}-${language}`,
+        )!;
+        const dated = swap.tool_mock_overrides.prepare_swap.filter((entry) =>
+          entry.parameter_conditions.some((condition) => condition.path === "date"),
+        );
+        expect(
+          dated.map(
+            (entry) => entry.parameter_conditions.find((condition) => condition.path === "date")!.eval,
+          ),
+        ).toEqual([
+          { type: "exact", expected_value: "tomorrow" },
+          { type: "exact", expected_value: "2030-06-04" },
+        ]);
+        expect(dated[0].mock_result).toBe(dated[1].mock_result);
+        expect(
+          dated.every((entry) =>
+            entry.parameter_conditions.some(
+              (condition) =>
+                condition.path === "bookingId" &&
+                condition.eval.type === "exact" &&
+                condition.eval.expected_value === "fixture_booking",
+            ),
+          ),
+        ).toBe(true);
+      }
     }
   });
   it("allows a polite farewell and evaluates waiting only when the user explicitly asks to pause", () => {

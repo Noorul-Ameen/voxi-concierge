@@ -13,7 +13,13 @@ export function buildBalanceContinuationSuite(clockLocal: string): SimulationSui
     amountCents: 12000,
     remainingCents: 2550,
     totalCents: 14550,
-    redemptionInput: { userSessionId: orderId, balanceType: "VOX_CREDIT", amountCents: 12000 },
+    redemptionInput: {
+      userSessionId: orderId,
+      balanceType: "VOX_CREDIT",
+      amountCents: 12000,
+      confirmationId: "fixture_balance_split",
+      confirmed: true,
+    },
     nextPaymentMethod: "CARD",
   };
   const balancePayment = {
@@ -30,9 +36,28 @@ export function buildBalanceContinuationSuite(clockLocal: string): SimulationSui
     loyaltyRedeemedCents: 12000,
     offers: [{ id: "VOX_REWARDS", type: "loyalty_redeem", discountCents: 12000 }],
   };
+  const review = {
+    ok: true,
+    confirmationId: "fixture_balance_review",
+    summary: { userSessionId: orderId, method: "CARD", amountCents: 2550, balancePayment, order },
+    sheet: { requiresSheet: true, guest: false, customerKnown: true, fnbOnly: false },
+  };
+  const paymentUi = {
+    type: "payment",
+    title: "Review & Pay",
+    items: [{ ...order, method: "CARD" }],
+    meta: {
+      confirmationId: review.confirmationId,
+      userSessionId: orderId,
+      method: "CARD",
+      amountCents: 2550,
+      balancePayment,
+      requiresSheet: true,
+    },
+  };
   const success = (
     data: unknown,
-    conditions: Record<string, string | number>,
+    conditions: Record<string, string | number | boolean>,
     ui?: unknown,
   ): SimulationMock => ({
     parameter_conditions: Object.entries(conditions).map(([path, value]) => ({
@@ -52,7 +77,7 @@ export function buildBalanceContinuationSuite(clockLocal: string): SimulationSui
     },
     data: split,
   };
-  return {
+  const suite: SimulationSuite = {
     format_version: 1,
     fixture,
     common_tool_mock_overrides,
@@ -170,7 +195,7 @@ export function buildBalanceContinuationSuite(clockLocal: string): SimulationSui
             },
           ],
           success_conditions: [
-            "The guest chose VOX_CREDIT. A short yes approves that exact split/review only, never SHARE_POINTS. Redeem with explicit balanceType VOX_CREDIT and amountCents12000, then prepare CARD for the returned2550 remainder. No pay_order, new hold, charge or invented method/amount is allowed.",
+            "The guest chose VOX_CREDIT. A short yes approves that exact split/review only, never SHARE_POINTS. Redeem using the full returned redemptionInput, including balanceType VOX_CREDIT, amountCents12000, confirmationId and confirmed:true. The successful confirmed action reserves12000 and returns paymentReviewOpened:true with the actual CARD2550 payment UI; acknowledge that result without a redundant prepare call. A reservation-only result or unexecuted step cannot prove a review. No pay_order, new hold, charge or invented method/amount is allowed.",
             "If the actual guest instead rejects the card remainder or requests credit only, do not require a CARD review for a pass: stop at the returned insufficient-balance choice without claiming a review opened. A reservation is reserved/selected, not charged/deducted; Arabic خصم before successful payment is not a truthful reservation acknowledgement.",
             correcting
               ? "First remove the explicitly rejected SHARE reservation using the returned balanceType SHARE_POINTS, points0. Verify successful clearing before applying VOX credit. Do not retain/reuse SHARE in the new review; do not claim clearing if the tool failed."
@@ -194,26 +219,6 @@ export function buildBalanceContinuationSuite(clockLocal: string): SimulationSui
                 ...success({}, { userSessionId: orderId, method: "VOX_CREDIT" }),
                 mock_result: JSON.stringify(splitResult),
               },
-              success(
-                {
-                  confirmationId: "fixture_balance_review",
-                  summary: {
-                    userSessionId: orderId,
-                    method: "CARD",
-                    amountCents: 2550,
-                    balancePayment,
-                    order,
-                  },
-                  balancePayment,
-                },
-                { userSessionId: orderId, method: "CARD" },
-                {
-                  type: "payment",
-                  title: "Review & Pay",
-                  items: [order],
-                  meta: { confirmationId: "fixture_balance_review", balancePayment },
-                },
-              ),
             ],
             redeem_points: [
               ...(correcting
@@ -240,7 +245,7 @@ export function buildBalanceContinuationSuite(clockLocal: string): SimulationSui
                 : []),
               success(
                 {
-                  action: { actionId: "fixture_vox_reservation", status: "succeeded" },
+                  action: { actionId: "fixture_vox_reservation", type: "redeem_points", status: "succeeded" },
                   result: {
                     balanceType: "VOX_CREDIT",
                     cleared: false,
@@ -248,9 +253,12 @@ export function buildBalanceContinuationSuite(clockLocal: string): SimulationSui
                     nextPaymentMethod: "CARD",
                     balancePayment,
                     order,
+                    paymentReviewOpened: true,
+                    review,
                   },
                 },
-                { userSessionId: orderId, balanceType: "VOX_CREDIT", amountCents: 12000 },
+                split.redemptionInput,
+                paymentUi,
               ),
             ],
           },
@@ -258,4 +266,24 @@ export function buildBalanceContinuationSuite(clockLocal: string): SimulationSui
       }),
     ),
   };
+  for (const language of ["en", "ar"] as const) {
+    const refusal = structuredClone(suite.tests.find((test) => test.id === `balance-split-${language}`)!);
+    refusal.id = `balance-decline-card-${language}`;
+    refusal.name = `VOX balance credit-only no-card ${language}`;
+    refusal.success_conditions = [
+      "The verified VOX balance is insufficient for the basket. The latest user explicitly refuses any card remainder: preserve that refusal and explain the returned balance limitation briefly. Do not treat the earlier review request as consent to this refused split.",
+      "Do not reserve/redeem a balance, clear anything, open a CARD/SAVED_CARD/SHARE review, change the basket, or pay. Do not claim a review or reservation was created. A review approval and an actual payment approval are separate; neither is supplied here.",
+      `Answer in ${language === "ar" ? "Arabic" : "English"}. When the guest asks to leave the basket unchanged, acknowledge and stop without another sales or payment question.`,
+    ];
+    refusal.simulation_scenario =
+      language === "ar"
+        ? "تحدثي العربية فقط. بعد توزيع الرصيد والبطاقة المعروض قولي بالنص: لا، أريد رصيد فوكس فقط ولا أريد دفع أي مبلغ بالبطاقة. لا تحجزي أي رصيد ولا تفتحي مراجعة البطاقة، اتركي السلة كما هي. ثم: شكراً، لا تغيّري شيئاً. لا توافقي على البطاقة أو على حجز رصيد أو دفع."
+        : "Speak English only. After the shown balance/card split say exactly: 'No, I want VOX Credit only and no card payment. Do not reserve any balance or open a card review; leave the basket unchanged.' Then 'Thanks, do not change anything.' Never accept a card remainder, reservation or payment.";
+    refusal.simulation_max_turns = 2;
+    refusal.tool_mock_overrides = {
+      get_session_context: refusal.tool_mock_overrides.get_session_context!,
+    };
+    suite.tests.push(refusal);
+  }
+  return suite;
 }

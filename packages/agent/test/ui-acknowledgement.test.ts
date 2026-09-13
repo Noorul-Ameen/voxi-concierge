@@ -16,10 +16,20 @@ describe("verified UI acknowledgement regression fixtures", () => {
 
   it("binds each VOX split and rejected SHARE correction to the exact balance and cents without executing payment", () => {
     const tests = materializeSimulations(buildBalanceContinuationSuite(clock), tools);
-    expect(tests).toHaveLength(4);
+    expect(tests).toHaveLength(6);
     for (const test of tests) {
       const redemption = test.body.tool_mock_overrides.fixture_redeem_points;
       const allowed = redemption.filter((mock) => !mock.is_error);
+      if (test.id.includes("decline-card")) {
+        expect(allowed).toHaveLength(0);
+        for (const [id, mocks] of Object.entries(test.body.tool_mock_overrides))
+          if (id !== "fixture_get_session_context") expect(mocks.every((mock) => mock.is_error)).toBe(true);
+        expect(test.body.success_conditions.join(" ")).toContain("explicitly refuses any card remainder");
+        expect(
+          test.body.chat_history.some((turn) => JSON.stringify(turn).includes("balance_split_confirmation")),
+        ).toBe(true);
+        continue;
+      }
       expect(allowed).toHaveLength(test.id.includes("correct-share") ? 2 : 1);
       for (const mock of allowed)
         expect(mock.parameter_conditions.some((condition) => condition.path === "balanceType")).toBe(true);
@@ -28,6 +38,51 @@ describe("verified UI acknowledgement regression fixtures", () => {
         path: "amountCents",
         eval: { type: "exact", expected_value: "12000" },
       });
+      expect(vox.parameter_conditions).toEqual(
+        expect.arrayContaining([
+          { path: "confirmationId", eval: { type: "exact", expected_value: "fixture_balance_split" } },
+          { path: "confirmed", eval: { type: "exact", expected_value: "true" } },
+        ]),
+      );
+      const completed = JSON.parse(vox.mock_result);
+      expect(completed.data.result).toMatchObject({
+        paymentReviewOpened: true,
+        review: {
+          ok: true,
+          confirmationId: "fixture_balance_review",
+          summary: { method: "CARD", amountCents: 2550 },
+          sheet: { requiresSheet: true },
+        },
+      });
+      expect(completed.ui).toMatchObject({
+        type: "payment",
+        meta: {
+          confirmationId: completed.data.result.review.confirmationId,
+          userSessionId: "fixture_balance_order",
+          method: "CARD",
+          amountCents: 2550,
+          requiresSheet: true,
+        },
+      });
+      const preview = test.body.tool_mock_overrides.fixture_prepare_payment.find((mock) => !mock.is_error)!;
+      const previewBody = JSON.parse(preview.mock_result);
+      expect(previewBody.data.redemptionInput).toMatchObject({
+        confirmationId: "fixture_balance_split",
+        confirmed: true,
+      });
+      expect(previewBody.ui).toBeUndefined();
+      expect(
+        test.body.tool_mock_overrides.fixture_prepare_payment.some(
+          (mock) =>
+            !mock.is_error &&
+            mock.parameter_conditions.some(
+              (condition) =>
+                condition.path === "method" &&
+                condition.eval.type === "exact" &&
+                condition.eval.expected_value === "CARD",
+            ),
+        ),
+      ).toBe(false);
       expect(JSON.parse(vox.mock_result).data.result.balancePayment).toMatchObject({
         method: "VOX_CREDIT",
         amountCents: 12000,

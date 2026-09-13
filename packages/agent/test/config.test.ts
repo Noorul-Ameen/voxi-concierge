@@ -30,6 +30,21 @@ describe("agent configuration contracts", () => {
       enum: ["SHARE_POINTS", "VOX_CREDIT"],
     });
     expect(tool.api_schema.request_body_schema.properties).toHaveProperty("amountCents");
+    expect(tool.api_schema.request_body_schema.properties.confirmationId).toMatchObject({ type: "string" });
+    expect(tool.api_schema.request_body_schema.properties.confirmed).toMatchObject({ type: "boolean" });
+    expect(tool.api_schema.request_body_schema.required).not.toContain("confirmationId");
+    expect(tool.api_schema.request_body_schema.required).not.toContain("confirmed");
+    expect(tool.description).toContain("single action");
+    expect(tool.description).toContain("paymentReviewOpened:true");
+    expect(
+      TOOL_REGISTRY.redeem_points.input.safeParse({
+        userSessionId: "fixture_order",
+        balanceType: "VOX_CREDIT",
+        amountCents: 12000,
+        confirmationId: "fixture_balance_split",
+        confirmed: true,
+      }).success,
+    ).toBe(true);
     expect(TOOL_REGISTRY.redeem_points.input.safeParse({ userSessionId: "fixture_order" }).success).toBe(
       true,
     );

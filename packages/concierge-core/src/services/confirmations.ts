@@ -20,7 +20,7 @@ export async function createConfirmation(
     spokenSummary: string;
     ttlSeconds: number;
     excludeBasketActionId?: string;
-    validateBeforeCreate?: () => Promise<void>;
+    validateBeforeCreate?: (current: Awaited<ReturnType<typeof resolveLinkedConversation>>) => Promise<void>;
   },
 ) {
   const id = prefixedId("cnf", 10);
@@ -28,6 +28,7 @@ export async function createConfirmation(
     const current = await resolveLinkedConversation(tx, input.conversationId, true);
     if (
       input.actionType === "pay_order" ||
+      input.actionType === "redeem_points" ||
       (input.actionType === "apply_offer" && input.summary.remove === true)
     )
       await assertNoPendingBasketEdits(
@@ -36,7 +37,19 @@ export async function createConfirmation(
         input.excludeBasketActionId,
         current?.id ?? input.conversationId,
       );
-    await input.validateBeforeCreate?.();
+    await input.validateBeforeCreate?.(current);
+    if (input.actionType === "pay_order" || input.actionType === "redeem_points")
+      await tx
+        .update(S.pendingConfirmations)
+        .set({ expiresAt: new Date(0) })
+        .where(
+          and(
+            eq(S.pendingConfirmations.conversationId, current?.id ?? input.conversationId),
+            eq(S.pendingConfirmations.resourceKey, input.resourceKey),
+            eq(S.pendingConfirmations.actionType, "redeem_points"),
+            isNull(S.pendingConfirmations.consumedAt),
+          ),
+        );
     const [row] = await tx
       .insert(S.pendingConfirmations)
       .values({

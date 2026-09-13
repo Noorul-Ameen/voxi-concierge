@@ -275,6 +275,7 @@ const journeys: Journey[] = [
     ],
     positiveCriteria: [
       "Obtain payment_switch_confirmation and explain the conflict and authoritative new payable amount before removal consent; repeating the old amount is unnecessary, but any amount spoken must be accurate. Remove with that confirmation, then show the updated basket only: the guest explicitly excludes opening payment options. No second prepare_payment is allowed after removal in this case.",
+      "This static fixture's get_order is the initial offered basket (AED96); the successful removal result and its order UI are authoritative for the changed AED120 basket. A later identical get_order cannot model a state transition here: report that fixture limitation rather than judging stale initial data as a product failure. Fresh post-removal reads are covered by the separate after-removal case.",
     ],
     negativeCriteria: [
       "Keep the active offer and saved card unchanged after the refusal. Do not open payment options or re-ask to apply an already active offer. No removal consent or new payment review is required because no switch was accepted.",
@@ -302,11 +303,27 @@ const journeys: Journey[] = [
           },
         },
         { userSessionId: "fixture_order", remove: true, confirmed: true, confirmationId: "fixture_switch" },
+        {
+          type: "order",
+          items: [{ ...order, offers: [], totalCents: 12000, total: "AED 120.00" }],
+          meta: { userSessionId: "fixture_order" },
+        },
       ),
       get_order: mock(
-        { order: { ...order, offers: [], totalCents: 12000, total: "AED 120.00" } },
+        { order: { ...order, offers: [offer], totalCents: 9600, total: "AED 96.00" } },
         { userSessionId: "fixture_order" },
       ),
+      render_order_summary: [
+        {
+          parameter_conditions: [
+            { path: "userSessionId", eval: { type: "exact", expected_value: "fixture_order" } },
+          ],
+          is_error: false,
+          // The real client acknowledges the order UI emitted by the preceding
+          // verified operation; it does not fetch a new cart or return rendered:true.
+          mock_result: JSON.stringify("The order summary is shown after each order step."),
+        },
+      ],
     },
     negative: {
       prepare_payment: mock(
@@ -790,23 +807,27 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     offerFailure.tool_mock_overrides.get_order = mock({ order }, { userSessionId: "fixture_order" });
     suite.tests.push(offerFailure);
     const swap = suite.tests.find((test) => test.id === `08-positive-${language}`)!;
-    swap.tool_mock_overrides.prepare_swap!.push(
-      ...mock(
-        {
-          needs: "swap_session",
-          bookingId: "fixture_booking",
-          sameCinemaRequired: true,
-          alternatives: [
-            { ...show, sessionKey: "FIX_SWAP_SHOW", showtime: "2030-06-04T19:05:00+04:00", time: "19:05" },
-          ],
-        },
-        { bookingId: "fixture_booking", date: "tomorrow" },
-      ),
-    );
+    for (const date of ["tomorrow", show.date]) {
+      swap.tool_mock_overrides.prepare_swap!.push(
+        ...mock(
+          {
+            needs: "swap_session",
+            bookingId: "fixture_booking",
+            sameCinemaRequired: true,
+            alternatives: [
+              { ...show, sessionKey: "FIX_SWAP_SHOW", showtime: "2030-06-04T19:05:00+04:00", time: "19:05" },
+            ],
+          },
+          { bookingId: "fixture_booking", date },
+        ),
+      );
+    }
     const noSwap = suite.tests.find((test) => test.id === `08-negative-${language}`)!;
-    noSwap.tool_mock_overrides.prepare_swap = mock(
-      { needs: "swap_session", bookingId: "fixture_booking", sameCinemaRequired: true, alternatives: [] },
-      { bookingId: "fixture_booking", date: "tomorrow" },
+    noSwap.tool_mock_overrides.prepare_swap = ["tomorrow", show.date].flatMap((date) =>
+      mock(
+        { needs: "swap_session", bookingId: "fixture_booking", sameCinemaRequired: true, alternatives: [] },
+        { bookingId: "fixture_booking", date },
+      ),
     );
     const age = structuredClone(suite.tests.find((test) => test.id === `02-negative-${language}`)!);
     age.id += "-age";

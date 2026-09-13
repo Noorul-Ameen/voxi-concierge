@@ -11,6 +11,7 @@ import {
 } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 import { enqueue, findByKey, idem, toRef } from "../actions/ledger.js";
+import { enqueueBalanceReview, prepareBalanceReview } from "../services/balance-review.js";
 import { assertCheckoutSnapshot, checkoutSnapshot, pendingBasketActions } from "../services/checkout.js";
 import { consumeConfirmation, createConfirmation } from "../services/confirmations.js";
 import { updateConversation } from "../services/conversation.js";
@@ -400,6 +401,7 @@ export async function reviewAndPay(
     )!;
     if (!b || b.ValueCents < s.totalCents) {
       const amountCents = Math.max(0, b?.ValueCents ?? 0);
+      const split = amountCents > 0 ? await prepareBalanceReview(ctx, r.Order, method, amountCents) : null;
       return err(
         ErrorCodes.CONFIRMATION_REQUIRED,
         t(
@@ -424,6 +426,8 @@ export async function reviewAndPay(
                   userSessionId: input.userSessionId,
                   balanceType: method,
                   ...(method === "VOX_CREDIT" ? { amountCents } : { points: centsToPoints(amountCents) }),
+                  confirmationId: split!.id,
+                  confirmed: true,
                 },
                 nextPaymentMethod: "CARD",
               }
@@ -1134,6 +1138,22 @@ export const orderingTools: Pick<
           "يرجى تسجيل الدخول من الصفحة لاستخدام رصيدك.",
         ),
       );
+    if (input.confirmationId != null || input.confirmed != null) {
+      try {
+        const { action, created } = await enqueueBalanceReview(ctx, input);
+        return ok(
+          { action: toRef(action), created, userSessionId: input.userSessionId },
+          t(
+            ctx.lang,
+            "Preparing the accepted balance and card review…",
+            "أجهز الرصيد ومراجعة البطاقة حسب موافقتك…",
+          ),
+        );
+      } catch (error) {
+        if (!(error instanceof DomainError)) throw error;
+        return err(error.code, error.message, error.retryable);
+      }
+    }
     const preference = ctx.conversation.metadata?.paymentPreference as
       | { userSessionId?: string; method?: string }
       | undefined;
