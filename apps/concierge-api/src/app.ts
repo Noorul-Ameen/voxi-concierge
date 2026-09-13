@@ -29,33 +29,21 @@ import {
   type ToolName,
   WidgetCommand,
 } from "@voxi/contracts";
-import { schema as S, nowLocalIso, prefixedId } from "@voxi/db";
+import { type Db, schema as S, nowLocalIso, prefixedId } from "@voxi/db";
 import { VistaClientError } from "@voxi/vista-client";
-import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, ne, or, sql } from "drizzle-orm";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { streamSSE } from "hono/streaming";
 import { SignJWT, jwtVerify } from "jose";
+import { greetings } from "./greetings.js";
 import { buildOpenApi } from "./openapi.js";
 import { reportingRoutes } from "./reporting.js";
 import { ingestPostCall, verifyElevenLabsSignature } from "./webhooks.js";
+export { greetings } from "./greetings.js";
 
 export type ApiOptions = { writeWaitMs?: number; logging?: boolean };
-
-/** First message per language: personal for a signed-in member (no balances — those belong at payment), generic otherwise. */
-export function greetings(firstName?: string | null) {
-  const name = (firstName ?? "").trim();
-  return {
-    greetingEn: name
-      ? `Hi ${name}, what are you in the mood to watch?`
-      : "Hi, welcome to VOX Cinemas. What are you in the mood to watch?",
-    greetingAr: name
-      ? `أهلاً ${name}، ما نوع الأفلام التي تود مشاهدتها اليوم؟`
-      : "أهلاً بك في فوكس سينما. ما نوع الأفلام التي تود مشاهدتها اليوم؟",
-    firstName: name,
-  };
-}
 
 export function createApp(app: AppContext, opts: ApiOptions = {}) {
   const api = new Hono();
@@ -454,7 +442,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         memberId: conversation.memberId ?? "",
         channel: conversation.channel,
         ...greetings(
-          conversation.customerId
+          conversation.isLoggedIn && conversation.customerId
             ? ((await app.vista.customer(conversation.customerId).catch(() => null))?.firstName as
                 | string
                 | undefined)
@@ -1092,7 +1080,12 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       }
       case "human.message": {
         const tr = (await app.db.select().from(S.transfers).where(eq(S.transfers.id, cmd.transferId)))[0];
-        if (!tr || tr.conversationId !== conv.id || !tr.externalConversationId)
+        if (
+          !tr ||
+          tr.conversationId !== conv.id ||
+          !tr.externalConversationId ||
+          !["requested", "queued", "connected"].includes(tr.status)
+        )
           return c.json({ error: "no active transfer" }, 409);
         await appendEvent(
           app.db,
@@ -1106,6 +1099,60 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
           transferId: tr.id,
           conversationId: conv.id,
         });
+        return c.json({ ok: true });
+      }
+      case "human.end": {
+        const tr = (
+          await app.db
+            .select()
+            .from(S.transfers)
+            .where(and(eq(S.transfers.id, cmd.transferId), eq(S.transfers.conversationId, conv.id)))
+        )[0];
+        if (!tr) return c.json({ error: "no active transfer" }, 409);
+        if (tr.status === "ended") return c.json({ ok: true });
+        if (tr.externalConversationId)
+          await app.handover.end(tr.externalConversationId, "customer ended conversation");
+        const notifications: Parameters<typeof app.events.publish>[] = [];
+        await app.db.transaction(async (tx) => {
+          const current = await resolveLinkedConversation(tx, conv.id, true);
+          const [owned] = await tx.select().from(S.transfers).where(eq(S.transfers.id, tr.id)).for("update");
+          if (!current || !owned || owned.conversationId !== current.id || owned.status === "ended") return;
+          await tx
+            .update(S.transfers)
+            .set({ status: "ended", endedAt: new Date() })
+            .where(eq(S.transfers.id, owned.id));
+          const generation = Number(conv.metadata?.widgetAuthGeneration ?? 0);
+          const sameSession =
+            current.metadata?.widgetSessionKey === w.sessionKey &&
+            Number(current.metadata?.widgetAuthGeneration ?? 0) === generation;
+          const [other] = await tx
+            .select({ id: S.transfers.id })
+            .from(S.transfers)
+            .where(
+              and(
+                eq(S.transfers.conversationId, current.id),
+                ne(S.transfers.id, owned.id),
+                inArray(S.transfers.status, ["requested", "queued", "connected"]),
+              ),
+            );
+          if (sameSession && !other)
+            await tx.update(S.conversations).set({ mode: "bot" }).where(eq(S.conversations.id, current.id));
+          await appendEvent(
+            tx as unknown as Db,
+            {
+              ...app.events,
+              publish: (...event: Parameters<typeof app.events.publish>) => {
+                notifications.push(event);
+              },
+            },
+            current.id,
+            "transfer.status",
+            { transferId: owned.id, status: "ended" },
+            "user",
+            generation,
+          );
+        });
+        for (const notification of notifications) app.events.publish(...notification);
         return c.json({ ok: true });
       }
       case "feedback": {
@@ -1257,21 +1304,48 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
 
   /** Signed URL for private agents (requires ELEVENLABS_API_KEY); falls back to the public agent id. */
   api.get("/widget/signed-url", async (c) => {
+    c.header("Cache-Control", "no-store");
     const w = await verifyWidget(c);
     if (!w) return c.json({ error: "unauthorized" }, 401);
     const base = process.env.ELEVENLABS_BASE_URL ?? "https://api.elevenlabs.io";
     // EU/IN data-residency workspaces use a different host; the widget must open its socket there too.
     const wsOrigin = base.replace(/^http/, "ws");
-    if (!app.cfg.elevenLabsApiKey || !app.cfg.elevenLabsAgentId)
-      return c.json({ agentId: app.cfg.elevenLabsAgentId, wsOrigin });
+    const respond = async (connection: { signedUrl?: string; error?: string } = {}) => {
+      const [current] = await app.db
+        .select()
+        .from(S.conversations)
+        .where(eq(S.conversations.id, w.conversationId));
+      if (!current || current.metadata?.widgetSessionKey !== w.sessionKey)
+        return c.json({ error: "unauthorized" }, 401);
+      const customer =
+        current.isLoggedIn && current.customerId
+          ? await app.vista.customer(current.customerId).catch(() => null)
+          : null;
+      // Account lookup and provider URL creation are asynchronous: recheck revocation before returning identity.
+      if (!(await verifyWidget(c))) return c.json({ error: "unauthorized" }, 401);
+      return c.json({
+        agentId: app.cfg.elevenLabsAgentId,
+        wsOrigin,
+        ...connection,
+        isLoggedIn: current.isLoggedIn,
+        dynamicVariables: {
+          conversationId: current.id,
+          language: current.language,
+          channel: current.channel,
+          customerId: current.isLoggedIn ? (current.customerId ?? "") : "",
+          memberId: current.isLoggedIn ? (current.memberId ?? "") : "",
+          ...greetings(customer?.firstName, Number(c.req.query("welcomeVariant") ?? 0)),
+        },
+      });
+    };
+    if (!app.cfg.elevenLabsApiKey || !app.cfg.elevenLabsAgentId) return respond();
     const res = await fetch(
       `${base}/v1/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(app.cfg.elevenLabsAgentId)}`,
       { headers: { "xi-api-key": app.cfg.elevenLabsApiKey } },
     );
-    if (!res.ok)
-      return c.json({ agentId: app.cfg.elevenLabsAgentId, wsOrigin, error: `signed url ${res.status}` });
+    if (!res.ok) return respond({ error: `signed url ${res.status}` });
     const j = (await res.json()) as { signed_url: string };
-    return c.json({ agentId: app.cfg.elevenLabsAgentId, signedUrl: j.signed_url, wsOrigin });
+    return respond({ signedUrl: j.signed_url });
   });
 
   /**

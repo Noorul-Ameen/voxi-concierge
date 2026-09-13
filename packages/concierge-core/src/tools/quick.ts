@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { DomainError, ErrorCodes } from "@voxi/contracts";
 import { schema as S } from "@voxi/db";
 import {
+  allowsChildTickets,
   asEmirate,
   describeBenefit,
   distanceKm,
@@ -209,8 +210,8 @@ type Resolved =
 /** Pick the ticket types for the request: cheapest regular adult type (+ child type when asked). */
 async function ticketTypesFor(ctx: ToolCtx, s: Session, adults: number, children: number) {
   const r = await ctx.vista.ticketTypes(s.cinemaId, s.sessionId);
-  const film = await ctx.catalog.film(s.hoCode);
-  const noKids = /^(15|18|21)\+?$/.test((film?.rating ?? "").trim());
+  const film = await ctx.catalog.film(s.hoCode, true);
+  const noKids = !allowsChildTickets(film?.rating);
   const usable = (r.Tickets ?? []).filter(
     (x: any) => !x.IsAvailableForLoyaltyMembersOnly || ctx.conversation.memberId,
   );
@@ -770,13 +771,14 @@ const quickHandlers: Pick<
     const adults = input.tickets ?? null;
     const children = input.childTickets ?? 0;
     const count = adults == null ? null : adults + children;
-    if (children > 0 && /^(15|18|21)\+?$/.test((film?.rating ?? "").trim()))
+    const childRating = children > 0 ? (await ctx.catalog.film(s.hoCode, true))?.rating : film?.rating;
+    if (children > 0 && !allowsChildTickets(childRating))
       return err(
         ErrorCodes.VALIDATION,
         t(
           ctx.lang,
-          `This film is rated ${film?.rating}; child tickets cannot be proposed.`,
-          "هذا الفيلم للكبار؛ لا يمكن اقتراح تذاكر أطفال.",
+          `Child eligibility is not confirmed for this film's ${childRating || "unknown"} rating. Please choose a film with a suitable confirmed classification.`,
+          "لا يسمح تصنيف هذا الفيلم أو تصنيفه غير المؤكد باقتراح تذاكر أطفال. يرجى اختيار فيلم بتصنيف مناسب ومؤكد.",
         ),
       );
     const [plan, types] = await Promise.all([
@@ -904,6 +906,20 @@ const quickHandlers: Pick<
       }
       const resolved = await resolveSession(ctx, { sessionKey: proof.sessionKey }, await loadCustomer(ctx));
       if (resolved.kind === "result") return resolved.result;
+      if (
+        proof.children > 0 &&
+        !allowsChildTickets((await ctx.catalog.film(resolved.session.hoCode, true))?.rating)
+      )
+        return err(
+          ErrorCodes.VALIDATION,
+          t(
+            lang,
+            "This film's current classification does not permit child tickets. Please review another film.",
+            "التصنيف الحالي لهذا الفيلم لا يسمح بتذاكر أطفال. يرجى اختيار فيلم آخر.",
+          ),
+          false,
+          { needs: "proposal_refresh" },
+        );
       const s = resolved.session;
       const [plan, types] = await Promise.all([
         ctx.vista.seatPlan(s.cinemaId, s.sessionId),
@@ -1018,8 +1034,8 @@ const quickHandlers: Pick<
         ErrorCodes.VALIDATION,
         t(
           lang,
-          `${s.filmTitle} is rated ${rating}, so it's adults only. Book adult tickets only?`,
-          `${s.filmTitle} مصنف ${rating} للكبار فقط. هل أحجز تذاكر للكبار فقط؟`,
+          `Child tickets cannot be confirmed for ${s.filmTitle} (${rating || "classification unknown"}). Please choose a film with a suitable confirmed classification.`,
+          `لا يمكن تأكيد تذاكر أطفال لفيلم ${s.filmTitle} بتصنيفه الحالي. يرجى اختيار فيلم بتصنيف مناسب ومؤكد.`,
         ),
       );
     if (!tickets.length)
@@ -1106,6 +1122,27 @@ const quickHandlers: Pick<
     }
     if (!input.confirmed) return expiredChoice(ctx, usid, true, old);
     const tickets = old.Sessions?.[0]?.Tickets ?? [];
+    const definitions = await ctx.vista.ticketTypes(s.cinemaId, s.sessionId);
+    const hasChild = tickets.some((ticket: { TicketTypeCode: string }) =>
+      definitions.Tickets?.some(
+        (type) => type.TicketTypeCode === ticket.TicketTypeCode && type.IsChildOnlyTicket,
+      ),
+    );
+    const missingType = tickets.some(
+      (ticket: { TicketTypeCode: string }) =>
+        !definitions.Tickets?.some((type) => type.TicketTypeCode === ticket.TicketTypeCode),
+    );
+    if (missingType || (hasChild && !allowsChildTickets((await ctx.catalog.film(s.hoCode, true))?.rating)))
+      return err(
+        ErrorCodes.VALIDATION,
+        t(
+          lang,
+          "The earlier ticket selection cannot be confirmed under the current classification and ticket availability. Please review another selection.",
+          "لا يمكن تأكيد التذاكر السابقة وفق التصنيف الحالي والتذاكر المتاحة. يرجى مراجعة اختيار آخر.",
+        ),
+        false,
+        { needs: "proposal_refresh" },
+      );
     const counts = new Map<string, number>();
     for (const tk of tickets) counts.set(tk.TicketTypeCode, (counts.get(tk.TicketTypeCode) ?? 0) + 1);
     const grouped = [...counts.entries()].map(([TicketTypeCode, Qty]) => ({ TicketTypeCode, Qty }));

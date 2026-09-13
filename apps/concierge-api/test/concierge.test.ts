@@ -731,7 +731,7 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     const c = conv("greet-m");
     await h.login(c, "SARA");
     const member = await widgetSession(c);
-    expect(member.dynamicVariables.greetingEn).toBe("Hi Sara, what are you in the mood to watch?");
+    expect(member.dynamicVariables.greetingEn).toBe("Welcome back, Sara! What are you in the mood to watch?");
     expect(member.dynamicVariables.firstName).toBe("Sara");
   });
 });

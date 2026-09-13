@@ -34,6 +34,9 @@ if (histMode !== "off" && (histMode === "force" || Number(h) === 0)) {
 // A bounded profile upgrade, not the destructive catalogue seed. Passwords are provisioned through environment secrets.
 const profileDb = createDb(undefined, { max: 1 });
 try {
+  const { syncCapturedFilmRatings } = await import("./seed/film-ratings.js");
+  const ratings = await syncCapturedFilmRatings(profileDb.db);
+  console.log(`bootstrap: updated ${ratings.updated} matching captured film classifications`);
   const { updateDemoProfiles } = await import("./seed/profile-update.js");
   await updateDemoProfiles(profileDb.db);
   const { refreshDemoSchedule } = await import("./seed/refresh-demo-schedule.js");

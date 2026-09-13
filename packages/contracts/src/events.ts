@@ -102,6 +102,7 @@ export const WidgetCommand = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("location.clear") }),
   z.object({ type: z.literal("human.message"), transferId: z.string(), text: z.string() }),
+  z.object({ type: z.literal("human.end"), transferId: z.string() }),
   z.object({
     type: z.literal("feedback"),
     rating: z.number().int().min(1).max(5),

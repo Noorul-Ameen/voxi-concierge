@@ -7,6 +7,35 @@ import { Cards, cardConfirmationId, chooseShowtime, confirmedQrPayload, createTi
 const act: CardActions = { say: () => undefined, command: async () => ({ ok: true }), openLink: () => undefined, playTrailer: () => undefined };
 
 describe("concierge decision cards", () => {
+  it("shows the chosen VOX credit and card remainder without substituting or promoting SHARE", () => {
+    const ui = { type: "payment", items: [{ filmTitle: "The Journey", tickets: [], totalCents: 2550 }], meta: { requiresSheet: true, method: "CARD", amountCents: 2550, balancePayment: { method: "VOX_CREDIT", amountCents: 12000, remainingCents: 2550, totalCents: 14550 }, wallet: { voxCreditCents: 12000, sharePoints: 2450, sharePointsValueCents: 24500 }, offerHint: { title: "Unchosen bank offer", cardLabel: "Other card" } } };
+    for (const lang of ["en", "ar"] as const) {
+      const html = renderToStaticMarkup(<Cards lang={lang} act={act} ui={{ ...ui, meta: { ...ui.meta, bankOffers: [{ offerId: "other-offer", title: "Unchosen bank offer", bankName: "Other bank" }] } }} />);
+      expect(html).toContain(lang === "en" ? "Payment breakdown" : "تفاصيل الدفع");
+      expect(html).toContain(lang === "en" ? "VOX credit" : "رصيد فوكس");
+      expect(html).toContain(lang === "en" ? "REMAINING BY CARD" : "المتبقي بالبطاقة");
+      for (const amount of ["145.50", "120", "25.50"]) expect(html).toContain(amount);
+      expect(html).not.toContain("Unchosen bank offer");
+      expect(html).not.toContain(lang === "en" ? "Bank offers &amp; promo codes" : "عروض البنوك والرموز الترويجية");
+      expect(html).not.toContain("2,450");
+      expect(html).not.toContain("You could save");
+      expect(html).not.toContain(lang === "en" ? "Use VOX Credit" : "استخدام رصيد فوكس");
+      expect(html).not.toContain("Payment received");
+    }
+    const invalid = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ ...ui, meta: { ...ui.meta, balancePayment: { ...ui.meta.balancePayment, remainingCents: 1000 } } }} />);
+    expect(invalid).not.toContain("Payment breakdown");
+    const partialChoice = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ ...ui, meta: { ...ui.meta, amountCents: 14550, balancePayment: undefined } }} />);
+    expect(partialChoice).toContain("Use VOX Credit");
+  });
+
+  it("shows handover status without exposing the internal customer-care briefing", () => {
+    for (const lang of ["en", "ar"] as const) {
+      const html = renderToStaticMarkup(<Cards lang={lang} act={act} ui={{ type: "transfer", items: [{ status: "connected", agentName: "Priya", summary: "Customer: Private Customer (MEMBER-PRIVATE, Platinum)\nSteps taken: internal_tool_name\nPrivate case history" }] }} />);
+      expect(html).toContain("Priya");
+      for (const privateText of ["Private Customer", "MEMBER-PRIVATE", "Platinum", "internal_tool_name", "Private case history"]) expect(html).not.toContain(privateText);
+    }
+  });
+
   it("binds confirm and decline to the displayed confirmation without triggering a payment", async () => {
     const decisions: unknown[] = [];
     const commands: unknown[] = [];

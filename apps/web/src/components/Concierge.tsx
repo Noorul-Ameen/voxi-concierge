@@ -12,6 +12,8 @@ import { type Loc, LocationBar } from "./LocationBar";
 import { ACCOUNT_ACTIVITY_EVENT, AUTH_CHANGE_SIGNAL, notifyPageAuthChange, pageSession, usePageSession, type PageSessionRuntime } from "../lib/page-session";
 import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, directSeatMapFeedback, holdSeconds, isCurrentHold, recordUserActivity, renderVerifiedSeatMap, verifyHoldNotice, type HoldNoticeSnapshot, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
 import { receiptCompletesCurrentOrder, renderVerifiedReceipt } from "../lib/receipt";
+import { connectionVariables, isCurrentConnection, nextWelcomeVariant, type ConnectionSnapshot } from "../lib/welcome";
+import { applyVerifiedHumanMode, type HumanMode } from "../lib/human-mode";
 
 
 const nid = () => crypto.randomUUID();
@@ -108,11 +110,12 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       }
       commitSession(next);
       setSessionExpired(false);
-      if (customer && customer.id !== r.customer.id) {
+      const previousCustomerId = s.isLoggedIn ? s.dynamicVariables.customerId || customer?.id : undefined;
+      if (previousCustomerId && previousCustomerId !== r.customer.id) {
         ++connectionAttemptRef.current; startingRef.current = false; switchingRef.current = true;
         try { await conversation.endSession(); } catch { /* Server identity already changed. */ } finally { switchingRef.current = false; }
         if (epoch !== authEpochRef.current) return;
-        setItems([]); commitOrder(null); setMode("idle");
+        setItems([]); commitOrder(null); setMode("idle"); clearHumanMode();
         pendingAckRef.current.clear(); completedActionsRef.current.clear(); ackQueueRef.current = [];
       }
       setCustomer(r.customer);
@@ -149,7 +152,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       switchingRef.current = true;
       try { await conversation.endSession(); } catch { /* Backend sign-out already succeeded. */ } finally { switchingRef.current = false; }
       commitSession({ ...current, token: result.token ?? current.token, isLoggedIn: false, dynamicVariables: result.dynamicVariables ?? current.dynamicVariables });
-      setCustomer(null); setProfile(null); setHistory([]); setProfileLoading(false); commitOrder(null); setItems([]); setAuthOpen(false); setMode("idle");
+      setCustomer(null); setProfile(null); setHistory([]); setProfileLoading(false); commitOrder(null); setItems([]); setAuthOpen(false); setMode("idle"); clearHumanMode();
       pendingAckRef.current.clear(); completedActionsRef.current.clear(); ackQueueRef.current = [];
       onAuth?.(null);
       notifyPageAuthChange();
@@ -187,7 +190,21 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const completedActionsRef = useRef(new Map<string, { type: string; status: string; result?: Record<string, unknown>; error?: { message: string } }>());
   const ackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ackQueueRef = useRef<string[]>([]);
-  const [humanMode, setHumanMode] = useState<{ transferId: string; agentName?: string; status: string } | null>(null);
+  const [humanMode, storeHumanMode] = useState<HumanMode | null>(null);
+  const humanModeRef = useRef<HumanMode | null>(null);
+  const transferRevisionRef = useRef(0);
+  const setHumanMode = useCallback((next: HumanMode | null | ((current: HumanMode | null) => HumanMode | null)) => {
+    const value = typeof next === "function" ? next(humanModeRef.current) : next;
+    transferRevisionRef.current += 1;
+    humanModeRef.current = value;
+    storeHumanMode(value);
+  }, []);
+  const endedTransfersRef = useRef(new Set<string>());
+  const clearHumanMode = () => {
+    if (humanModeRef.current) endedTransfersRef.current.add(humanModeRef.current.transferId);
+    setHumanMode(null);
+  };
+  const [endingChat, setEndingChat] = useState(false);
   const [input, setInput] = useState("");
   const [level, setLevel] = useState(0);
   const [expanded, setExpanded] = useState(false);
@@ -303,9 +320,14 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         return "ok";
       },
       set_mode: async (p: { mode: "bot" | "human"; transferId?: string }) => {
-        if (p.mode === "human" && p.transferId) setHumanMode({ transferId: p.transferId, status: "requested" });
-        if (p.mode === "bot") setHumanMode(null);
-        return "ok";
+        const s = sessionRef.current;
+        if (!s) return JSON.stringify({ ok: false, error: "The current account session is unavailable." });
+        const epoch = authEpochRef.current;
+        const revision = transferRevisionRef.current;
+        return JSON.stringify(await applyVerifiedHumanMode(p, s.conversationId, () => getState(s), setHumanMode,
+          () => !authBusyRef.current && epoch === authEpochRef.current && revision === transferRevisionRef.current
+            && sessionRef.current?.token === s.token && sessionRef.current.conversationId === s.conversationId,
+          (id) => endedTransfersRef.current.has(id)));
       },
       confirm_dialog: async (p: { title: string; body: string; confirmLabel?: string; cancelLabel?: string }) => {
         const ok = window.confirm(`${p.title}\n\n${p.body}`);
@@ -353,7 +375,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     setSessionExpired(true);
     setCustomer(null); setProfile(null); setHistory([]); setProfileLoading(false); setAuthErr(null); setAuthOpen(false);
     commitOrder(null); setHoldLeft(null); warnedRef.current = {}; holdCheckRef.current = null;
-    setItems([]); setInput(""); setHumanMode(null); setMode("idle"); setSseStatus("closed");
+    setItems([]); setInput(""); clearHumanMode(); setMode("idle"); setSseStatus("closed");
     pendingAckRef.current.clear(); completedActionsRef.current.clear(); ackQueueRef.current = [];
     eventSeqRef.current.clear(); eventIdsRef.current.clear();
     if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
@@ -447,7 +469,9 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     const onAuthInvalid = sessionExpiryHandler(session, authEpochRef.current,
       () => ({ session: sessionRef.current, epoch: authEpochRef.current, busy: authBusyRef.current || !subscribed }),
       () => { subscribed = false; unsub(); expireSession(session); });
-    const isCurrent = () => subscribed && sessionRef.current?.token === session.token && sessionRef.current.conversationId === session.conversationId;
+    const epoch = authEpochRef.current;
+    const isCurrent = () => subscribed && !authBusyRef.current && epoch === authEpochRef.current
+      && sessionRef.current?.token === session.token && sessionRef.current.conversationId === session.conversationId;
     const onEvent = (e: WidgetEvent) => {
       if (!isCurrent()) return;
       if (!acceptWidgetEvent(eventSeqRef.current, eventIdsRef.current, session.conversationId, e)) return;
@@ -474,18 +498,22 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
             setItems((xs) =>
               xs.map((it) =>
                 it.kind === "cards" && it.ui.type === "payment" && it.ui.meta?.userSessionId === e.userSessionId
-                  ? { ...it, ui: { ...it.ui, items: [{ ...(it.ui.items?.[0] ?? {}), ...sm }], meta: { ...it.ui.meta, amountCents: sm.totalCents, expiresAtUtc: sm.expiresAtUtc ?? it.ui.meta?.expiresAtUtc, vat: { beforeVatCents: (sm.totalCents ?? 0) - (sm.taxCents ?? 0), vatCents: sm.taxCents ?? 0, rate: 5 } } } }
+                  ? { ...it, ui: { ...it.ui, items: [{ ...(it.ui.items?.[0] ?? {}), ...sm }], meta: { ...it.ui.meta, amountCents: sm.totalCents, expiresAtUtc: sm.expiresAtUtc ?? it.ui.meta?.expiresAtUtc, vat: { beforeVatCents: (sm.totalCents ?? 0) + (sm.loyaltyRedeemedCents ?? 0) - (sm.taxCents ?? 0), vatCents: sm.taxCents ?? 0, rate: 5 } } } }
                   : it,
               ),
             );
           break;
         }
         case "transfer.status":
-          setHumanMode({ transferId: e.transferId, agentName: e.agentName, status: e.status });
-          if (e.status === "ended") push({ kind: "note", text: t(lang, "transferEnded") });
+          if (e.status === "ended") {
+            endedTransfersRef.current.add(e.transferId);
+            setHumanMode((current) => current?.transferId === e.transferId ? null : current);
+            push({ kind: "note", text: t(lang, "transferEnded") });
+          } else if (!endedTransfersRef.current.has(e.transferId)) setHumanMode({ transferId: e.transferId, agentName: e.agentName, status: e.status });
           break;
         case "human.message":
-          setHumanMode((h) => ({ transferId: e.transferId, agentName: e.agentName ?? h?.agentName, status: "connected" }));
+          if (endedTransfersRef.current.has(e.transferId)) break;
+          setHumanMode((h) => ({ transferId: e.transferId, agentName: e.agentName ?? (h?.transferId === e.transferId ? h.agentName : undefined), status: "connected" }));
           push({ kind: "msg", role: "human", text: e.text, who: e.agentName });
           break;
         case "language.changed":
@@ -502,7 +530,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     getState(session)
       .then((s) => {
         if (!isCurrent()) return;
-        if (s.transfer && ["queued", "connected", "requested"].includes(s.transfer.status)) setHumanMode({ transferId: s.transfer.id, agentName: s.transfer.agentName, status: s.transfer.status });
+        if (s.transfer && ["queued", "connected", "requested"].includes(s.transfer.status) && !endedTransfersRef.current.has(s.transfer.id)) setHumanMode({ transferId: s.transfer.id, agentName: s.transfer.agentName, status: s.transfer.status });
         if (s.conversation?.metadata?.activeOrder) void sendCommand(session, { type: "order.state" }).then((result) => {
           if (isCurrent() && result.ui) { trackOrderFromUi(result.ui); push({ kind: "cards", ui: result.ui }); }
         });
@@ -605,21 +633,50 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     return () => { disposed = true; clearInterval(timer); };
   }, [order?.userSessionId, order?.expiresAtUtc, session?.token, lang]);
 
+  const endChat = async () => {
+    if (endingChat) return;
+    setEndingChat(true);
+    const current = sessionRef.current;
+    const epoch = authEpochRef.current;
+    try {
+      if (humanMode && current) {
+        const result = await sendCommand(current, { type: "human.end", transferId: humanMode.transferId });
+        if (!result.ok) throw new Error("handover end failed");
+        endedTransfersRef.current.add(humanMode.transferId);
+        if (epoch !== authEpochRef.current || current.token !== sessionRef.current?.token) return;
+        if (humanModeRef.current && humanModeRef.current.transferId !== humanMode.transferId) return;
+        setHumanMode((active) => active?.transferId === humanMode.transferId ? null : active);
+      }
+      await conversation.endSession();
+    } catch {
+      if (epoch === authEpochRef.current) {
+        idleEndedRef.current = false;
+        activityRef.current.lastUserAt = Date.now();
+        push({ kind: "note", text: langRef.current === "ar" ? "تعذر إنهاء المحادثة. حاول مجدداً." : "The conversation could not be ended. Please try again." });
+      }
+    } finally { setEndingChat(false); }
+  };
+
   useEffect(() => {
     const timer = setInterval(() => {
-      if (statusRef.current === "connected" && !idleEndedRef.current && Date.now() - activityRef.current.lastUserAt >= 180000) {
+      if ((statusRef.current === "connected" || humanMode) && !idleEndedRef.current && Date.now() - activityRef.current.lastUserAt >= 180000) {
         idleEndedRef.current = true;
-        void conversation.endSession();
+        void endChat();
       }
     }, 1000);
     return () => clearInterval(timer);
-  }, [conversation.status]);
+  }, [conversation.status, humanMode, endingChat]);
 
   const start = async (m: "voice" | "text") => {
     if (startingRef.current || authBusyRef.current || (statusRef.current === "connected" && !expiredConnectionRef.current)) return;
     startingRef.current = true;
     const attempt = ++connectionAttemptRef.current;
-    const valid = () => attempt === connectionAttemptRef.current;
+    const expected: ConnectionSnapshot = { attempt, epoch: authEpochRef.current };
+    let startingSession: Session | null = null;
+    const valid = () => isCurrentConnection(expected, {
+      attempt: connectionAttemptRef.current, epoch: authEpochRef.current, busy: authBusyRef.current,
+      token: sessionRef.current?.token, conversationId: sessionRef.current?.conversationId,
+    });
     setMode(m);
     activityRef.current.lastUserAt = Date.now();
     idleEndedRef.current = false;
@@ -631,15 +688,15 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       const s = sessionRef.current ?? (await createSession({ language: langRef.current, modality: m }));
       if (!valid()) return;
       commitSession(s);
+      startingSession = s;
+      expected.token = s.token; expected.conversationId = s.conversationId;
       setSessionExpired(false);
-      const { signedUrl, agentId, wsOrigin } = await getSignedUrl(s);
+      const connection = await getSignedUrl(s, nextWelcomeVariant());
       if (!valid()) return;
+      const { signedUrl, agentId, wsOrigin } = connection;
       const currentLang = langRef.current;
       const pendingOrder = orderRef.current;
-      const dyn = { ...s.dynamicVariables, language: currentLang, channel: "web", ...(pendingOrder ? {
-        greetingEn: holdSeconds(pendingOrder.expiresAtUtc) === 0 ? "Welcome back. Your choices are saved—shall I check and hold seats again?" : "Welcome back. Shall we pick up your booking?",
-        greetingAr: holdSeconds(pendingOrder.expiresAtUtc) === 0 ? "أهلاً بعودتك. اختياراتك محفوظة، هل أتحقق وأحجز المقاعد مجدداً؟" : "أهلاً بعودتك. هل نكمل حجزك؟",
-      } : {}) };
+      const dyn = connectionVariables(s, connection, currentLang, pendingOrder ? holdSeconds(pendingOrder.expiresAtUtc) === 0 ? "expired" : "active" : undefined);
       if (s.isLoggedIn && !customer) void refreshProfile(s);
       if (m === "voice") {
         const permission = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -657,9 +714,12 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         started,
         new Promise((_, reject) => { watchdog = setTimeout(() => reject(new Error(currentLang === "ar" ? "تعذر الاتصال الآن. حاول مجدداً." : "The connection took too long. Please try again.")), 20000); }),
       ]);
-      if (!valid()) await conversation.endSession();
+      // Linking a successfully connected transport legitimately rotates its token and ID.
+      // Authentication changes still invalidate it, independently of that link operation.
+      if (attempt !== connectionAttemptRef.current || expected.epoch !== authEpochRef.current || authBusyRef.current) await conversation.endSession();
     } catch (error) {
       if (!valid()) return;
+      if (isAuthorizationError(error) && startingSession) { expireSession(startingSession); return; }
       switchingRef.current = true;
       try { await conversation.endSession(); } catch { /* Clean up a partially opened connection. */ } finally { switchingRef.current = false; }
       if (m === "voice" && /NotAllowed|Permission|denied/i.test(String(error))) {
@@ -671,7 +731,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       setMode("idle");
     } finally {
       if (watchdog) clearTimeout(watchdog);
-      if (valid()) startingRef.current = false;
+      if (attempt === connectionAttemptRef.current) startingRef.current = false;
     }
   };
 
@@ -830,8 +890,8 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         <button className="iconbtn" onClick={() => setExpanded((x) => !x)} title="expand" aria-label="expand">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{expanded ? <path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
         </button>
-        {connected ? (
-          <button className="iconbtn end" onClick={() => conversation.endSession()} title={t(lang, "end")}>
+        {connected || humanMode ? (
+          <button className="iconbtn end" disabled={endingChat} onClick={() => void endChat()} title={t(lang, "end")}>
             {t(lang, "end")}
           </button>
         ) : null}

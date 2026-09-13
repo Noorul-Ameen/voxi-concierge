@@ -6,7 +6,7 @@
         {
           "condition": {
             "type": "llm",
-            "condition": "The latest user turn is in Arabic AND only asks for shorter replies because the details are already visible. It contains no substantive question, requested action, approval, pause or wait request. A question such as 'what is IMAX, briefly?' does NOT qualify. Judge the latest user's actual words, not their name, profile or earlier turns."
+            "condition": "The latest user turn is in Arabic AND explicitly asks for shorter replies because the details are already visible. Both the shorter-replies request and visible-details context must occur in this latest turn, not an earlier turn. A [widget] event or a request to acknowledge an actual payment/hold/selection result does NOT qualify; acknowledge its status instead. It contains no substantive question, requested action, approval, pause or wait request. 'الإجمالي 120 وما فتحت الدفع، صح؟' does NOT qualify: it asks for factual confirmation, even after an earlier brevity request. A question such as 'what is IMAX, briefly?' does NOT qualify. Judge the latest user's actual words, not their name, profile or earlier turns."
           },
           "steps": [
             {
@@ -18,7 +18,7 @@
         {
           "condition": {
             "type": "llm",
-            "condition": "The latest user turn is in English AND only asks for shorter replies because the details are already visible. It contains no substantive question, requested action, approval, pause or wait request. A question such as 'what is IMAX, briefly?' does NOT qualify. Judge the latest user's actual words, not their name, profile or earlier turns."
+            "condition": "The latest user turn is in English AND explicitly asks for shorter replies because the details are already visible. Both the shorter-replies request and visible-details context must occur in this latest turn, not an earlier turn. A [widget] event or a request to acknowledge an actual payment/hold/selection result does NOT qualify; acknowledge its status instead. It contains no substantive question, requested action, approval, pause or wait request. 'The basket shows AED 120 and no payment options are open, right?' does NOT qualify: it asks for factual confirmation, even after an earlier brevity request. A question such as 'what is IMAX, briefly?' does NOT qualify. Judge the latest user's actual words, not their name, profile or earlier turns."
           },
           "steps": [
             {

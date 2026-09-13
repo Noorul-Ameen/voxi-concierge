@@ -10,6 +10,30 @@ import {
 
 const opts = { conciergeUrl: "https://fixture.invalid", toolSecretHeader: { secret_id: "fixture-secret" } };
 describe("agent configuration contracts", () => {
+  it("puts count, order identity and consequential-stage rules beside the affected operations", () => {
+    const tools = buildWebhookTools(opts);
+    const byName = (name: string) => tools.find((tool) => tool.name === name)!;
+    const proposal = byName("propose_booking").api_schema.request_body_schema;
+    expect(proposal.properties.tickets).toMatchObject({ type: "integer" });
+    expect(proposal.properties).not.toHaveProperty("totalTickets");
+    expect(proposal.properties.childTickets.description).toContain("separate from adult tickets");
+    expect(byName("prepare_payment").description).toContain("is not a request to open payment");
+    expect(byName("resume_order").description).toContain("UNPAID basket/hold only");
+    expect(byName("get_order").description).toContain("copied from activeOrder");
+    expect(byName("log_journey").description).toContain("only after successful cancel_booking");
+    expect(byName("list_my_bookings").description).toContain("reference-free change");
+  });
+  it("requires an explicit balance type for agent redemptions while preserving the legacy HTTP shape", () => {
+    const tool = buildWebhookTools(opts).find((tool) => tool.name === "redeem_points")!;
+    expect(tool.api_schema.request_body_schema.required).toContain("balanceType");
+    expect(tool.api_schema.request_body_schema.properties.balanceType).toMatchObject({
+      enum: ["SHARE_POINTS", "VOX_CREDIT"],
+    });
+    expect(tool.api_schema.request_body_schema.properties).toHaveProperty("amountCents");
+    expect(TOOL_REGISTRY.redeem_points.input.safeParse({ userSessionId: "fixture_order" }).success).toBe(
+      true,
+    );
+  });
   it("exposes only verified proposal acceptance for agent quick booking while preserving backend filters", () => {
     const tool = buildWebhookTools(opts).find((tool) => tool.name === "quick_book")!;
     const schema = tool.api_schema.request_body_schema;

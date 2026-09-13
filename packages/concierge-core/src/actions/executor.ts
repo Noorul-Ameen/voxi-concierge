@@ -1,5 +1,5 @@
 import { DomainError, type Language } from "@voxi/contracts";
-import { schema as S, nowLocalIso, prefixedId } from "@voxi/db";
+import { type Db, schema as S, nowLocalIso, prefixedId } from "@voxi/db";
 import { centsToPoints, evaluateCancellation } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 /**
@@ -121,49 +121,68 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       };
       const delay = Math.min(5000, Math.max(0, reply.at - Date.now()));
       if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-      const transfer = (
-        await ctx.db.select().from(S.transfers).where(eq(S.transfers.id, reply.transferId))
-      )[0];
-      const liveConversation = await resolveLinkedConversation(ctx.db, a.conversationId);
-      if (
-        !transfer ||
-        transfer.conversationId !== liveConversation?.id ||
-        ["ended", "failed"].includes(transfer.status)
-      )
-        return { result: { delivered: false } };
-      const delivered = (
-        await ctx.db
-          .select({ id: S.conversationEvents.id })
-          .from(S.conversationEvents)
-          .where(
-            and(
-              eq(S.conversationEvents.conversationId, liveConversation.id),
-              eq(S.conversationEvents.type, "human.message"),
-              sql`${S.conversationEvents.payload}->>'actionId' = ${a.id}`,
-            ),
-          )
-      )[0];
-      if (!delivered) {
-        if (transfer.status !== "connected") {
-          await ctx.db
-            .update(S.transfers)
-            .set({ status: "connected", connectedAt: new Date(), agentName: reply.agentName })
-            .where(eq(S.transfers.id, transfer.id));
-          await appendActionEvent(ctx, a, "transfer.status", {
-            transferId: transfer.id,
-            status: "connected",
-            agentName: reply.agentName,
-          });
+      const notifications: Parameters<typeof ctx.events.publish>[] = [];
+      const result = await ctx.db.transaction(async (tx) => {
+        // Match link/logout lock order: conversation first, then transfer. Status and
+        // message persistence share the lock with ending a transfer.
+        const liveConversation = await resolveLinkedConversation(tx, a.conversationId, true);
+        const scoped = {
+          ...ctx,
+          db: tx as unknown as Db,
+          events: {
+            ...ctx.events,
+            publish: (...event: Parameters<typeof ctx.events.publish>) => {
+              notifications.push(event);
+            },
+          },
+        };
+        const transfer = (
+          await tx.select().from(S.transfers).where(eq(S.transfers.id, reply.transferId)).for("update")
+        )[0];
+        if (
+          !transfer ||
+          transfer.conversationId !== liveConversation?.id ||
+          !["requested", "queued", "connected"].includes(transfer.status) ||
+          Number(liveConversation?.metadata?.widgetAuthGeneration ?? 0) !==
+            Number(a.input._widgetAuthGeneration ?? 0)
+        )
+          return { result: { delivered: false } };
+        const delivered = (
+          await tx
+            .select({ id: S.conversationEvents.id })
+            .from(S.conversationEvents)
+            .where(
+              and(
+                eq(S.conversationEvents.conversationId, liveConversation.id),
+                eq(S.conversationEvents.type, "human.message"),
+                sql`${S.conversationEvents.payload}->>'actionId' = ${a.id}`,
+              ),
+            )
+        )[0];
+        if (!delivered) {
+          if (transfer.status !== "connected") {
+            await tx
+              .update(S.transfers)
+              .set({ status: "connected", connectedAt: new Date(), agentName: reply.agentName })
+              .where(eq(S.transfers.id, transfer.id));
+            await appendActionEvent(scoped, a, "transfer.status", {
+              transferId: transfer.id,
+              status: "connected",
+              agentName: reply.agentName,
+            });
+          }
+          await appendActionEvent(
+            scoped,
+            a,
+            "human.message",
+            { actionId: a.id, transferId: transfer.id, text: reply.text, agentName: reply.agentName },
+            "human_agent",
+          );
         }
-        await appendActionEvent(
-          ctx,
-          a,
-          "human.message",
-          { actionId: a.id, transferId: transfer.id, text: reply.text, agentName: reply.agentName },
-          "human_agent",
-        );
-      }
-      return { result: { delivered: true, transferId: transfer.id } };
+        return { result: { delivered: true, transferId: transfer.id } };
+      });
+      for (const notification of notifications) ctx.events.publish(...notification);
+      return result;
     },
     async cancel_booking(ctx, a) {
       const inp = a.input as {
@@ -660,13 +679,20 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
     },
 
     async redeem_points(ctx, a) {
-      const inp = a.input as { userSessionId: string; memberId: string; points?: number };
+      const inp = a.input as {
+        userSessionId: string;
+        memberId: string;
+        points?: number;
+        amountCents?: number;
+        balanceType?: "VOX_CREDIT" | "SHARE_POINTS";
+      };
+      const balanceType = inp.balanceType ?? "SHARE_POINTS";
       const r = await ctx.vista
         .redeemLoyalty({
           UserSessionId: inp.userSessionId,
           MemberId: inp.memberId,
-          Points: inp.points,
-          BalanceType: "SHARE_POINTS",
+          Points: balanceType === "VOX_CREDIT" ? inp.amountCents : inp.points,
+          BalanceType: balanceType === "VOX_CREDIT" ? "VOX_REWARDS" : "SHARE_POINTS",
         })
         .catch((e) => {
           throw fromVista(e);
@@ -676,12 +702,35 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         userSessionId: inp.userSessionId,
         summary: s,
       });
+      const cleared = r.Redeemed.Amount === 0;
       const speech = t(
         ctx.lang,
-        `${centsToPoints(r.Redeemed.Amount)} Share Points reserved, worth ${money(r.Redeemed.Amount, "en")}. ${s.totalCents > 0 ? `${money(s.totalCents, "en")} left to pay.` : "Nothing left to pay — shall I confirm the booking?"}`,
-        `تم حجز ${centsToPoints(r.Redeemed.Amount)} نقطة شير بقيمة ${money(r.Redeemed.Amount, "ar")}. ${s.totalCents > 0 ? `المتبقي ${money(s.totalCents, "ar")}.` : "لا يوجد مبلغ متبقٍ — هل أؤكد الحجز؟"}`,
+        cleared
+          ? `The reserved balance was removed. ${s.total} is payable; please review your chosen payment method again.`
+          : `${balanceType === "VOX_CREDIT" ? `${money(r.Redeemed.Amount, "en")} VOX credit` : `${centsToPoints(r.Redeemed.Amount)} SHARE Points worth ${money(r.Redeemed.Amount, "en")}`} reserved. ${s.totalCents > 0 ? `${s.total} left by card. Open a fresh payment review before paying.` : "Nothing left to pay; review the booking before confirming."}`,
+        cleared
+          ? `تمت إزالة حجز الرصيد. المبلغ المستحق ${s.total}؛ يرجى مراجعة طريقة الدفع مجدداً.`
+          : `تم حجز ${balanceType === "VOX_CREDIT" ? `${money(r.Redeemed.Amount, "ar")} من رصيد فوكس` : `${centsToPoints(r.Redeemed.Amount)} نقطة شير بقيمة ${money(r.Redeemed.Amount, "ar")}`}. ${s.totalCents > 0 ? `المتبقي بالبطاقة ${s.total}. افتح مراجعة دفع جديدة قبل الدفع.` : "لا يوجد مبلغ متبقٍ؛ راجع الحجز قبل التأكيد."}`,
       );
-      return { result: { speech, order: s, redeemed: r.Redeemed }, ui: { type: "order", items: [s] } };
+      return {
+        result: {
+          speech,
+          order: s,
+          redeemed: r.Redeemed,
+          balanceType,
+          cleared,
+          nextPaymentMethod: cleared ? null : s.totalCents > 0 ? "CARD" : balanceType,
+          balancePayment: cleared
+            ? null
+            : {
+                method: balanceType,
+                amountCents: r.Redeemed.Amount,
+                remainingCents: s.totalCents,
+                totalCents: s.totalCents + r.Redeemed.Amount,
+              },
+        },
+        ui: { type: "order", items: [s] },
+      };
     },
 
     async pay_order(ctx, a) {

@@ -33,6 +33,26 @@ async function payment(id: string, order: string, booking: string, status = "suc
     result: { bookingId: booking, booking: { ticketCount: 2 } },
   });
 }
+async function financialAction(
+  id: string,
+  type: "cancel_booking" | "swap_booking" | "transfer_to_agent",
+  status = "succeeded",
+  generation = 0,
+  result: Record<string, unknown> = type === "swap_booking"
+    ? { newBookingId: "NEW_BOOKING", differenceCents: 1000 }
+    : { refund: { reference: "REFUND_CONFIRMED", amountCents: 12000 }, bookingStatus: "cancelled" },
+) {
+  await db.insert(S.actions).values({
+    id: `act_${randomUUID().slice(0, 24)}`,
+    conversationId: id,
+    type,
+    status,
+    resourceKey: "booking:ORIGINAL_BOOKING",
+    idempotencyKey: randomUUID(),
+    input: { bookingId: "ORIGINAL_BOOKING", _widgetAuthGeneration: generation },
+    result,
+  });
+}
 afterAll(async () => {
   if (ids.length) {
     await db.delete(S.actions).where(inArray(S.actions.conversationId, ids));
@@ -100,4 +120,62 @@ it("recognizes a paid booking carried through reconnect but never through a new 
     .set({ metadata: { lastBookingId: "LINKED_BOOKING", widgetAuthGeneration: 1 } })
     .where(eq(S.conversations.id, current));
   expect((await report(current, "payment")).data).toEqual({ logged: false, reason: "payment_not_confirmed" });
+});
+
+it.each(["cancellation", "refund", "swap"])(
+  "does not report %s completed from a refusal, pending/failed action or successful handover",
+  async (journey) => {
+    const id = await conversation();
+    const actionType = journey === "swap" ? "swap_booking" : "cancel_booking";
+    await financialAction(id, actionType, "queued");
+    await financialAction(id, actionType, "failed");
+    await financialAction(id, "transfer_to_agent");
+    expect((await report(id, journey)).data).toEqual({
+      logged: false,
+      reason: journey === "swap" ? "swap_not_confirmed" : "cancellation_not_confirmed",
+    });
+    const [state] = await db.select().from(S.conversations).where(eq(S.conversations.id, id));
+    expect(state?.journeys).toEqual([]);
+  },
+);
+
+it("accepts completed cancellation/refund evidence once and preserves authoritative backend writes", async () => {
+  const id = await conversation();
+  await financialAction(id, "cancel_booking");
+  expect((await report(id, "cancellation")).data).toEqual({ logged: true });
+  expect((await report(id, "cancellation")).data).toEqual({ logged: false, reason: "already_recorded" });
+  expect((await report(id, "refund")).data).toEqual({ logged: true });
+  await markJourney(db, id, "cancellation", "completed");
+  const [state] = await db.select().from(S.conversations).where(eq(S.conversations.id, id));
+  expect(state?.journeys?.map((journey) => journey.name)).toEqual(["cancellation", "refund", "cancellation"]);
+});
+
+it("requires a real replacement booking result for a reported swap", async () => {
+  const id = await conversation();
+  await financialAction(id, "swap_booking", "succeeded", 0, {
+    newBookingId: "ORIGINAL_BOOKING",
+    differenceCents: 0,
+  });
+  expect((await report(id, "swap")).data).toEqual({ logged: false, reason: "swap_not_confirmed" });
+  await financialAction(id, "swap_booking");
+  expect((await report(id, "swap")).data).toEqual({ logged: true });
+  expect((await report(id, "swap")).data).toEqual({ logged: false, reason: "already_recorded" });
+});
+
+it("does not reuse another conversation or previous account's financial results, or a result without a refund", async () => {
+  const id = await conversation({ widgetAuthGeneration: 1 });
+  const other = await conversation({ widgetAuthGeneration: 1 });
+  await financialAction(other, "cancel_booking", "succeeded", 1);
+  await financialAction(other, "swap_booking", "succeeded", 1);
+  await financialAction(id, "cancel_booking", "succeeded", 0);
+  await financialAction(id, "swap_booking", "succeeded", 0);
+  await financialAction(id, "cancel_booking", "succeeded", 1, { bookingStatus: "confirmed" });
+  expect((await report(id, "cancellation")).data).toEqual({
+    logged: false,
+    reason: "cancellation_not_confirmed",
+  });
+  expect((await report(id, "refund")).data).toEqual({ logged: false, reason: "cancellation_not_confirmed" });
+  expect((await report(id, "swap")).data).toEqual({ logged: false, reason: "swap_not_confirmed" });
+  await financialAction(id, "cancel_booking", "succeeded", 1);
+  expect((await report(id, "cancellation")).data).toEqual({ logged: true });
 });

@@ -211,7 +211,8 @@ const journeys: Journey[] = [
     criteria: [
       "Check saved-card eligibility without guessing or asking for a BIN; use tool-returned savings and total.",
       "Wait for an explicit separate apply consent before apply_offer. Only after its success suggest usual snacks once; add them only when chosen.",
-      "Poll get_action_result only if an edit explicitly returned queued/running with an actionId; inline completed edits need no poll. This guest requests only the total: answer from the current order without prepare_payment or opening options. Never call pay_order or fabricate identifiers, payment tokens or customer contacts; no repeat snack pitch.",
+      "Poll get_action_result only if an edit explicitly returned queued/running with an actionId; inline completed edits need no poll. When the guest actually requests only the total, answer from the current order without prepare_payment or opening options. Evaluate the restriction from the actual user turn, not an omitted simulator instruction or a later refusal. Never call pay_order or fabricate identifiers, payment tokens or customer contacts; no repeat snack pitch.",
+      "After the initial visible basket, do not repeat the unchanged film, cinema, date/time or seats at offer, snack and total stages. State only the verified saving/new amount and apply question; after success acknowledge once and ask about usual snacks once; after food give its change and total. A requested detail or an actual changed term may be explained.",
     ],
     negativeCriteria: [
       "After the guest declines applying the offer, snacks and payment, stop with a brief acknowledgement. Do not propose another booking, restart film discovery or append an offer to book.",
@@ -919,7 +920,7 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     qrFailure.name = `VOX Journey ${qrFailure.id}`;
     qrFailure.success_conditions = [
       "Use only the verified fixture_booking identifier for the requested QR; a render error must not be described as a visible or downloadable QR.",
-      "Briefly acknowledge the inability to open the QR. Preserve the paid booking; do not claim email delivery, retry payment, or start another booking.",
+      "Briefly acknowledge the inability to open the QR. Preserve the known paid booking; do not claim email/app delivery, tell the user to scan a plain booking reference, retry payment, start another booking, or investigate a new payment merely because receipt rendering failed.",
     ];
     qrFailure.tool_mock_overrides.render_qr = [
       {
@@ -946,6 +947,22 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     suite.tests.push(qrFailure);
   }
   for (const test of suite.tests) {
+    if (test.id.startsWith("03-negative-") && !test.id.endsWith("offer-error"))
+      test.success_conditions.push(
+        "After offer refusal, any saving is hypothetical until successful application. If the user asks what they saved, clarify the discount would save the returned amount and remains unapplied; do not affirm completed saving or a changed total.",
+      );
+    if (test.id.startsWith("04-negative-"))
+      test.success_conditions.push(
+        "A preloaded basket, saved card or stated bank offer does not request payment options: no prepare_payment for CARD/SAVED_CARD before an explicit review/checkout request. Do not reapply an offer already present or imply the finite hold lasts indefinitely.",
+      );
+    if (test.id.startsWith("06-negative-"))
+      test.success_conditions.push(
+        "An ineligible cancellation or successful handover is not completed cancellation. No log_journey with journey cancellation/status completed without successful cancel_booking; reject that call as a real error even if the mock blocks it.",
+      );
+    if (test.id.startsWith("07-"))
+      test.success_conditions.push(
+        "Every order ID must come from an order result; conversation/test IDs and placeholders are invalid even if the mock rejects them. Transaction references and last four come only from the guest; a rejected match is not a new transaction reference.",
+      );
     const language = test.dynamic_variables.language === "ar" ? "Arabic" : "English";
     test.simulation_scenario = `Speak only ${language}; use the supplied ${language} user utterances without omitting stated quantities, methods or refusals. ${test.simulation_scenario}`;
     if (test.scenario_group === "journey-07") {

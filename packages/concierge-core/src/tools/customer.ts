@@ -1,6 +1,7 @@
 import { ErrorCodes } from "@voxi/contracts";
 import { schema as S } from "@voxi/db";
 import {
+  allowsChildTickets,
   buildTasteProfile,
   clockMinutes,
   inferCustomerProfile,
@@ -207,7 +208,7 @@ export const customerTools: Pick<
     const wantLang = normaliseFilmLanguage(input.filmLanguage ?? input.language);
     let films = (await ctx.catalog.films()).filter((f) => f.status === "now_showing");
     if (wantLang) films = films.filter((f) => similarity(f.language, wantLang) >= 0.7);
-    if (input.withChildren === true) films = films.filter((f) => !/^(15|18|21)\+?$/.test(f.rating ?? ""));
+    if (input.withChildren === true) films = films.filter((f) => allowsChildTickets(f.rating));
     else if (input.withChildren === false) films = films.filter((f) => !isFamilyFilm(f.genres, f.rating));
 
     let requestedCinema = input.cinemaId;

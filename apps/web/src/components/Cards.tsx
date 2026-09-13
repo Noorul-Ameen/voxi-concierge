@@ -880,6 +880,10 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
   const [showItems, setShowItems] = useState(false);
   if (!meta.requiresSheet) return <OrderSummary o={o} lang={lang} act={act} hideActions />;
   const amount = Number(meta.amountCents ?? o.totalCents ?? 0);
+  const split = meta.balancePayment;
+  const balancePayment = split && ["VOX_CREDIT", "SHARE_POINTS"].includes(split.method)
+    && [split.amountCents, split.remainingCents, split.totalCents].every((value) => Number.isSafeInteger(value) && value >= 0)
+    && split.amountCents > 0 && split.remainingCents === amount && split.totalCents === split.amountCents + split.remainingCents ? split : null;
   const vat = meta.vat as { beforeVatCents: number; vatCents: number; rate: number } | undefined;
   const saveable = wallet ? Math.min(wallet.sharePointsValueCents, amount) : 0;
   const pay = async () => {
@@ -936,7 +940,7 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
           {left != null ? <em className={`hold ${left <= 45 ? "urgent" : left <= 120 ? "warn" : ""}`}>{ar ? "محجوزة" : "Held"} {`${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}</em> : null}
         </div>
       ) : null}
-      {hint && !hintDone && !guest ? (
+      {hint && !hintDone && !guest && !balancePayment ? (
         <div className="offerhint">
           <div>
             <b>{ar ? `بطاقتك ${hint.cardLabel} مؤهلة` : `Your ${hint.cardLabel} qualifies`}</b>
@@ -971,7 +975,7 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
           </button>
         </div>
       ) : null}
-      {!guest && bankOffers.length ? (
+      {!guest && !balancePayment && bankOffers.length ? (
         <details className="payment-extras">
           <summary>{ar ? "عروض البنوك والرموز الترويجية" : "Bank offers & promo codes"}</summary>
           <div className="tabs2">
@@ -1025,7 +1029,7 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
         </details>
       ) : null}
 
-      {wallet && saveable > 0 ? (
+      {wallet && saveable > 0 && !balancePayment ? (
         <div className="shareblock">
           <div className="sharemark">
             SHARE <span>شير</span>
@@ -1077,8 +1081,12 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
             ))}
           </div>
         ) : null}
+        {balancePayment ? <dl className="items" aria-label={ar ? "تفاصيل الدفع" : "Payment breakdown"}>
+          <div className="line"><dt>{ar ? "إجمالي الحجز" : "Booking total"}</dt><dd>{money(balancePayment.totalCents, lang)}</dd></div>
+          <div className="line"><dt>{balancePayment.method === "VOX_CREDIT" ? (ar ? "رصيد فوكس" : "VOX credit") : (ar ? "قيمة نقاط شير" : "SHARE points value")}</dt><dd>−{money(balancePayment.amountCents, lang)}</dd></div>
+        </dl> : null}
         <div className="due">
-          <span>{ar ? "المبلغ المستحق" : "AMOUNT DUE"}</span>
+          <span>{balancePayment ? (ar ? "المتبقي بالبطاقة" : "REMAINING BY CARD") : (ar ? "المبلغ المستحق" : "AMOUNT DUE")}</span>
           <b>{money(amount, lang)}</b>
         </div>
         {vat ? (
@@ -1097,8 +1105,8 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
                   <span>{money(vat.vatCents, lang)}</span>
                 </div>
                 <div className="line">
-                  <span>{ar ? "المبلغ المستحق" : "Amount due"}</span>
-                  <span>{money(amount, lang)}</span>
+                  <span>{ar ? "إجمالي الحجز" : "Booking total"}</span>
+                  <span>{money(balancePayment?.totalCents ?? amount, lang)}</span>
                 </div>
               </div>
             ) : null}
@@ -1107,7 +1115,7 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
       </div>
 
       <h5>{ar ? "الدفع باستخدام" : "Pay with"}</h5>
-      {!guest && wallet && wallet.voxCreditCents >= amount && amount > 0 ? <button className="btn ghost" type="button" onClick={() => act.say(ar ? "أريد مراجعة الدفع باستخدام رصيد فوكس" : "I'd like to review payment using my VOX Credit")}>{ar ? "استخدام رصيد فوكس" : "Use VOX Credit"} · {money(wallet.voxCreditCents, lang)}</button> : null}
+      {!guest && wallet && wallet.voxCreditCents > 0 && amount > 0 && balancePayment?.method !== "VOX_CREDIT" ? <button className="btn ghost" type="button" onClick={() => act.say(ar ? "أريد مراجعة الدفع باستخدام رصيد فوكس" : "I'd like to review payment using my VOX Credit")}>{ar ? "استخدام رصيد فوكس" : "Use VOX Credit"} · {money(wallet.voxCreditCents, lang)}</button> : null}
       <div className="methods">
         {saved.map((c) => (
           <label key={c.token} className={`method ${method === `saved:${c.token}` ? "on" : ""}`}>
@@ -1258,7 +1266,6 @@ function TransferCard({ tr, lang }: { tr: any; lang: Lang }) {
   return (
     <div className="transfer">
       {tr.status === "connected" ? `${t(lang, "connectedTo")} ${tr.agentName ?? ""}` : t(lang, "transferring")}
-      {tr.summary ? <pre style={{ whiteSpace: "pre-wrap", fontSize: 11, marginTop: 6, color: "#6b6b76" }}>{tr.summary}</pre> : null}
     </div>
   );
 }

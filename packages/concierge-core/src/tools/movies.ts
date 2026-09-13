@@ -1,6 +1,8 @@
 import type { Experience } from "@voxi/contracts";
 import {
+  RATINGS,
   asEmirate,
+  classification,
   normaliseFilmLanguage,
   resolveSpokenDate,
   similarity,
@@ -9,18 +11,6 @@ import {
 import type { Film, Session } from "../services/catalog.js";
 import { fmtDate, fmtDateTime, fmtMinutes, fmtTime, joinList, t } from "../services/format.js";
 import { type ToolCtx, type ToolHandlers, err, ok } from "./types.js";
-
-const RATING_ORDER = ["G", "PG", "PG13", "PG15", "15+", "18+", "18TC", "21+"];
-const ratingMinAge: Record<string, number> = {
-  G: 0,
-  PG: 0,
-  PG13: 0,
-  PG15: 0,
-  "15+": 15,
-  "18+": 18,
-  "18TC": 18,
-  "21+": 21,
-};
 
 /** Arabic count phrases: dual, 3–10 plural, 11+ singular accusative ("و20 موعداً آخر"). */
 function arMore(n: number, kind: "film" | "showtime") {
@@ -85,7 +75,8 @@ function matchFilm(
   if (q.genre && !f.genres.some((g) => similarity(g, q.genre!) > 0.7)) return -1;
   if (q.language && similarity(f.language, normaliseFilmLanguage(q.language) ?? q.language) < 0.7) return -1;
   if (q.rating && f.rating.toUpperCase() !== q.rating.toUpperCase()) return -1;
-  if (q.maxAge != null && (ratingMinAge[f.rating] ?? 0) > q.maxAge) return -1;
+  const rule = classification(f.rating);
+  if (q.maxAge != null && (rule.minimumAge == null || rule.minimumAge > q.maxAge)) return -1;
   if (!q.query) return 1;
   return Math.max(
     similarity(q.query, f.title),
@@ -585,7 +576,7 @@ export const movieTools: Pick<
   async get_age_rules(ctx, input) {
     const rows = await ctx.db.select().from((await import("@voxi/db")).schema.kbDocuments);
     const doc = rows.find((r) => r.id === "age-restrictions-generated");
-    const rules = RATING_ORDER.map((r) => ({ rating: r, minAge: ratingMinAge[r] ?? 0 }));
+    const rules = RATINGS.map((r) => ({ rating: r, minAge: classification(r).minimumAge }));
     const expRule: Record<string, string> = {
       GOLD: "GOLD is 18+ except at Mall of the Emirates, City Centre Mirdif and Yas Mall where children aged 8+ may attend with an adult.",
       THEATRE: "THEATRE is for guests 18 and over.",
@@ -595,27 +586,36 @@ export const movieTools: Pick<
       Private: "The person booking a Private cinema must be 21 or over.",
     };
     let verdict: string | undefined;
+    const rule = classification(input.rating);
+    const allowed =
+      input.childAge != null && rule.minimumAge != null ? input.childAge >= rule.minimumAge : null;
     if (input.childAge != null && input.rating) {
-      const min = ratingMinAge[input.rating.toUpperCase()] ?? 0;
-      const allowed = input.childAge >= min;
-      const pg = /^PG(13|15)$/i.test(input.rating);
-      verdict = allowed
-        ? pg
+      const min = rule.minimumAge;
+      const pg = rule.guidanceAge != null && input.childAge <= rule.guidanceAge;
+      verdict =
+        allowed == null
           ? t(
               ctx.lang,
-              `Yes — ${input.rating} allows a ${input.childAge}-year-old, but they must be accompanied by someone older than ${input.rating.replace(/\D/g, "")}. The content may not be suitable for younger viewers, so it's the parent's call.`,
-              `نعم — تصنيف ${input.rating} يسمح لطفل بعمر ${input.childAge} بشرط مرافقة شخص أكبر. المحتوى قد لا يناسب الصغار، والقرار للوالدين.`,
+              `The ${input.rating} classification is not confirmed in the available rules, so I cannot confirm admission for a ${input.childAge}-year-old. Please choose a film with a confirmed suitable rating.`,
+              `التصنيف ${input.rating} غير مؤكد في القواعد المتاحة، لذلك لا يمكنني تأكيد السماح لطفل بعمر ${input.childAge}. يرجى اختيار فيلم بتصنيف مناسب ومؤكد.`,
             )
-          : t(
-              ctx.lang,
-              `Yes, a ${input.childAge}-year-old can watch a ${input.rating} movie.`,
-              `نعم، يمكن لطفل بعمر ${input.childAge} مشاهدة فيلم بتصنيف ${input.rating}.`,
-            )
-        : t(
-            ctx.lang,
-            `No — ${input.rating} means no one under ${min} is admitted, even with a parent. Staff may ask for ID.`,
-            `لا — تصنيف ${input.rating} يمنع دخول من هم دون ${min} سنة حتى مع الوالدين. قد يُطلب إثبات العمر.`,
-          );
+          : allowed
+            ? pg
+              ? t(
+                  ctx.lang,
+                  `Yes — ${input.rating} allows a ${input.childAge}-year-old, but they must be accompanied by someone aged ${rule.guidanceAge} or older. The content may not be suitable for younger viewers, so it's the parent's call.`,
+                  `نعم — تصنيف ${input.rating} يسمح لطفل بعمر ${input.childAge} بشرط مرافقة شخص بعمر ${rule.guidanceAge} أو أكثر. المحتوى قد لا يناسب الصغار، والقرار للوالدين.`,
+                )
+              : t(
+                  ctx.lang,
+                  `Yes, a ${input.childAge}-year-old can watch a ${input.rating} movie.`,
+                  `نعم، يمكن لطفل بعمر ${input.childAge} مشاهدة فيلم بتصنيف ${input.rating}.`,
+                )
+            : t(
+                ctx.lang,
+                `No — ${input.rating} means no one under ${min} is admitted, even with a parent. Staff may ask for ID.`,
+                `لا — تصنيف ${input.rating} يمنع دخول من هم دون ${min} سنة حتى مع الوالدين. قد يُطلب إثبات العمر.`,
+              );
     }
     const expText = input.experience && expRule[input.experience] ? expRule[input.experience] : undefined;
     const speech =
@@ -627,7 +627,17 @@ export const movieTools: Pick<
         "تتراوح التصنيفات في الإمارات من G وPG لجميع الأعمار، إلى PG13 وPG15 بمرافقة، ثم +15 و+18 و+21 حيث لا يُسمح لمن هم دون هذا العمر حتى مع الوالدين. أخبرني بالفيلم وعمر طفلك لأتحقق.",
       );
     return ok(
-      { rules, experienceRules: expRule, experienceRule: expText, verdict, source: doc?.sourceUrl },
+      {
+        rules,
+        experienceRules: expRule,
+        experienceRule: expText,
+        verdict,
+        allowed,
+        minimumAge: rule.minimumAge,
+        classificationKnown: rule.known,
+        provisional: rule.provisional,
+        source: doc?.sourceUrl,
+      },
       speech,
       undefined,
       { name: "age_restrictions", status: "completed" },

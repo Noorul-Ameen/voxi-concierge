@@ -284,7 +284,28 @@ export const ApplyOfferInput = z.object({
 export const RedeemPointsInput = z.object({
   userSessionId: z.string(),
   memberId: z.string().optional(),
-  points: z.number().int().positive().optional().describe("Omit to redeem max"),
+  balanceType: z
+    .enum(["SHARE_POINTS", "VOX_CREDIT"])
+    .optional()
+    .describe(
+      "Use the balance explicitly selected by the guest. VOX_CREDIT is wallet money; SHARE_POINTS is a different balance. Never substitute one for the other. Omitted type is legacy SHARE-only behavior.",
+    ),
+  points: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      "SHARE_POINTS only, in points: 10 points = AED 1. Omit for maximum. Explicit 0 removes the current reservation; use only when the guest asks to remove/correct it.",
+    ),
+  amountCents: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe(
+      "VOX_CREDIT only, in fils: 100 = AED 1. Use the amountCents returned by balance_split_confirmation. Omit for maximum. Explicit 0 removes the current reservation; never default to zero.",
+    ),
   idempotencyKey: z.string().optional(),
 });
 export const GetOrderInput = z.object({ userSessionId: z.string() });
@@ -799,7 +820,8 @@ export const TOOL_REGISTRY = {
   redeem_points: {
     input: RedeemPointsInput,
     kind: "write",
-    description: "Redeem Share Points or VOX Rewards against the order.",
+    description:
+      "Reserve the guest's explicitly selected VOX_CREDIT or SHARE_POINTS balance against an unpaid order; this does not charge or confirm a booking. After balance_split_confirmation and guest consent, use its exact redemptionInput, wait for success, then prepare_payment with its nextPaymentMethod. Never replace requested VOX credit with points. Explicit zero removes a mistaken reservation and restores the payable amount before a fresh review.",
   },
   pay_order: {
     input: PayOrderInput,

@@ -282,3 +282,110 @@ it("does not invalidate a fresh review when a duplicate edit request replays the
   expect((await f.edit(key)).id).toBe(edit.id);
   expect((await f.execute(await f.queuePayment(reviewed)))?.status).toBe("succeeded");
 });
+
+it("routes explicit VOX reservation in cents, revokes prior payment consent and deduplicates its retry", async () => {
+  const f = await fixture();
+  f.ctx.conversation.memberId = "verified-member";
+  const payment = await f.queuePayment(await f.review());
+  const redeem = vi.fn(async (request: { Points?: number; BalanceType?: string }) => {
+    f.order.TotalValueCents = 1500;
+    f.order.Version++;
+    f.order.LoyaltyPointsPayableValueInCents = request.Points;
+    f.order.AppliedOffers = [
+      {
+        type: "loyalty_redeem",
+        offerId: request.BalanceType,
+        discountCents: request.Points,
+      },
+    ];
+    return {
+      ResponseCode: 0,
+      Order: structuredClone(f.order),
+      Redeemed: { Type: request.BalanceType!, Amount: request.Points! },
+    };
+  });
+  f.ctx.vista.redeemLoyalty = redeem as typeof f.ctx.vista.redeemLoyalty;
+  const input = {
+    userSessionId: f.orderId,
+    balanceType: "VOX_CREDIT" as const,
+    amountCents: 3500,
+    idempotencyKey: "credit-acceptance",
+  };
+  const queued = await orderingTools.redeem_points(f.ctx, input);
+  const actionId = String((queued.data?.action as { actionId: string }).actionId);
+  const [action] = await db.select().from(S.actions).where(eq(S.actions.id, actionId));
+  const result = await f.execute(action!);
+  expect(result).toMatchObject({
+    status: "succeeded",
+    result: {
+      balanceType: "VOX_CREDIT",
+      nextPaymentMethod: "CARD",
+      balancePayment: {
+        method: "VOX_CREDIT",
+        amountCents: 3500,
+        remainingCents: 1500,
+        totalCents: 5000,
+      },
+    },
+  });
+  expect(redeem).toHaveBeenCalledWith(
+    expect.objectContaining({
+      Points: 3500,
+      BalanceType: "VOX_REWARDS",
+      MemberId: "verified-member",
+    }),
+  );
+  expect(await f.execute(payment)).toMatchObject({
+    status: "failed",
+    error: { code: "CONFIRMATION_REQUIRED" },
+  });
+  expect(f.charges()).toBe(0);
+  const repeated = await orderingTools.redeem_points(f.ctx, input);
+  expect(repeated.data?.action).toMatchObject({
+    actionId,
+    status: "succeeded",
+  });
+  expect(redeem).toHaveBeenCalledTimes(1);
+});
+
+it("passes an explicit SHARE zero through as removal, restores the review and revokes stale consent", async () => {
+  const f = await fixture();
+  f.ctx.conversation.memberId = "verified-member";
+  f.order.TotalValueCents = 1500;
+  f.order.LoyaltyPointsPayableValueInCents = 3500;
+  f.order.AppliedOffers = [{ type: "loyalty_redeem", offerId: "SHARE_POINTS", discountCents: 3500 }];
+  const payment = await f.queuePayment(await f.review());
+  const redeem = vi.fn(async () => {
+    f.order.TotalValueCents = 5000;
+    f.order.Version++;
+    f.order.LoyaltyPointsPayableValueInCents = 0;
+    f.order.AppliedOffers = [];
+    return {
+      ResponseCode: 0,
+      Order: structuredClone(f.order),
+      Redeemed: { Type: "SHARE_POINTS", Amount: 0 },
+    };
+  });
+  f.ctx.vista.redeemLoyalty = redeem as typeof f.ctx.vista.redeemLoyalty;
+  const queued = await orderingTools.redeem_points(f.ctx, {
+    userSessionId: f.orderId,
+    balanceType: "SHARE_POINTS",
+    points: 0,
+  });
+  const [action] = await db
+    .select()
+    .from(S.actions)
+    .where(eq(S.actions.id, String((queued.data?.action as { actionId: string }).actionId)));
+  const result = await f.execute(action!);
+  expect(result).toMatchObject({
+    status: "succeeded",
+    result: { cleared: true, nextPaymentMethod: null, balancePayment: null },
+  });
+  expect(redeem).toHaveBeenCalledWith(expect.objectContaining({ Points: 0, BalanceType: "SHARE_POINTS" }));
+  expect(await f.execute(payment)).toMatchObject({
+    status: "failed",
+    error: { code: "CONFIRMATION_REQUIRED" },
+  });
+  expect(f.completeOrder).not.toHaveBeenCalled();
+  expect((await f.review()).data?.summary).toMatchObject({ amountCents: 5000 });
+});

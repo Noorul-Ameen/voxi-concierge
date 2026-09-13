@@ -159,6 +159,27 @@ describe("booking decisions and holds", () => {
     expect(result.data?.reason).toBe("show_started");
     expect(ctx.vista.addTickets).not.toHaveBeenCalled();
   });
+  it.each(["18TC", "TBC", "missing-type"])(
+    "rejects expired child-ticket recovery after classification/type changes: %s",
+    async (rating) => {
+      const ctx = context({ activeOrder: "old-hold", activeSessionKey: session.key });
+      const previous = order({ State: "expired" });
+      previous.Sessions[0]!.Tickets[0]!.TicketTypeCode = "CHILD";
+      vi.mocked(ctx.vista.getOrder).mockResolvedValue({ Order: previous } as any);
+      vi.mocked(ctx.vista.ticketTypes).mockResolvedValue({
+        Tickets:
+          rating === "missing-type"
+            ? []
+            : [{ TicketTypeCode: "CHILD", IsChildOnlyTicket: true, PriceInCents: 4000 }],
+      } as any);
+      vi.mocked(ctx.catalog.film).mockResolvedValue({ hoCode: "film", rating } as any);
+      const result = await quickTools.recover_order(ctx, { confirmed: true });
+      expect(result.ok).toBe(false);
+      expect(result.data?.needs).toBe("proposal_refresh");
+      expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+      expect(ctx.vista.setSeats).not.toHaveBeenCalled();
+    },
+  );
   it("keeps snacks in the unpaid ticket order for one checkout", async () => {
     const ctx = context({ activeOrder: "old-hold", activeSessionKey: session.key });
     vi.mocked(ctx.vista.getOrder).mockResolvedValue({ Order: order() } as any);
@@ -372,6 +393,39 @@ describe("read-only booking proposal", () => {
     } as any);
     expect(alternative.data?.proposal).toMatchObject({ isAlternative: true, requested: { time: "19:00" } });
     expect(alternative.speech).toMatch(/alternative to your requested time/);
+  });
+  it.each(["18TC", "15TC", "TBC", "", "15+", "18+", "21+"])(
+    "rejects %s child tickets in proposals and direct widget holds before provider mutation",
+    async (rating) => {
+      const ctx = proposalContext();
+      const original = await ctx.catalog.film("film");
+      vi.mocked(ctx.catalog.film).mockResolvedValue({ ...original!, rating });
+      const input = { sessionKey: session.key, tickets: 1, childTickets: 1 };
+      const proposal = await quickTools.propose_booking(ctx, input);
+      expect(proposal).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+      expect(proposal.data?.proposalToken).toBeUndefined();
+      const direct = await quickTools.quick_book(ctx, input);
+      expect(direct.ok).toBe(false);
+      expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+      expect(ctx.vista.setSeats).not.toHaveBeenCalled();
+    },
+  );
+  it("rechecks child classification when accepting a previously valid proposal", async () => {
+    const ctx = proposalContext();
+    const proposed = await quickTools.propose_booking(ctx, {
+      sessionKey: session.key,
+      tickets: 1,
+      childTickets: 1,
+    });
+    expect(proposed.data?.proposalToken).toEqual(expect.any(String));
+    const original = await ctx.catalog.film("film");
+    vi.mocked(ctx.catalog.film).mockResolvedValue({ ...original!, rating: "18TC" });
+    const accepted = await quickTools.quick_book(ctx, {
+      proposalToken: String(proposed.data?.proposalToken),
+    });
+    expect(accepted).toMatchObject({ ok: false, data: { needs: "proposal_refresh" } });
+    expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+    expect(ctx.vista.setSeats).not.toHaveBeenCalled();
   });
   it("asks for missing quantity without assuming one or issuing an acceptance token", async () => {
     const ctx = proposalContext();
