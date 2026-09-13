@@ -58,7 +58,11 @@ export async function assertNoPendingBasketEdits(
 }
 
 /** Also revoke consumed consent: its payment may still be queued or awaiting a retry. */
-export async function invalidatePaymentConfirmations(db: Db | ConversationTx, resourceKey: string) {
+export async function invalidatePaymentConfirmations(
+  db: Db | ConversationTx,
+  resourceKey: string,
+  preserveConfirmationId?: string,
+) {
   const conversationId = resourceKey.startsWith("conversation:")
     ? resourceKey.slice("conversation:".length)
     : undefined;
@@ -67,7 +71,8 @@ export async function invalidatePaymentConfirmations(db: Db | ConversationTx, re
     .set({ expiresAt: new Date(0) })
     .where(
       and(
-        eq(S.pendingConfirmations.actionType, "pay_order"),
+        inArray(S.pendingConfirmations.actionType, ["pay_order", "redeem_points"]),
+        preserveConfirmationId ? ne(S.pendingConfirmations.id, preserveConfirmationId) : undefined,
         conversationId
           ? eq(S.pendingConfirmations.conversationId, conversationId)
           : eq(S.pendingConfirmations.resourceKey, resourceKey),

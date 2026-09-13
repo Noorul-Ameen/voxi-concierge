@@ -30,9 +30,34 @@ describe("agent configuration contracts", () => {
       enum: ["SHARE_POINTS", "VOX_CREDIT"],
     });
     expect(tool.api_schema.request_body_schema.properties).toHaveProperty("amountCents");
+    expect(tool.api_schema.request_body_schema.properties.confirmationId).toMatchObject({ type: "string" });
+    expect(tool.api_schema.request_body_schema.properties.confirmed).toMatchObject({ type: "boolean" });
+    expect(tool.api_schema.request_body_schema.required).not.toContain("confirmationId");
+    expect(tool.api_schema.request_body_schema.required).not.toContain("confirmed");
+    expect(tool.description).toContain("single action");
+    expect(tool.description).toContain("paymentReviewOpened:true");
+    expect(
+      TOOL_REGISTRY.redeem_points.input.safeParse({
+        userSessionId: "fixture_order",
+        balanceType: "VOX_CREDIT",
+        amountCents: 12000,
+        confirmationId: "fixture_balance_split",
+        confirmed: true,
+      }).success,
+    ).toBe(true);
     expect(TOOL_REGISTRY.redeem_points.input.safeParse({ userSessionId: "fixture_order" }).success).toBe(
       true,
     );
+  });
+  it("keeps handover consent and exchange settlement descriptions consistent with their actual flows", () => {
+    const tools = buildWebhookTools(opts);
+    const transfer = tools.find((tool) => tool.name === "transfer_to_agent")!;
+    expect(transfer.description).toContain("explicitly requests a person or accepts an offered transfer");
+    expect(transfer.description).toContain("wait for the guest's answer");
+    expect(transfer.description).not.toContain("Use on explicit request, frustration");
+    const swap = tools.find((tool) => tool.name === "swap_booking")!;
+    expect(swap.description).toContain("settling only its verified difference");
+    expect(swap.description).not.toContain("refund original, rebook");
   });
   it("exposes only verified proposal acceptance for agent quick booking while preserving backend filters", () => {
     const tool = buildWebhookTools(opts).find((tool) => tool.name === "quick_book")!;
@@ -92,6 +117,7 @@ describe("agent configuration contracts", () => {
     expect(config.conversation_config.tts).toMatchObject({
       model_id: "eleven_v3_conversational",
       expressive_mode: true,
+      text_normalisation_type: "elevenlabs",
     });
     expect(config.conversation_config.turn).toMatchObject({
       turn_model: "turn_v3",
@@ -101,7 +127,8 @@ describe("agent configuration contracts", () => {
   });
   it("existing-agent patches cannot overwrite voice, model, privacy or knowledge", () => {
     const patch = buildAgentBehaviorPatch(["fixture-tool"]);
-    expect(Object.keys(patch.conversation_config)).toEqual(["agent"]);
+    expect(Object.keys(patch.conversation_config).sort()).toEqual(["agent", "tts"]);
+    expect(patch.conversation_config.tts).toEqual({ text_normalisation_type: "elevenlabs" });
     expect(Object.keys(patch.conversation_config.agent.prompt).sort()).toEqual([
       "built_in_tools",
       "prompt",
@@ -122,7 +149,7 @@ describe("agent configuration contracts", () => {
     });
     expect(config.conversation_config.turn).toMatchObject({ turn_timeout: 8, silence_end_call_timeout: 180 });
     expect(patch.conversation_config).not.toHaveProperty("turn");
-    expect(patch.conversation_config).not.toHaveProperty("tts");
+    expect(patch.conversation_config.tts).toEqual({ text_normalisation_type: "elevenlabs" });
     expect(patch.conversation_config.agent.prompt).not.toHaveProperty("llm");
     expect(buildWebhookTools(opts)).toHaveLength(Object.keys(TOOL_REGISTRY).length);
     expect(buildClientTools()).toHaveLength(12);

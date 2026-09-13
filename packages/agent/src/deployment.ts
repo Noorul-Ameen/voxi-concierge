@@ -32,8 +32,15 @@ function protectedSettings(agent: Agent) {
     built_in_tools: _native,
     ...modelSettings
   } = _prompt ?? {};
-  const { agent: _agent, ...conversation } = agent.conversation_config;
-  return { conversation, agentSettings, modelSettings, platform_settings: agent.platform_settings };
+  const { agent: _agent, tts = {}, ...conversation } = agent.conversation_config;
+  // Normalization is an authored behavior setting; the selected voices and other TTS fields remain protected.
+  const { text_normalisation_type: _normalizer, ...voiceSettings } = tts;
+  return {
+    conversation: { ...conversation, tts: voiceSettings },
+    agentSettings,
+    modelSettings,
+    platform_settings: agent.platform_settings,
+  };
 }
 
 /** Candidate-only lifecycle. Explicit caller authorization is required; this cannot promote main. */
@@ -140,6 +147,8 @@ export async function syncCandidateAgent(
     throw new Error("Candidate published but protected settings differ; stop before promotion");
   if (
     !matchesAuthored(after.conversation_config.agent?.prompt, patch.conversation_config.agent.prompt) ||
+    after.conversation_config.tts?.text_normalisation_type !==
+      patch.conversation_config.tts.text_normalisation_type ||
     !matchesAuthored(after.workflow, compiled.workflow)
   )
     throw new Error("Published prompt/tools/workflow did not match; do not promote");

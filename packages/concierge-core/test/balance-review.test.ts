@@ -26,6 +26,7 @@ function fixture(reserved?: "VOX_REWARDS" | "SHARE_POINTS") {
     CinemaId: "0002",
     Version: 1,
     State: "seats_selected",
+    ExpiryDateUtc: "2070-09-14T16:06:00Z",
     TotalValueCents: reserved ? 2550 : 14550,
     TaxValueCents: 693,
     Sessions: [],
@@ -66,7 +67,7 @@ function fixture(reserved?: "VOX_REWARDS" | "SHARE_POINTS") {
 }
 beforeEach(() => vi.clearAllMocks());
 
-it("returns an exact VOX-only split continuation without creating payment consent or a reservation", async () => {
+it("returns an exact VOX-only split choice with scoped review intent but no payment consent or reservation", async () => {
   const { ctx } = fixture();
   const result = await orderingTools.prepare_payment(ctx, { userSessionId: "order", method: "VOX_CREDIT" });
   expect(result).toMatchObject({
@@ -82,7 +83,13 @@ it("returns an exact VOX-only split continuation without creating payment consen
       nextPaymentMethod: "CARD",
     },
   });
-  expect(createConfirmation).not.toHaveBeenCalled();
+  expect(createConfirmation).toHaveBeenCalledWith(
+    undefined,
+    expect.objectContaining({
+      actionType: "redeem_points",
+      summary: expect.objectContaining({ purpose: "reserve_and_open_card_review" }),
+    }),
+  );
   expect(enqueue).not.toHaveBeenCalled();
   const mistaken = await orderingTools.redeem_points(ctx, { userSessionId: "order" });
   expect(mistaken).toMatchObject({

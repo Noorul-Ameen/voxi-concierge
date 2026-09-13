@@ -9,12 +9,14 @@ import { VistaClientError } from "@voxi/vista-client";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { AppContext } from "../context.js";
 import { appendEvent } from "../events.js";
+import { executeBalanceReview } from "../services/balance-review.js";
 import type { Catalog } from "../services/catalog.js";
 import { assertPaymentConsent } from "../services/checkout.js";
 import { markJourney, updateConversation } from "../services/conversation.js";
 import { fmtDateTime, joinList, money, onDateTime, seatLabels, t } from "../services/format.js";
 import { resolveLinkedConversation } from "../services/relink.js";
 import { bookingCard, orderSummary, seatRange, toSnapshot } from "../tools/index.js";
+import type { ToolCtx } from "../tools/types.js";
 import { type ActionRow, complete, fail } from "./ledger.js";
 
 /** "RF-7K2M9Q" style refund number derived from the Vista refund id (letters/digits that are easy to say). */
@@ -678,7 +680,13 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       };
     },
 
-    async redeem_points(ctx, a) {
+    async redeem_points(ctx, a, steps) {
+      if (a.input.balanceReview === true)
+        return executeBalanceReview(
+          { ...ctx, toolCallId: a.toolCallId ?? a.id, correlationId: a.correlationId ?? a.id } as ToolCtx,
+          a,
+          steps,
+        );
       const inp = a.input as {
         userSessionId: string;
         memberId: string;

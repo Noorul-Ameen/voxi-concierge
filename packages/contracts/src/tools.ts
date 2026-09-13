@@ -320,6 +320,19 @@ export const RedeemPointsInput = z.object({
     .describe(
       "VOX_CREDIT only, in fils: 100 = AED 1. Use the amountCents returned by balance_split_confirmation. Omit for maximum. Explicit 0 removes the current reservation; never default to zero.",
     ),
+  confirmationId: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Copy the server's balance_split_confirmation redemptionInput confirmationId only after the guest accepts reserving that exact balance and opening its card review. Omit for a reserve-only request.",
+    ),
+  confirmed: z
+    .literal(true)
+    .optional()
+    .describe(
+      "Required with confirmationId, only after explicit acceptance of the returned balance split and card review. This never authorizes a charge.",
+    ),
   idempotencyKey: z.string().optional(),
 });
 export const GetOrderInput = z.object({ userSessionId: z.string() });
@@ -808,7 +821,7 @@ export const TOOL_REGISTRY = {
     input: SwapBookingInput,
     kind: "write",
     description:
-      "Execute the prepared swap (refund original, rebook new session). Requires confirmationId and confirmed=true.",
+      "Execute the prepared exchange, retaining the original paid value and settling only its verified difference. Requires the current confirmationId and confirmed=true; no full-charge/refund replacement workaround.",
   },
   start_order: {
     input: StartOrderInput,
@@ -836,7 +849,7 @@ export const TOOL_REGISTRY = {
     input: RedeemPointsInput,
     kind: "write",
     description:
-      "Reserve the guest's explicitly selected VOX_CREDIT or SHARE_POINTS balance against an unpaid order; this does not charge or confirm a booking. After balance_split_confirmation and guest consent, use its exact redemptionInput, wait for success, then prepare_payment with its nextPaymentMethod. Never replace requested VOX credit with points. Explicit zero removes a mistaken reservation and restores the payable amount before a fresh review.",
+      "Reserve the guest's explicitly selected VOX_CREDIT or SHARE_POINTS balance against an unpaid order; this does not charge or confirm a booking. After consent to balance_split_confirmation, copy its exact redemptionInput including confirmationId and confirmed:true: one durable action reserves the balance and opens its card-remainder review. Wait for paymentReviewOpened:true and actual payment UI; false reports a reserved balance with review failure. Without confirmation this remains reserve-only. Never replace requested VOX credit with points. Explicit zero removes a mistaken reservation before a fresh review.",
   },
   pay_order: {
     input: PayOrderInput,
@@ -864,7 +877,7 @@ export const TOOL_REGISTRY = {
     input: TransferToAgentInput,
     kind: "write",
     description:
-      "Hand the conversation to a human agent with a summary. Use on explicit request, frustration, or after two failed answers.",
+      "Hand the conversation to a human agent with a factual summary only after the guest explicitly requests a person or accepts an offered transfer. Frustration, policy limits or failed answers justify offering help, not executing it without acceptance. After asking, wait for the guest's answer.",
   },
   log_journey: {
     input: LogJourneyInput,
