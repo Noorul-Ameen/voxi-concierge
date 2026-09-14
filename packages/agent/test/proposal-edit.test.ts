@@ -47,7 +47,7 @@ const tests = materializeSimulations(
 function resolve(mocks: SimulationMock[], args: Record<string, unknown>) {
   const match = mocks.find((mock) =>
     mock.parameter_conditions.every(({ path, eval: rule }) => {
-      const value = args[path];
+      const value = Array.isArray(args[path]) ? JSON.stringify(args[path]) : args[path];
       if (value === undefined) return false;
       return rule.type === "exact"
         ? String(value) === rule.expected_value
@@ -97,6 +97,8 @@ describe("named-film proposal fixture grounding", () => {
         const age = resolve(mocks.fixture_get_age_rules, { rating: one.data.film.rating, childAge: 7 });
         expect(age.data.allowed).toBe(true);
         const proposal = resolve(mocks.fixture_propose_booking, {
+          intent: "initial",
+          childAges: [7],
           title,
           date: "tomorrow",
           tickets: 1,
@@ -139,7 +141,12 @@ describe("named-film proposal fixture grounding", () => {
   it("keeps the edited price/time and composition exact, refusing other titles or quantity", () => {
     for (const { body } of tests) {
       const mocks = body.tool_mock_overrides.fixture_propose_booking;
-      const args = { title: "سبايدرمان", tickets: 1, childTickets: 1, date: "tomorrow", time: "19:00" };
+      const args = {
+        intent: "edit",
+        baseProposalRef: "fixture_initial_ref",
+        time: "19:00",
+        experience: "Premier",
+      };
       const result = resolve(mocks, args);
       expect(result.data).toMatchObject({
         proposalToken: "fixture_edited_proposal",
@@ -153,10 +160,16 @@ describe("named-film proposal fixture grounding", () => {
       });
       for (const invalid of [
         { ...args, title: "Invented Family Fun" },
+        { ...args, baseProposalRef: "old" },
+        { ...args, baseProposalRef: undefined },
+        { ...args, childAges: [8] },
+        { ...args, intent: "initial" },
         { ...args, tickets: 2 },
         { ...args, childTickets: 0 },
         { ...args, cinemaId: "other" },
         { ...args, experience: "Standard" },
+        { ...args, experience: undefined },
+        { ...args, date: "2026-09-16" },
       ])
         expect(resolve(mocks, invalid).ok).toBe(false);
     }

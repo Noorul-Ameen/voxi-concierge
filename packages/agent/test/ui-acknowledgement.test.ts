@@ -314,14 +314,28 @@ describe("verified UI acknowledgement regression fixtures", () => {
       for (const entry of test.body.tool_mock_overrides.fixture_propose_booking.filter(
         (mock) => !mock.is_error,
       )) {
+        const result = JSON.parse(entry.mock_result);
+        const edit = result.data.proposalRef === "fixture_edited_ref";
         expect(entry.parameter_conditions).toContainEqual({
-          path: "tickets",
-          eval: { type: "exact", expected_value: "1" },
+          path: "intent",
+          eval: { type: "exact", expected_value: edit ? "edit" : "initial" },
         });
-        expect(entry.parameter_conditions).toContainEqual({
-          path: "childTickets",
-          eval: { type: "exact", expected_value: "1" },
+        if (edit)
+          expect(entry.parameter_conditions).toContainEqual({
+            path: "baseProposalRef",
+            eval: { type: "exact", expected_value: "fixture_initial_ref" },
+          });
+        else
+          expect(entry.parameter_conditions).toContainEqual({
+            path: "childAges",
+            eval: { type: "regex", pattern: "^\\[\\s*7\\s*\\]$" },
+          });
+        expect(result.data.admission).toMatchObject({
+          verified: true,
+          childAges: [7],
+          children: [{ allowed: true }],
         });
+        expect(result.ui.meta.proposalRef).toBe(result.data.proposalRef);
       }
     }
     expect(() => buildProposalEditSuite(clock, initial, { ...revised, cinemaId: "another_cinema" })).toThrow(

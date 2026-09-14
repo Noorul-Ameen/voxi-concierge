@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildWebhookTools } from "../src/index.js";
 import { auditJourneyTransitionEvidence } from "../src/journey-transition-evidence.js";
 import { buildJourneyTransitionSuite } from "../src/journey-transition-simulations.js";
+import { proposalEvidence } from "../src/proposal-fixtures.js";
 import { materializeSimulations } from "../src/simulations.js";
 
 const suite = buildJourneyTransitionSuite("2026-12-31T23:55:00+04:00");
@@ -18,9 +19,8 @@ function invoke(key: string, tool: string, args: Record<string, unknown>, langua
   const match = mocks.find((m) =>
     m.parameter_conditions.every(({ path, eval: check }) => {
       if (args[path] === undefined) return false;
-      return check.type === "exact"
-        ? String(args[path]) === check.expected_value
-        : new RegExp(check.pattern).test(String(args[path]));
+      const value = Array.isArray(args[path]) ? JSON.stringify(args[path]) : String(args[path]);
+      return check.type === "exact" ? value === check.expected_value : new RegExp(check.pattern).test(value);
     }),
   );
   expect(match, `${key}/${tool} needs a fail-closed final mock`).toBeDefined();
@@ -118,7 +118,14 @@ describe("journey transition regressions", () => {
 
   for (const language of ["en", "ar"]) {
     it(`${language}: requires a complete one-adult/one-child proposal and rejects the broad-query shortcuts`, () => {
-      const args = { hoCode: "FIX_SPIDER", tickets: 1, childTickets: 1, date: "tomorrow" };
+      const args = {
+        intent: "initial",
+        hoCode: "FIX_SPIDER",
+        tickets: 1,
+        childTickets: 1,
+        childAges: [7],
+        date: "tomorrow",
+      };
       expect(TOOL_REGISTRY.propose_booking.input.safeParse(args).success).toBe(true);
       expect(invoke("enquiry-plan", "propose_booking", args, language).value.data.proposal).toMatchObject({
         held: false,
@@ -171,9 +178,15 @@ describe("journey transition regressions", () => {
       ).toBe("succeeded");
       for (const actionId of ["fixture_food_action", "fixture_order", "unknown"])
         expect(invoke("offer-snacks", "get_action_result", { actionId }, language).error).toBe(true);
-      expect(
-        invoke("offer-snacks", "suggest_fnb", { cinemaId: "0001" }, language).value.data.items,
-      ).toHaveLength(2);
+      const ready = invoke(
+        "offer-snacks",
+        "get_action_result",
+        { actionId: "fixture_offer_action" },
+        language,
+      ).value.data.result.snackSuggestions;
+      expect(ready.items).toHaveLength(2);
+      expect(ready.usual.map((item: any) => item.itemId)).toEqual(["FIX_POPCORN", "FIX_COLA"]);
+      expect(invoke("offer-snacks", "suggest_fnb", { cinemaId: "0001" }, language).error).toBe(true);
       expect(invoke("offer-snacks", "suggest_fnb", { cinemaId: "0002" }, language).error).toBe(true);
       for (const tool of ["get_order", "order_fnb", "prepare_payment"])
         expect(invoke("offer-snacks", tool, { repeatUsual: true }, language).error).toBe(true);
@@ -202,6 +215,8 @@ describe("journey transition regressions", () => {
     });
     it(`${language}: a film-only edit cannot silently discard the current proposal's time or experience`, () => {
       const args = {
+        intent: "edit",
+        baseProposalRef: "FIX_OLD_REF",
         hoCode: "FIX_SPIDER",
         tickets: 1,
         childTickets: 1,
@@ -210,15 +225,30 @@ describe("journey transition regressions", () => {
         time: "18:45",
         experience: "Premier",
       };
-      expect(invoke("film-only-edit", "propose_booking", args, language).value.data.proposal).toMatchObject({
-        experience: "Premier",
-        showtime: "2027-01-01T18:30:00+04:00",
-        held: false,
-        requested: { time: "18:45" },
-      });
+      expect(
+        invoke(
+          "film-only-edit",
+          "propose_booking",
+          { intent: "edit", baseProposalRef: "FIX_OLD_REF", hoCode: "FIX_SPIDER" },
+          language,
+        ).value.data.admission,
+      ).toMatchObject({ verified: true, childAges: [7] });
+      for (const date of ["tomorrow", "2027-01-01"])
+        expect(
+          invoke("film-only-edit", "propose_booking", { ...args, date }, language).value.data.proposal,
+        ).toMatchObject({
+          experience: "Premier",
+          showtime: "2027-01-01T18:30:00+04:00",
+          held: false,
+          requested: { time: "18:45" },
+        });
       for (const change of [
-        { time: undefined },
-        { experience: undefined },
+        { date: "2027-01-02" },
+        { date: "2026-12-31" },
+        { baseProposalRef: undefined },
+        { baseProposalRef: "wrong" },
+        { intent: "initial" },
+        { childAges: [8] },
         { time: "23:00", experience: "KIDS" },
         { childTickets: 0 },
       ])
@@ -228,18 +258,21 @@ describe("journey transition regressions", () => {
     });
   }
 
-  it("catches the actual offer-acknowledgement false pass even when a later user volunteers food", () => {
-    const trace = [
-      ...offer(),
-      speech("The offer is applied. Your total is AED96."),
-      user("My usual popcorn and cola, please."),
-      call("suggest_fnb", {}),
-      result("suggest_fnb", invoke("offer-snacks", "suggest_fnb", {}).value),
-      speech("Would you like your usual?"),
-    ];
-    expect(audit("offer-snacks", trace)).toContainEqual(
-      expect.stringContaining("later user prompts cannot supply"),
-    );
+  it("rejects missing ready facts that a later user/menu lookup cannot repair", () => {
+    const trace = offer();
+    const completed = JSON.parse(trace[4]!.tool_results![0]!.result_value);
+    completed.data.result.snackSuggestions = { status: "unavailable", cinemaId: "0001" };
+    trace[4] = result("get_action_result", completed);
+    expect(
+      audit("offer-snacks", [
+        ...trace,
+        speech("Offer applied."),
+        user("Offer my usual now."),
+        call("suggest_fnb", {}),
+        result("suggest_fnb", { ok: true, data: { items: [{ itemId: "FIX_POPCORN" }] } }),
+        speech("Would you like popcorn?"),
+      ]),
+    ).toContainEqual(expect.stringContaining("later user prompts"));
   });
 
   it.each(["en", "ar"])(
@@ -272,26 +305,22 @@ describe("journey transition regressions", () => {
     },
   );
 
-  it("accepts actual completion then proactive menu before speech, but rejects early/failed/unexecuted evidence", () => {
-    const menu = [
-      call("suggest_fnb", {}),
-      result("suggest_fnb", invoke("offer-snacks", "suggest_fnb", {}).value),
-    ];
+  it("accepts verified ready facts without a duplicate menu but rejects failed or mismatched evidence", () => {
     const correct = [
       ...offer(),
-      ...menu,
       speech("Offer applied. Would you like your usual popcorn and cola?"),
       user("No snacks; stop here."),
       speech("Understood."),
     ];
     expect(audit("offer-snacks", correct)).toEqual([]);
-    const early = [
-      ...offer().slice(0, 3),
-      ...menu,
-      ...offer().slice(3),
-      speech("Would you like your usual?"),
-    ];
-    expect(audit("offer-snacks", early)).not.toEqual([]);
+    expect(
+      audit("offer-snacks", [
+        ...offer(),
+        call("suggest_fnb", {}),
+        result("suggest_fnb", { ok: true, data: { items: [{ itemId: "FIX_POPCORN" }] } }),
+        speech("Usual popcorn?"),
+      ]),
+    ).toContainEqual(expect.stringContaining("duplicate menu"));
     for (const flags of [{ is_error: true }, { is_blocked: true }, { tool_has_been_called: false }]) {
       const bad = [...correct];
       bad[4] = result(
@@ -300,6 +329,18 @@ describe("journey transition regressions", () => {
         flags,
       );
       expect(audit("offer-snacks", bad)).not.toEqual([]);
+    }
+    for (const changes of [
+      { cinemaId: "0002" },
+      { purchaseRequiresConsent: false },
+      { usual: [{ itemId: "invented", quantity: 1 }] },
+      { items: [] },
+    ]) {
+      const bad = offer();
+      const value = JSON.parse(bad[4]!.tool_results![0]!.result_value);
+      Object.assign(value.data.result.snackSuggestions, changes);
+      bad[4] = result("get_action_result", value);
+      expect(audit("offer-snacks", [...bad, speech("Your usual popcorn?")])).not.toEqual([]);
     }
   });
 
@@ -324,6 +365,8 @@ describe("journey transition regressions", () => {
 
   it("requires the actual Procedure and complete proposal before the first family-plan response", () => {
     const proposal = invoke("enquiry-plan", "propose_booking", {
+      intent: "initial",
+      childAges: [7],
       hoCode: "FIX_SPIDER",
       tickets: 1,
       childTickets: 1,
@@ -338,7 +381,14 @@ describe("journey transition regressions", () => {
       }),
     ];
     const prepared = [
-      call("propose_booking", { hoCode: "FIX_SPIDER", tickets: 1, childTickets: 1, date: "tomorrow" }),
+      call("propose_booking", {
+        intent: "initial",
+        hoCode: "FIX_SPIDER",
+        tickets: 1,
+        childTickets: 1,
+        childAges: [7],
+        date: "tomorrow",
+      }),
       result("propose_booking", proposal),
     ];
     expect(audit("enquiry-plan", [...entered, ...prepared, speech("Here is the evening proposal.")])).toEqual(
@@ -394,65 +444,121 @@ describe("journey transition regressions", () => {
   });
 
   it("rejects a second user repairing the first response even before any agent speech", () => {
-    const trace = [
-      ...offer(),
-      user("Please offer my usual snacks now."),
-      call("suggest_fnb", {}),
-      result("suggest_fnb", invoke("offer-snacks", "suggest_fnb", {}).value),
-      speech("Would you like your usual?"),
-    ];
-    expect(audit("offer-snacks", trace)).toContainEqual(expect.stringContaining("later user prompts"));
+    const trace = offer();
+    const completion = trace.splice(3);
+    expect(
+      audit("offer-snacks", [
+        ...trace,
+        user("Please offer snacks now."),
+        ...completion,
+        speech("Usual popcorn?"),
+      ]),
+    ).toContainEqual(expect.stringContaining("later user prompts"));
   });
 
   it("rejects a mismatched provider request ID instead of counting a same-name success", () => {
-    const trace = [
-      ...offer(),
-      call("suggest_fnb", {}),
-      result("suggest_fnb", invoke("offer-snacks", "suggest_fnb", {}).value, { request_id: "other_request" }),
-      speech("Would you like your usual?"),
-    ];
-    expect(audit("offer-snacks", trace)).toContainEqual(expect.stringContaining("matching request ID"));
+    const trace = offer();
+    trace[4] = result(
+      "get_action_result",
+      invoke("offer-snacks", "get_action_result", { actionId: "fixture_offer_action" }).value,
+      { request_id: "other_request" },
+    );
+    expect(audit("offer-snacks", [...trace, speech("Usual popcorn?")])).toContainEqual(
+      expect.stringContaining("matching request ID"),
+    );
   });
 
-  it("requires the changed film's age check before proposal creation, not merely before speech", () => {
-    const args = {
-      hoCode: "FIX_SPIDER",
-      tickets: 1,
-      childTickets: 1,
-      cinemaId: "0002",
-      date: "tomorrow",
-      time: "18:45",
-      experience: "Premier",
-    };
-    const prefix = [
-      user("Change only the movie to Spider-Man."),
-      call("start_procedure", { procedure_index: "2" }),
-      result("start_procedure", {
-        result_type: "start_procedure_success",
-        status: "success",
-        procedure_name: "VOX · Discover and book",
-      }),
-      call("get_film", { hoCode: "FIX_SPIDER" }),
-      result("get_film", invoke("film-only-edit", "get_film", { hoCode: "FIX_SPIDER" }).value),
-    ];
-    const age = [
-      call("get_age_rules", { rating: "PG13", childAge: 7 }),
-      result(
-        "get_age_rules",
-        invoke("film-only-edit", "get_age_rules", { rating: "PG13", childAge: 7 }).value,
-      ),
-    ];
-    const proposal = [
-      call("propose_booking", args),
-      result("propose_booking", invoke("film-only-edit", "propose_booking", args).value),
-    ];
-    expect(
-      audit("film-only-edit", [...prefix, ...age, ...proposal, speech("Premier at 18:30 is available.")]),
-    ).toEqual([]);
-    expect(
-      audit("film-only-edit", [...prefix, ...proposal, ...age, speech("Premier at 18:30 is available.")]),
-    ).toContainEqual(expect.stringContaining("verify the new film/age"));
-  });
+  it.each(["tomorrow", "2027-01-01"])(
+    "%s: requires current admission on the new anchored proposal",
+    (date) => {
+      const args = {
+        intent: "edit",
+        baseProposalRef: "FIX_OLD_REF",
+        hoCode: "FIX_SPIDER",
+        tickets: 1,
+        childTickets: 1,
+        cinemaId: "0002",
+        date,
+        time: "18:45",
+        experience: "Premier",
+      };
+      const prefix = [
+        call("start_procedure", { procedure_index: "2" }),
+        result("start_procedure", {
+          result_type: "start_procedure_success",
+          status: "success",
+          procedure_name: "VOX · Discover and book",
+        }),
+        call("get_film", { hoCode: "FIX_SPIDER" }),
+        result("get_film", invoke("film-only-edit", "get_film", { hoCode: "FIX_SPIDER" }).value),
+      ];
+      const age = [
+        call("get_age_rules", { rating: "PG13", childAge: 7 }),
+        result(
+          "get_age_rules",
+          invoke("film-only-edit", "get_age_rules", { rating: "PG13", childAge: 7 }).value,
+        ),
+      ];
+      const proposal = [
+        call("propose_booking", args),
+        result("propose_booking", invoke("film-only-edit", "propose_booking", args).value),
+      ];
+      expect(
+        audit("film-only-edit", [...prefix, ...age, ...proposal, speech("Premier at 18:30 is available.")]),
+      ).toEqual([]);
+      expect(
+        audit("film-only-edit", [...prefix, ...proposal, speech("Premier at 18:30 is available.")]),
+      ).toEqual([]);
+      for (const admission of [
+        undefined,
+        { verified: false },
+        {
+          verified: true,
+          rating: "PG15",
+          experience: "Premier",
+          childAges: [7],
+          children: [{ allowed: true, checkedChildAge: 7 }],
+        },
+      ]) {
+        const invalid = invoke("film-only-edit", "propose_booking", args).value;
+        invalid.data.admission = admission;
+        expect(
+          audit("film-only-edit", [
+            ...prefix,
+            ...age,
+            proposal[0]!,
+            result("propose_booking", invalid),
+            speech("Available."),
+          ]),
+        ).toContainEqual(expect.stringContaining("Missing complete"));
+      }
+      expect(
+        audit("film-only-edit", [
+          user("Use 18:45 and Premier, then show it."),
+          ...prefix,
+          ...age,
+          ...proposal,
+          speech("Premier at 18:30 is available."),
+        ]),
+      ).toContainEqual(expect.stringContaining("first generated turn to be agent"));
+      const wrongDateCall = {
+        ...proposal[0],
+        tool_calls: proposal[0]!.tool_calls!.map((c) => ({
+          ...c,
+          params_as_json: JSON.stringify({ ...args, date: "2027-01-02" }),
+        })),
+      };
+      expect(
+        audit("film-only-edit", [
+          ...prefix,
+          ...age,
+          wrongDateCall,
+          proposal[1]!,
+          speech("Premier at 18:30 is available."),
+        ]),
+      ).toContainEqual(expect.stringContaining("preserve prior proposal choices"));
+    },
+  );
 
   it.each(["en", "ar"])(
     "%s: an omitted cheaper-swap refund method returns choices, never a default confirmation",
@@ -592,7 +698,15 @@ describe("journey transition regressions", () => {
   it.each(["en", "ar"])("%s: fixed current-user triggers cannot be skipped by the simulator", (language) => {
     const plan = testFor("enquiry-plan", language);
     const refund = testFor("swap-refund-choice", language);
-    for (const t of [plan, refund]) expect(t.chat_history.at(-1)).toMatchObject({ role: "user" });
+    const edit = testFor("film-only-edit", language);
+    for (const t of [plan, refund, edit]) expect(t.chat_history.at(-1)).toMatchObject({ role: "user" });
+    expect(edit.chat_history).toHaveLength(11);
+    expect(JSON.stringify(edit.chat_history.at(-1))).toContain(
+      language === "en" ? "do not hold or book anything" : "من دون حجز مؤقت للمقاعد أو إتمام أي حجز",
+    );
+    expect(audit("film-only-edit", [speech("Here is the edited suggestion.")], language)).toContainEqual(
+      expect.stringContaining("Missing complete"),
+    );
     expect(JSON.stringify(plan.chat_history.at(-1))).toMatch(/tomorrow|غداً/);
     expect(JSON.stringify(refund.chat_history.at(-1))).toContain("2027-01-02");
     expect(audit("enquiry-plan", [speech("Here it is.")], language)).toContainEqual(
@@ -605,7 +719,14 @@ describe("journey transition regressions", () => {
 
   it("never counts an authored proposal result as a generated response to a fixed user trigger", () => {
     const t = testFor("enquiry-plan");
-    const args = { hoCode: "FIX_SPIDER", tickets: 1, childTickets: 1, date: "tomorrow" };
+    const args = {
+      intent: "initial",
+      hoCode: "FIX_SPIDER",
+      tickets: 1,
+      childTickets: 1,
+      childAges: [7],
+      date: "tomorrow",
+    };
     const modified = {
       ...t,
       chat_history: [
@@ -705,5 +826,83 @@ describe("journey transition regressions", () => {
         ).error,
       ).toBe(true);
     }
+  });
+  it("never turns missing ages or unknown quantity into acceptance proof", () => {
+    const full = invoke("enquiry-plan", "propose_booking", {
+      intent: "initial",
+      hoCode: "FIX_SPIDER",
+      tickets: 1,
+      childTickets: 1,
+      childAges: [7],
+      date: "tomorrow",
+    }).value.data.proposal;
+    const missing = proposalEvidence(full, "needs_age", [], "must_not_survive");
+    expect(missing.data).toMatchObject({ needs: "child_age", admission: { verified: false, children: [] } });
+    expect(missing.data).not.toHaveProperty("proposalToken");
+    expect(missing.ui.actions.some((a) => a.value === "proposal:accept")).toBe(false);
+    const unknown = proposalEvidence(
+      {
+        ...full,
+        adultTickets: null,
+        childTickets: 0,
+        ticketQuantity: null,
+        selectedSeats: [],
+        totalCents: null,
+      },
+      "needs_count",
+      [],
+      "must_not_survive",
+      "tickets",
+    );
+    expect(unknown.data).not.toHaveProperty("proposalToken");
+    expect(unknown.ui.actions.some((a) => a.value === "proposal:accept")).toBe(false);
+    for (const rating of ["18TC", "TBC", "15+", undefined])
+      expect(() => proposalEvidence({ ...full, rating }, "bad", [7], "token")).toThrow("restricted-rating");
+  });
+
+  it("array conditions accept only the supplied list and never a scalar or invented age", () => {
+    for (const childAges of [[8], [], [7, 7], 7, "7"])
+      expect(
+        invoke("enquiry-plan", "propose_booking", {
+          intent: "initial",
+          hoCode: "FIX_SPIDER",
+          tickets: 1,
+          childTickets: 1,
+          childAges,
+          date: "tomorrow",
+        }).error,
+      ).toBe(true);
+    const test = materialized.find((t) => t.id === "transition-enquiry-plan-en")!;
+    const success = test.body.tool_mock_overrides.propose_booking!.find((m) => !m.is_error)!;
+    const age = success.parameter_conditions.find((c) => c.path === "childAges")!.eval;
+    if (age.type !== "regex") throw Error("Expected exact list regex");
+    for (const value of ["[7]", "[ 7 ]"]) expect(new RegExp(age.pattern).test(value)).toBe(true);
+    for (const value of ["7", "[8]", "[7,7]", "[]"]) expect(new RegExp(age.pattern).test(value)).toBe(false);
+  });
+
+  it("allows a safe context refresh before Procedure entry without counting it as booking preparation", () => {
+    const args = {
+      intent: "initial",
+      hoCode: "FIX_SPIDER",
+      tickets: 1,
+      childTickets: 1,
+      childAges: [7],
+      date: "tomorrow",
+    };
+    expect(
+      audit("enquiry-plan", [
+        call("get_session_context", {}),
+        result("get_session_context", invoke("enquiry-plan", "get_session_context", {}).value),
+        call("start_procedure", {}),
+        result("start_procedure", {
+          result_type: "start_procedure_success",
+          status: "success",
+          procedure_name: "VOX · Discover and book",
+        }),
+        call("propose_booking", args),
+        result("propose_booking", invoke("enquiry-plan", "propose_booking", args).value),
+        speech("Here is the plan."),
+      ]),
+    ).toEqual([]);
   });
 });

@@ -20,6 +20,7 @@ import { enqueue, idem, toRef, waitFor } from "../actions/ledger.js";
 import { addTopic, markAgentJourney } from "../services/conversation.js";
 import { fmtDateTime, money, t } from "../services/format.js";
 import { buildBookingState, orderSummary } from "../services/order-state.js";
+import { currentProposal, proposalSummary } from "../services/proposal-draft.js";
 import { actionSpeech } from "./bookings.js";
 import { filmCard, sessionCard } from "./movies.js";
 import { type ToolCtx, type ToolHandlers, err, ok } from "./types.js";
@@ -101,6 +102,7 @@ export const customerTools: Pick<
               bookingState,
             }
           : null,
+      currentProposal: proposalSummary(currentProposal(ctx.conversation)),
       mode: ctx.conversation.mode,
       localTime: ctx.nowLocal,
       market: ctx.cfg.market,

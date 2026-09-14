@@ -443,6 +443,27 @@ export const QuickBookInput = z.object({
 });
 
 export const ProposeBookingInput = QuickBookInput.omit({ proposalToken: true, idempotencyKey: true }).extend({
+  intent: z
+    .enum(["initial", "edit"])
+    .optional()
+    .describe(
+      "initial starts a new unheld plan; edit changes the current verified proposal. For edit, copy its exact baseProposalRef and supply only requested changes; omitted choices are preserved. Legacy callers may omit intent only for an initial plan.",
+    ),
+  baseProposalRef: z
+    .string()
+    .min(1)
+    .max(120)
+    .optional()
+    .describe(
+      "Exact proposalRef returned by the current proposal, required only for intent edit. Never invent a reference or use an old card's reference.",
+    ),
+  childAges: z
+    .array(z.number().int().min(0).max(17))
+    .max(10)
+    .optional()
+    .describe(
+      "Guest-supplied ages of the children attending, one per child ticket. Copy already supplied ages; never infer from history. An anchored edit preserves ages only for the unchanged party. Required before accepting a new explicit family proposal.",
+    ),
   seats: z
     .array(z.object({ row: z.string(), number: z.string() }))
     .min(1)

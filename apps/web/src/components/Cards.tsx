@@ -8,7 +8,7 @@ import { cinemaDate } from "../lib/cinema-time";
 import type { PreparedReceiptQr } from "../lib/receipt";
 
 export type CardActions = {
-  say: (text: string) => void; // send a user message to the agent
+  say: (text: string, proposalRef?: string) => void; // optional exact displayed draft for an explicit edit click
   command: (cmd: Record<string, unknown>) => Promise<CommandResult>;
   openLink: (url: string) => void;
   playTrailer: (youtubeId: string, title?: string) => void;
@@ -346,6 +346,12 @@ function TicketQuantity({ meta, lang, act }: { meta: Record<string, any>; lang: 
   </div>;
 }
 
+export function proposalQuantityInput(proposal: Record<string, any>, meta: Record<string, any>, tickets: number) {
+  return typeof meta.proposalRef === "string" && meta.proposalRef
+    ? { intent: "edit", baseProposalRef: meta.proposalRef, tickets }
+    : { intent: "initial", sessionKey: proposal.sessionKey, tickets, ...(proposal.childTickets > 0 ? { childTickets: proposal.childTickets } : {}) };
+}
+
 function BookingProposal({ proposal: p, meta, lang, act }: { proposal: any; meta: Record<string, any>; lang: Lang; act: CardActions }) {
   const ar = lang === "ar";
   const [busy, setBusy] = useState(false);
@@ -359,12 +365,12 @@ function BookingProposal({ proposal: p, meta, lang, act }: { proposal: any; meta
     <div className="proposal-film">{p.posterUrl ? <img src={p.posterUrl} alt="" /> : null}<div><h3>{p.filmTitle}</h3><p>{p.cinemaName}</p><p>{p.showtimeLabel}{p.experience ? ` · ${p.experience}` : ""}</p></div></div>
     {Array.isArray(p.preferenceTradeoffs) ? p.preferenceTradeoffs.filter((x: any) => typeof x.message === "string" && x.message.trim()).map((x: any, i: number) => <p className="decision-help" key={i}>{x.message}</p>) : null}
     <dl className="decision-facts"><div><dt>{ar ? "التذاكر" : "Tickets"}</dt><dd>{quantity > 0 ? quantity : ar ? "اختر العدد" : "Choose quantity"}{p.adultTickets != null && p.childTickets > 0 ? <small>{ar ? `${p.adultTickets} بالغ · ${p.childTickets} طفل` : `${p.adultTickets} adult · ${p.childTickets} child`}</small> : null}</dd></div><div><dt>{ar ? "المقاعد المقترحة" : "Suggested seats"}</dt><dd>{seats || (ar ? "سنبحث عن المقاعد المناسبة" : "To be selected")}</dd></div></dl>
-    {!quantity && p.sessionKey ? <div className="proposal-quantity"><p>{p.childTickets > 0 ? ar ? "كم عدد البالغين؟" : "How many adults?" : ar ? "كم شخصاً سيحضر؟" : "How many are going?"}</p><div className="quantity-options" role="group" aria-label={ar ? "عدد التذاكر" : "Number of tickets"}>{[1, 2, 3, 4, 5, 6].map((tickets) => <button type="button" key={tickets} disabled={busy} onClick={async () => { setBusy(true); setError(null); try { const result = await act.command({ type: "proposal.preview", input: { sessionKey: p.sessionKey, tickets, ...(p.childTickets > 0 ? { childTickets: p.childTickets } : {}) } }); if (!result.ok) setError(result.error ?? (ar ? "تعذر تحديث الاقتراح." : "Couldn't update the proposal.")); } catch { setError(ar ? "تعذر الاتصال. حاول مجدداً." : "Couldn't connect. Please try again."); } finally { setBusy(false); } }}>{tickets}</button>)}</div></div> : null}
+    {!quantity && p.sessionKey ? <div className="proposal-quantity"><p>{p.childTickets > 0 ? ar ? "كم عدد البالغين؟" : "How many adults?" : ar ? "كم شخصاً سيحضر؟" : "How many are going?"}</p><div className="quantity-options" role="group" aria-label={ar ? "عدد التذاكر" : "Number of tickets"}>{[1, 2, 3, 4, 5, 6].map((tickets) => <button type="button" key={tickets} disabled={busy} onClick={async () => { setBusy(true); setError(null); try { const result = await act.command({ type: "proposal.preview", input: proposalQuantityInput(p, meta, tickets) }); if (!result.ok) setError(result.error ?? (ar ? "تعذر تحديث الاقتراح." : "Couldn't update the proposal.")); } catch { setError(ar ? "تعذر الاتصال. حاول مجدداً." : "Couldn't connect. Please try again."); } finally { setBusy(false); } }}>{tickets}</button>)}</div></div> : null}
     {p.totalCents != null && Number.isFinite(Number(p.totalCents)) ? <div className="proposal-total"><span>{ar ? "الإجمالي المقترح" : "Proposed total"}{p.priceIncludesFees ? <small>{ar ? "يشمل رسوم الحجز" : "Includes booking fees"}</small> : null}</span><b>{money(Number(p.totalCents), lang)}</b></div> : null}
     <p className="decision-help">{ar ? "سنراجع التوفر والسعر عند تأكيد اختيارك." : "Availability and price are checked when you accept."}</p>
     {error ? <p className="err" role="alert">{error}</p> : null}
     <div className="actionsrow"><button className="btn cta" disabled={!canAccept || busy} onClick={async () => { setBusy(true); setError(null); try { const result = await act.command({ type: "proposal.accept", proposalToken: meta.proposalToken }); if (!result.ok) setError(result.error ?? (ar ? "تعذر تأكيد الاختيار. حاول مجدداً." : "Couldn't accept this choice. Please try again.")); } catch { setError(ar ? "تعذر الاتصال. حاول مجدداً." : "Couldn't connect. Please try again."); } finally { setBusy(false); } }}>{busy ? t(lang, "processing") : ar ? "احجز هذه المقاعد مؤقتاً" : "Hold these seats"}</button><button className="btn ghost" disabled={busy} aria-expanded={editing} onClick={() => setEditing(!editing)}>{ar ? "تعديل الاختيارات" : "Make changes"}</button></div>
-    {editing ? <div className="proposal-edits">{[{ en: "Movie", ar: "الفيلم", request: "the movie", requestAr: "الفيلم" }, { en: "Cinema", ar: "السينما", request: "the cinema", requestAr: "السينما" }, { en: "Date & time", ar: "التاريخ والوقت", request: "the date or time", requestAr: "التاريخ أو الوقت" }, { en: "Experience", ar: "التجربة", request: "the cinema experience", requestAr: "تجربة السينما" }, { en: "Tickets", ar: "التذاكر", request: "the ticket quantity", requestAr: "عدد التذاكر" }, { en: "Seats", ar: "المقاعد", request: "the proposed seats", requestAr: "المقاعد المقترحة" }].map((choice) => <button className="btn ghost" type="button" key={choice.en} onClick={() => act.say(ar ? `أود تغيير ${choice.requestAr} في اقتراح الحجز` : `I'd like to change ${choice.request} in this booking proposal`)}>{ar ? choice.ar : choice.en}</button>)}</div> : null}
+    {editing ? <div className="proposal-edits">{[{ en: "Movie", ar: "الفيلم", request: "the movie", requestAr: "الفيلم" }, { en: "Cinema", ar: "السينما", request: "the cinema", requestAr: "السينما" }, { en: "Date & time", ar: "التاريخ والوقت", request: "the date or time", requestAr: "التاريخ أو الوقت" }, { en: "Experience", ar: "التجربة", request: "the cinema experience", requestAr: "تجربة السينما" }, { en: "Tickets", ar: "التذاكر", request: "the ticket quantity", requestAr: "عدد التذاكر" }, { en: "Seats", ar: "المقاعد", request: "the proposed seats", requestAr: "المقاعد المقترحة" }].map((choice) => <button className="btn ghost" type="button" key={choice.en} onClick={() => act.say(ar ? `أود تغيير ${choice.requestAr} في اقتراح الحجز` : `I'd like to change ${choice.request} in this booking proposal`, meta.proposalRef)}>{ar ? choice.ar : choice.en}</button>)}</div> : null}
   </div>;
 }
 

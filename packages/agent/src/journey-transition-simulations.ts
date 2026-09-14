@@ -1,5 +1,6 @@
 import { buildConfirmedBookingSuite } from "./confirmed-booking-simulations.js";
 import { buildJourneySimulationSuite } from "./journey-simulations.js";
+import { guardProposalAges, proposalEvidence } from "./proposal-fixtures.js";
 import {
   type SimulationDefinition,
   type SimulationMock,
@@ -47,13 +48,15 @@ const read = (name: string, args: object, result: unknown, id: string) => [
 ];
 const mock = (
   data: unknown,
-  conditions: Record<string, string | number> = {},
+  conditions: Record<string, string | number | number[]> = {},
   ui?: unknown,
 ): SimulationMock[] => [
   {
     parameter_conditions: Object.entries(conditions).map(([path, value]) => ({
       path,
-      eval: { type: "exact", expected_value: String(value) },
+      eval: Array.isArray(value)
+        ? { type: "regex", pattern: `^\\[\\s*${value.join("\\s*,\\s*")}\\s*\\]$` }
+        : { type: "exact", expected_value: String(value) },
     })),
     mock_result: JSON.stringify({ ok: true, data, ...(ui ? { ui } : {}) }),
     is_error: false,
@@ -217,6 +220,7 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
           : "He may attend with someone aged 13 or older. Would you like to see showtimes?",
       ),
     ];
+    const initialEvidence = proposalEvidence(proposal, "FIX_TRANSITION_REF", [7], "FIX_TRANSITION_PROPOSAL");
     suite.tests.push(
       define(
         "enquiry-plan",
@@ -229,7 +233,7 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
         ],
         [
           "The new family plan after the rating enquiry must enter the Discover and book Procedure before the next booking lookup. Reuse the already verified Spider-Man identity and age7; do not ask the age, cinema or count again.",
-          "Before the FIRST spoken response to the new plan, obtain a successful full propose_booking for tomorrow with tickets:1 and childTickets:1. Keep the proposed film/MOE/evening/seats/AED108.50 grounded. Do not replace it with search_sessions, a list of times or a question about whether to start preparing. The history's admission invitation is not a prepared proposal.",
+          "Before the FIRST spoken response to the new plan, obtain a successful full propose_booking with intent:initial, tomorrow, tickets:1, childTickets:1 and the supplied childAges:[7]. Its NEW admission must be verified with this child allowed. Keep the proposed film/MOE/evening/seats/AED108.50 grounded. Do not replace it with search_sessions, a list of times or a question about whether to start preparing. The history's admission invitation is not a prepared proposal.",
           "A fresh exact rating recheck or film read is allowed but unnecessary. No hold/payment/offer/food call is allowed: the customer declines the proposal. No claimed held/paid booking.",
         ],
         ar
@@ -239,34 +243,53 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
           get_session_context: mock(context.data),
           ...filmReads,
           get_age_rules: age,
-          propose_booking: rejectUnexpectedFilters(
-            [
-              ...mock(
-                { proposal, proposalToken: "FIX_TRANSITION_PROPOSAL", needs: "proposal_acceptance" },
-                { hoCode: film.hoCode, tickets: 1, childTickets: 1, date: "tomorrow" },
-                { type: "booking_proposal", items: [proposal] },
-              ),
-              ...titleAliases.flatMap((title) =>
-                mock(
-                  { proposal, proposalToken: "FIX_TRANSITION_PROPOSAL", needs: "proposal_acceptance" },
-                  { title, tickets: 1, childTickets: 1, date: "tomorrow" },
-                  { type: "booking_proposal", items: [proposal] },
+          propose_booking: guardProposalAges(
+            rejectUnexpectedFilters(
+              [
+                ...mock(
+                  initialEvidence.data,
+                  {
+                    intent: "initial",
+                    hoCode: film.hoCode,
+                    tickets: 1,
+                    childTickets: 1,
+                    childAges: [7],
+                    date: "tomorrow",
+                  },
+                  initialEvidence.ui,
                 ),
-              ),
-            ],
-            {
-              hoCode: [film.hoCode],
-              title: titleAliases,
-              cinemaId: ["0002"],
-              cinemaName: [profile.cinemaName],
-              time: [],
-              timeFrom: [],
-              timeTo: [],
-              sessionKey: [],
-              experience: [],
-              language: [],
-              filmLanguage: [],
-            },
+                ...titleAliases.flatMap((title) =>
+                  mock(
+                    initialEvidence.data,
+                    {
+                      intent: "initial",
+                      title,
+                      tickets: 1,
+                      childTickets: 1,
+                      childAges: [7],
+                      date: "tomorrow",
+                    },
+                    initialEvidence.ui,
+                  ),
+                ),
+              ],
+              {
+                hoCode: [film.hoCode],
+                title: titleAliases,
+                intent: ["initial"],
+                baseProposalRef: [],
+                cinemaId: ["0002"],
+                cinemaName: [profile.cinemaName],
+                time: [],
+                timeFrom: [],
+                timeTo: [],
+                sessionKey: [],
+                experience: [],
+                language: [],
+                filmLanguage: [],
+              },
+            ),
+            [7],
           ),
         },
       ),
@@ -307,6 +330,8 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
         customer: { ...context.data.customer, profile: { ...profile, preferredExperience: "KIDS" } },
       },
     };
+    const oldEvidence = proposalEvidence(oldProposal, "FIX_OLD_REF", [7], "FIX_OLD_PROPOSAL");
+    const editEvidence = proposalEvidence(closer, "FIX_EDITED_REF", [7], "FIX_EDITED_PROPOSAL");
     suite.tests.push(
       define(
         "film-only-edit",
@@ -341,14 +366,18 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
           ),
           ...read(
             "propose_booking",
-            { hoCode: oldFilm.hoCode, tickets: 1, childTickets: 1, date: "tomorrow" },
+            {
+              intent: "initial",
+              hoCode: oldFilm.hoCode,
+              tickets: 1,
+              childTickets: 1,
+              childAges: [7],
+              date: "tomorrow",
+            },
             {
               ok: true,
-              data: {
-                proposal: oldProposal,
-                proposalToken: "FIX_OLD_PROPOSAL",
-                needs: "proposal_acceptance",
-              },
+              data: oldEvidence.data,
+              ui: oldEvidence.ui,
             },
             "film_edit_proposal",
           ),
@@ -358,60 +387,85 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
               ? "الاقتراح ريد فلاج غداً الساعة 6:45 مساءً بريميير في مول الإمارات لشخص بالغ وطفل، 108.50 درهم. هل تريدين حجزه مؤقتاً؟"
               : "The proposal is Red Flag tomorrow at 6:45 pm in Premier at Mall of the Emirates for one adult and one child, AED 108.50. Would you like a temporary hold?",
           ),
+          say(
+            "user",
+            ar
+              ? "جميل، أريد سبايدرمان بدلاً منه. غيّري الفيلم فقط واعرضي الاقتراح، من دون حجز مؤقت للمقاعد أو إتمام أي حجز."
+              : "That sounds good. I would like Spider-Man instead. Change only the film and show the suggestion; do not hold or book anything.",
+          ),
         ],
         [
-          "The customer changes only the film and requests a suggestion, not a hold. Enter the booking Procedure if not active, resolve the exact named Spider-Man identity and check its PG13 rating for the already known age7. Do not repeat the age or quantity question.",
-          "Carry the prior proposal's MOE/tomorrow/18:45/Premier/one-adult-one-child into propose_booking; a profile preference for KIDS does not erase that current proposal. The actual returned closest alternative is Premier18:30/AED108.50. Disclose the changed time briefly before any acceptance; never invent an exact18:45 match or silently change to23:00KIDS.",
+          "The customer changes only the film and requests a suggestion, not a hold. Enter the booking Procedure if not active, resolve the exact named Spider-Man identity, then use intent:edit with the exact current baseProposalRef FIX_OLD_REF and the changed film only. Do not start a fresh initial plan. The NEW returned admission must verify the current PG13/experience for the supplied age7; no redundant age tool is required. Do not repeat age or quantity questions.",
+          "The referenced draft preserves MOE/tomorrow/18:45/Premier/one-adult-one-child and childAge7. Do not reset choices to profile KIDS or change counts/ages. The actual returned closest alternative is Premier18:30/AED108.50 with new proposalRef and verified admission. Disclose its changed time briefly; never invent an exact18:45 match or silently change to23:00KIDS.",
           "Before the first response receive the complete successful new proposal. No hold, quick_book, offer, food, payment or repeated acceptance question is permitted because the user explicitly requests suggestion only and then stops.",
         ],
         ar
-          ? "قولي: جميل، أريد سبايدرمان بدلاً منه. غيري الفيلم فقط واعرضي الاقتراح، لا تحجزي أو تحجزي المقاعد مؤقتاً. ثم: شكراً، هذا كل شيء. لا تقولي الموعد أو التجربة لإصلاح نسيانهما."
-          : "Say 'That sounds good. I would like Spider-Man instead. Change only the film and show the suggestion; do not hold or book anything.' Then 'Thanks, that is all.' Do not repeat the old time or experience to rescue omitted choices.",
+          ? "طلب تغيير الفيلم مع عرض الاقتراح فقط ودون أي حجز هو آخر رسالة مستخدم في السجل. انتظري أول رد مولّد من المساعد، ثم قولي فقط: شكراً، هذا كل شيء، وتوقفي. لا تعيدي الطلب ولا تقدمي الموعد أو التجربة أو العمر أو العدد لإصلاح خطوة ناقصة."
+          : "The exact film-only, suggestion-only, no-hold request is the final user message in the history. Wait for the first generated agent response, then only say 'Thanks, that is all' and stop. Do not repeat the request or supply the old time, experience, age or quantities to rescue an omitted step.",
         {
-          get_session_context: mock(editContext.data),
+          get_session_context: mock({
+            ...editContext.data,
+            currentProposal: {
+              proposalRef: "FIX_OLD_REF",
+              status: "unheld",
+              choices: {
+                hoCode: oldFilm.hoCode,
+                date: tomorrow,
+                time: "18:45",
+                cinemaId: "0002",
+                experience: "Premier",
+                tickets: 1,
+                childTickets: 1,
+                childAges: [7],
+              },
+              quotedAt: clockLocal,
+              quoteExpiresAt: new Date(new Date(clockLocal).getTime() + 180000).toISOString(),
+            },
+          }),
           ...filmReads,
           get_age_rules: age,
-          propose_booking: rejectUnexpectedFilters(
-            [
-              ...mock(
-                { proposal: closer, proposalToken: "FIX_EDITED_PROPOSAL", needs: "proposal_acceptance" },
-                {
-                  hoCode: film.hoCode,
-                  tickets: 1,
-                  childTickets: 1,
-                  date: "tomorrow",
-                  cinemaId: "0002",
-                  time: "18:45",
-                  experience: "Premier",
-                },
-                { type: "booking_proposal", items: [closer] },
-              ),
-              ...titleAliases.flatMap((title) =>
-                mock(
-                  { proposal: closer, proposalToken: "FIX_EDITED_PROPOSAL", needs: "proposal_acceptance" },
+          propose_booking: guardProposalAges(
+            rejectUnexpectedFilters(
+              [
+                ...mock(
+                  editEvidence.data,
                   {
-                    title,
-                    tickets: 1,
-                    childTickets: 1,
-                    date: "tomorrow",
-                    cinemaId: "0002",
-                    time: "18:45",
-                    experience: "Premier",
+                    intent: "edit",
+                    baseProposalRef: "FIX_OLD_REF",
+                    hoCode: film.hoCode,
                   },
-                  { type: "booking_proposal", items: [closer] },
+                  editEvidence.ui,
                 ),
-              ),
-            ],
-            {
-              hoCode: [film.hoCode],
-              title: titleAliases,
-              cinemaId: ["0002"],
-              time: ["18:45"],
-              experience: ["Premier"],
-              sessionKey: [],
-              filmLanguage: [],
-              language: [],
-            },
+                ...titleAliases.flatMap((title) =>
+                  mock(
+                    editEvidence.data,
+                    {
+                      intent: "edit",
+                      baseProposalRef: "FIX_OLD_REF",
+                      title,
+                    },
+                    editEvidence.ui,
+                  ),
+                ),
+              ],
+              {
+                hoCode: [film.hoCode],
+                title: titleAliases,
+                intent: ["edit"],
+                baseProposalRef: ["FIX_OLD_REF"],
+                tickets: ["1"],
+                childTickets: ["1"],
+
+                date: ["tomorrow", tomorrow],
+                cinemaId: ["0002"],
+                time: ["18:45"],
+                experience: ["Premier"],
+                sessionKey: [],
+                filmLanguage: [],
+                language: [],
+              },
+            ),
+            [7],
           ),
         },
       ),
@@ -774,33 +828,54 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
           : "The offer saves AED24 and brings the total to AED96. Would you like me to apply it?",
       ),
     ];
+    const offerCompletion = rewrite(
+      offerBase.tool_mock_overrides.get_action_result!.filter((m) =>
+        m.parameter_conditions.some(
+          (c) =>
+            c.path === "actionId" &&
+            c.eval.type === "exact" &&
+            c.eval.expected_value === "fixture_offer_action",
+        ),
+      ),
+    ).map((entry) => {
+      const value = JSON.parse(entry.mock_result);
+      if (value.data?.action?.status === "succeeded")
+        value.data.result.snackSuggestions = {
+          status: "ready",
+          cinemaId: "0001",
+          checkedAtUtc: new Date(clockLocal).toISOString(),
+          usual: [
+            { itemId: "FIX_POPCORN", quantity: 1 },
+            { itemId: "FIX_COLA", quantity: 1 },
+          ],
+          items: [
+            {
+              itemId: "FIX_POPCORN",
+              name: "Salted popcorn",
+              nameEn: "Salted popcorn",
+              priceCents: 2000,
+              price: "AED 20.00",
+            },
+            { itemId: "FIX_COLA", name: "Cola", nameEn: "Cola", priceCents: 1000, price: "AED 10.00" },
+          ],
+          purchaseRequiresConsent: true,
+        };
+      return { ...entry, mock_result: JSON.stringify(value) };
+    });
     suite.tests.push(
       define(
         "offer-snacks",
         offerHistory,
         [
-          "The customer explicitly accepts applying this offer to continue the held booking. FIRST apply the exact returned offer to fixture_order, poll only its returned actionId until succeeded, THEN call suggest_fnb and ask once about the verified usual/menu items BEFORE ending the first response. A bare offer-applied acknowledgement is a failure even if a later user might request food.",
-          "suggest_fnb must follow actual successful offer evidence, not precede queued completion. No snacks were already chosen/declined. The user never requests snacks unless the assistant proactively offers them, and then declines; never call order_fnb/add_concessions, open payment or pay. Do not recap unchanged ticket details or repeat the snack question after refusal.",
+          "The customer explicitly accepts applying this offer to continue the held booking. FIRST apply the exact returned offer to fixture_order and poll only its returned actionId until succeeded. Use the successful result's ready snackSuggestions to ask once about actual usual salted popcorn/cola BEFORE ending the first response. No redundant suggest_fnb lookup is needed or permitted in this ready-result fixture. A bare offer-applied acknowledgement or generic snacks question without those verified items fails.",
+          "No snacks were already chosen/declined. Ready suggestions are not food consent. The user never supplies snacks to repair a missing question and declines when offered; never call order_fnb/add_concessions, open payment or pay. Do not claim exact historical quantities, recap unchanged ticket details, or repeat the snack question after refusal.",
         ],
         ar
           ? "قولي أولاً: نعم، طبقي العرض. إذا سأل المساعد عن الوجبات قولي: لا، بدون وجبات، سأتوقف هنا. إذا لم يسأل، قولي: سأتوقف هنا، شكراً. لا تطلبي الوجبات من نفسك ولا تقولي الفشار أو الكولا لإصلاح الخطوة الناقصة."
           : "First say 'Yes, apply that offer.' If asked about snacks, say 'No snacks, I will stop here.' If not asked, say 'I will stop here, thanks.' Never volunteer popcorn/cola or request the missing snack step.",
         {
           apply_offer: rewrite(offerBase.tool_mock_overrides.apply_offer!),
-          get_action_result: rewrite(
-            offerBase.tool_mock_overrides.get_action_result!.filter((m) =>
-              m.parameter_conditions.some(
-                (c) =>
-                  c.path === "actionId" &&
-                  c.eval.type === "exact" &&
-                  c.eval.expected_value === "fixture_offer_action",
-              ),
-            ),
-          ),
-          suggest_fnb: rejectUnexpectedFilters(offerBase.tool_mock_overrides.suggest_fnb!, {
-            cinemaId: ["0001"],
-            bookingId: [],
-          }),
+          get_action_result: offerCompletion,
         },
       ),
     );

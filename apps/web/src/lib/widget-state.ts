@@ -192,7 +192,7 @@ export async function verifyHoldNotice(
 /** Keep acknowledgements factual and exclude credentials and payment tokens. */
 export function actionContext(type: string, result: { ok: boolean; speech?: string; data?: Record<string, unknown>; action?: { status: string; type: string; result?: Record<string, unknown> }; error?: string }): string {
   const data = result.data ?? result.action?.result ?? {};
-  const safe = Object.fromEntries(Object.entries(data).filter(([key]) => ["bookingState", "summary", "proposal", "confirmationId", "seats", "totalCents", "expiresAtUtc", "needs", "combinedCheckout", "bookingReference"].includes(key)));
+  const safe = Object.fromEntries(Object.entries(data).filter(([key]) => ["bookingState", "summary", "proposal", "proposalRef", "admission", "confirmationId", "seats", "totalCents", "expiresAtUtc", "needs", "combinedCheckout", "bookingReference"].includes(key)));
   const scrub = (value: unknown): unknown => Array.isArray(value) ? value.map(scrub) : value && typeof value === "object"
     ? Object.fromEntries(Object.entries(value).filter(([key]) => !/(?:password|token|proof|secret|cvv|authorization)|^(?:pin|otp|email|phone|cardBin|cardNumber|first6)$/i.test(key)).map(([key, nested]) => [key, scrub(nested)]))
     : value;

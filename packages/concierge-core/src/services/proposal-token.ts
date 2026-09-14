@@ -15,17 +15,21 @@ export type BookingProposalProof = {
   seats: { row: string; number: string }[];
   tickets: { TicketTypeCode: string; Qty: number }[];
   totalCents: number;
+  /** Present only for the explicit server-owned draft flow. Legacy proofs have neither field. */
+  proposalRef?: string;
+  childAges?: number[];
 };
 export function signProposal(
   ctx: ToolCtx,
   value: Omit<BookingProposalProof, "conversationId" | "customerId" | "generation" | "expiresAt">,
+  expiresAt = Date.now() + 3 * 60_000,
 ) {
   const proof: BookingProposalProof = {
     ...value,
     conversationId: ctx.conversation.id,
     customerId: ctx.conversation.customerId ?? null,
     generation: Number(ctx.conversation.metadata?.widgetAuthGeneration ?? 0),
-    expiresAt: Date.now() + 3 * 60_000,
+    expiresAt,
   };
   const body = Buffer.from(JSON.stringify(proof)).toString("base64url");
   return `${body}.${createHmac("sha256", ctx.cfg.widgetJwtSecret).update(body).digest("base64url")}`;
@@ -51,7 +55,9 @@ export async function verifyProposal(ctx: ToolCtx, token: string): Promise<Booki
     !Number.isFinite(value.expiresAt) ||
     value.expiresAt <= Date.now() ||
     value.generation !== Number(ctx.conversation.metadata?.widgetAuthGeneration ?? 0) ||
-    (value.customerId && value.customerId !== ctx.conversation.customerId)
+    (value.proposalRef
+      ? value.customerId !== (ctx.conversation.customerId ?? null)
+      : value.customerId && value.customerId !== ctx.conversation.customerId)
   )
     throw reject();
   if (

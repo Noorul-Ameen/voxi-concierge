@@ -1,3 +1,4 @@
+import { guardProposalAges, proposalEvidence } from "./proposal-fixtures.js";
 import { type SimulationMock, type SimulationSuite, rejectUnexpectedFilters } from "./simulations.js";
 import { buildUiAcknowledgementSuite } from "./ui-acknowledgement-simulations.js";
 
@@ -43,18 +44,21 @@ export function buildProposalEditSuite(
   };
   const ok = (
     data: unknown,
-    conditions: Record<string, string | number> = {},
+    conditions: Record<string, string | number | number[]> = {},
     ui?: unknown,
   ): SimulationMock => ({
     parameter_conditions: Object.entries(conditions).map(([path, value]) => ({
       path,
-      eval: { type: "exact", expected_value: String(value) },
+      eval: Array.isArray(value)
+        ? { type: "regex" as const, pattern: `^\\[\\s*${value.join("\\s*,\\s*")}\\s*\\]$` }
+        : { type: "exact" as const, expected_value: String(value) },
     })),
     is_error: false,
     mock_result: JSON.stringify({ ok: true, data, ...(ui ? { ui } : {}) }),
   });
   const first = {
     ...initial,
+    rating: "PG13",
     adultTickets: initial.tickets,
     ticketQuantity: initial.tickets + initial.childTickets,
     selectedSeats: initial.seats,
@@ -64,6 +68,7 @@ export function buildProposalEditSuite(
   };
   const next = {
     ...revised,
+    rating: "PG13",
     adultTickets: revised.tickets,
     ticketQuantity: revised.tickets + revised.childTickets,
     selectedSeats: revised.seats,
@@ -73,6 +78,8 @@ export function buildProposalEditSuite(
     preferredExperience: "KIDS",
     held: false,
   };
+  const firstEvidence = proposalEvidence(first, "fixture_initial_ref", [7], "fixture_initial_proposal");
+  const nextEvidence = proposalEvidence(next, "fixture_edited_ref", [7], "fixture_edited_proposal");
   return {
     format_version: 1,
     fixture,
@@ -93,15 +100,15 @@ export function buildProposalEditSuite(
       },
       chat_history: [],
       success_conditions: [
-        "Resolve the guest's named Spider-Man film using a supported title lookup (get_film or search_films), then obtain its actual PG13 rule for age7 before stating suitability. A general get_recommendations call is not a named-film lookup: title and query are undeclared for that tool. Before the FIRST request to accept/book/hold, call propose_booking and receive the complete successful unheld proposal (film, cinema, showtime, experience, one adult plus one child, seats, total and proposalToken). A recommendation or age result alone is insufficient. Do not invent a usual cinema, price, seats or token.",
+        "Resolve the guest's named Spider-Man film using a supported title lookup (get_film or search_films), then use intent:initial and supplied childAges:[7]; the successful current proposal's verified PG13/experience admission with child allowed is authoritative before stating suitability, without a duplicate age lookup. A general get_recommendations call is not a named-film lookup: title and query are undeclared for that tool. Before the FIRST request to accept/book/hold, call propose_booking and receive the complete successful unheld proposal (film, cinema, showtime, experience, one adult plus one child, seats, total and proposalToken). A recommendation or age result alone is insufficient. Do not invent a usual cinema, price, seats or token.",
         "The first KIDS23:00 option is outside the returned usual18:00–20:00 window. Never call it the usual time or conceal the late alternative.",
-        "After the guest requests around19:00, propose the returned Premier18:30 show. Explain the changed experience/time and exact new total AED108.50 briefly, without repeating unchanged film/cinema/ticket count or calculating a price difference. Keep both proposals unheld until accepted.",
+        "After the guest explicitly requests Premier around19:00, use intent:edit with the exact current baseProposalRef and the requested time and experience changes only; receive new verified admission and propose the returned Premier18:30 show. Explain the changed experience/time and exact new total AED108.50 briefly, without repeating unchanged film/cinema/ticket count or calculating a price difference. Keep both proposals unheld until accepted.",
         "The guest declines to reserve after the edit. No quick_book, hold, food, offer application, payment or new booking is permitted; no repeated next-step question after refusal.",
       ],
       simulation_scenario:
         language === "ar"
-          ? "تحدثي بالعربية فقط. قولي بالنص: اقترحي خطة لفيلم سبايدرمان غداً لي ولابني عمره سبع سنوات في السينما التي أزورها عادةً. لا تقولي السينما العادية ولا تطلبي تجربة ستاندرد. بعد العرض: أفضل حوالي السابعة مساءً. بعد الاقتراح المعدل: شكراً، سأقرر لاحقاً، لا تحجزي شيئاً. لا تقبلي أي اقتراح."
-          : "Say 'Suggest a Spider-Man plan tomorrow for me and my seven-year-old son at my usual cinema.' After the first proposal say 'I prefer around seven in the evening.' After the revised proposal say 'Thanks, I will decide later; do not hold anything.' Never accept either proposal.",
+          ? "تحدثي بالعربية فقط. قولي بالنص: اقترحي خطة لفيلم سبايدرمان غداً لي ولابني عمره سبع سنوات في السينما التي أزورها عادةً. لا تقولي السينما العادية ولا تطلبي تجربة ستاندرد. بعد العرض: أريد تجربة بريميير حوالي السابعة مساءً. بعد الاقتراح المعدل: شكراً، سأقرر لاحقاً، لا تحجزي شيئاً. لا تقبلي أي اقتراح."
+          : "Say 'Suggest a Spider-Man plan tomorrow for me and my seven-year-old son at my usual cinema.' After the first proposal say 'Change to Premier around seven in the evening.' After the revised proposal say 'Thanks, I will decide later; do not hold anything.' Never accept either proposal.",
       simulation_max_turns: 5,
       tool_mock_config: { mocking_strategy: "all", fallback_strategy: "raise_error", mocked_tool_ids: [] },
       tool_mock_overrides: {
@@ -202,66 +209,100 @@ export function buildProposalEditSuite(
             language: [],
           },
         ),
-        propose_booking: rejectUnexpectedFilters(
-          [
-            {
-              parameter_conditions: [
-                { path: "experience", eval: { type: "exact", expected_value: "Standard" } },
-              ],
-              is_error: true,
-              mock_result: JSON.stringify({
-                ok: false,
-                error: {
-                  code: "NO_MATCH",
-                  message:
-                    "No Standard show matches this request; the supplied experience cannot silently return KIDS or Premier.",
-                  retryable: false,
-                },
-              }),
-            },
-            ok(
-              { proposal: next, proposalToken: "fixture_edited_proposal", needs: "proposal_acceptance" },
-              { time: "19:00", tickets: 1, childTickets: 1 },
-              { type: "booking_proposal", items: [next] },
-            ),
-            ok(
-              { proposal: next, proposalToken: "fixture_edited_proposal", needs: "proposal_acceptance" },
-              { sessionKey: revised.sessionKey, tickets: 1, childTickets: 1 },
-              { type: "booking_proposal", items: [next] },
-            ),
-            ok(
-              { proposal: next, proposalToken: "fixture_edited_proposal", needs: "proposal_acceptance" },
-              { timeFrom: "18:00", timeTo: "20:00", tickets: 1, childTickets: 1 },
-              { type: "booking_proposal", items: [next] },
-            ),
-            ok(
-              { proposal: first, proposalToken: "fixture_initial_proposal", needs: "proposal_acceptance" },
-              { sessionKey: initial.sessionKey, tickets: 1, childTickets: 1 },
-              { type: "booking_proposal", items: [first] },
-            ),
-            ...(
-              [...titleAliases.map((title) => ({ title })), { hoCode: initial.hoCode }] as Record<
-                string,
-                string
-              >[]
-            ).map((selected) =>
+        propose_booking: guardProposalAges(
+          rejectUnexpectedFilters(
+            [
+              {
+                parameter_conditions: [
+                  { path: "experience", eval: { type: "exact", expected_value: "Standard" } },
+                ],
+                is_error: true,
+                mock_result: JSON.stringify({
+                  ok: false,
+                  error: {
+                    code: "NO_MATCH",
+                    message:
+                      "No Standard show matches this request; the supplied experience cannot silently return KIDS or Premier.",
+                    retryable: false,
+                  },
+                }),
+              },
               ok(
-                { proposal: first, proposalToken: "fixture_initial_proposal", needs: "proposal_acceptance" },
-                { ...selected, tickets: 1, childTickets: 1 },
-                { type: "booking_proposal", items: [first] },
+                nextEvidence.data,
+                {
+                  intent: "edit",
+                  baseProposalRef: "fixture_initial_ref",
+                  time: "19:00",
+                  experience: "Premier",
+                },
+                nextEvidence.ui,
               ),
-            ),
-          ],
-          {
-            title: titleAliases,
-            query: [],
-            hoCode: [initial.hoCode],
-            cinemaId: [initial.cinemaId],
-            cinemaName: [initial.cinemaName, "MOE"],
-            sessionKey: [initial.sessionKey, revised.sessionKey],
-            filmLanguage: ["English"],
-            language: [],
-          },
+              ok(
+                nextEvidence.data,
+                {
+                  intent: "edit",
+                  baseProposalRef: "fixture_initial_ref",
+                  sessionKey: revised.sessionKey,
+                  experience: "Premier",
+                },
+                nextEvidence.ui,
+              ),
+              ok(
+                nextEvidence.data,
+                {
+                  intent: "edit",
+                  baseProposalRef: "fixture_initial_ref",
+                  timeFrom: "18:00",
+                  timeTo: "20:00",
+                  experience: "Premier",
+                },
+                nextEvidence.ui,
+              ),
+              ok(
+                firstEvidence.data,
+                {
+                  intent: "initial",
+                  sessionKey: initial.sessionKey,
+                  tickets: 1,
+                  childTickets: 1,
+                  childAges: [7],
+                },
+                firstEvidence.ui,
+              ),
+              ...(
+                [...titleAliases.map((title) => ({ title })), { hoCode: initial.hoCode }] as Record<
+                  string,
+                  string
+                >[]
+              ).map((selected) =>
+                ok(
+                  firstEvidence.data,
+                  { intent: "initial", ...selected, tickets: 1, childTickets: 1, childAges: [7] },
+                  firstEvidence.ui,
+                ),
+              ),
+            ],
+            {
+              title: titleAliases,
+              query: [],
+              hoCode: [initial.hoCode],
+              cinemaId: [initial.cinemaId],
+              cinemaName: [initial.cinemaName, "MOE"],
+              sessionKey: [initial.sessionKey, revised.sessionKey],
+              intent: ["initial", "edit"],
+              baseProposalRef: ["fixture_initial_ref"],
+              tickets: ["1"],
+              childTickets: ["1"],
+              date: ["tomorrow", initial.date],
+              time: ["19:00"],
+              timeFrom: ["18:00"],
+              timeTo: ["20:00"],
+              experience: ["KIDS", "Premier"],
+              filmLanguage: ["English"],
+              language: [],
+            },
+          ),
+          [7],
         ),
       },
     })),

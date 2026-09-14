@@ -44,6 +44,71 @@ describe("eight approved journeys", () => {
       ok: false,
     });
   });
+  it("keeps the six legacy proposal controls explicit without inventing child attendance or consent", () => {
+    const suite = buildJourneySimulationSuite();
+    const resolve = (id: string, args: Record<string, unknown>) => {
+      const mocks = suite.tests.find((t) => t.id === id)!.tool_mock_overrides.propose_booking!;
+      const match = mocks.find((m) =>
+        m.parameter_conditions.every(({ path, eval: rule }) => {
+          if (args[path] === undefined) return false;
+          const value = Array.isArray(args[path]) ? JSON.stringify(args[path]) : String(args[path]);
+          return rule.type === "exact" ? value === rule.expected_value : new RegExp(rule.pattern).test(value);
+        }),
+      );
+      return match ? JSON.parse(match.mock_result) : { ok: false };
+    };
+    for (const lang of ["en", "ar"]) {
+      const family = resolve(`02-positive-${lang}`, {
+        intent: "initial",
+        tickets: 1,
+        childTickets: 1,
+        childAges: [7],
+      });
+      expect(family.data).toMatchObject({
+        proposalRef: "fixture_family_ref",
+        proposalToken: "fixture_proposal",
+        admission: { verified: true, childAges: [7], children: [{ allowed: true }] },
+        proposal: { adultTickets: 1, childTickets: 1, ticketQuantity: 2 },
+      });
+      expect(resolve(`02-positive-${lang}`, { intent: "initial", tickets: 1, childTickets: 1 }).ok).toBe(
+        false,
+      );
+      expect(
+        resolve(`02-positive-${lang}`, { intent: "initial", tickets: 1, childTickets: 1, childAges: [8] }).ok,
+      ).toBe(false);
+      const adult = resolve(`02-positive-${lang}-accept`, { intent: "initial", tickets: 2 });
+      expect(adult.data).toMatchObject({
+        proposalRef: "fixture_adult_ref",
+        proposalToken: "fixture_proposal",
+        admission: { verified: true, childAges: [], children: [] },
+      });
+      expect(
+        resolve(`02-positive-${lang}-accept`, { intent: "initial", tickets: 2, childAges: [7] }).ok,
+      ).toBe(false);
+      const unknown = resolve(`02-negative-${lang}`, { intent: "initial" });
+      expect(unknown.data).toMatchObject({
+        needs: "tickets",
+        admission: { childAges: [], children: [] },
+        proposal: { adultTickets: null, ticketQuantity: null, selectedSeats: [] },
+      });
+      expect(unknown.data).not.toHaveProperty("proposalToken");
+      for (const result of [family, adult, unknown]) {
+        expect(result.ui.items).toEqual([result.data.proposal]);
+        expect(result.ui.items[0]).not.toHaveProperty("tickets");
+        expect(result.ui.items[0]).not.toHaveProperty("seats");
+      }
+      expect(unknown.ui.actions.some((a: any) => a.value === "proposal:accept")).toBe(false);
+      for (const args of [
+        { intent: "initial", childAges: [7] },
+        { intent: "initial", tickets: 2 },
+        { intent: "edit", baseProposalRef: "invented" },
+      ])
+        expect(resolve(`02-negative-${lang}`, args).ok).toBe(false);
+      expect(
+        suite.tests.find((t) => t.id === `02-negative-${lang}-age`)!.tool_mock_overrides.propose_booking,
+      ).toBeUndefined();
+    }
+  });
   it("matches asynchronous offer edits, valid title lookups and consistent switch amounts", () => {
     const tests = buildJourneySimulationSuite().tests;
     for (const language of ["en", "ar"]) {

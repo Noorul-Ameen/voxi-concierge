@@ -1684,6 +1684,30 @@
             "type": "string",
             "description": "Book this exact showtime (from a showtimes/alternatives card) — skips film/cinema/time resolution"
           },
+          "intent": {
+            "type": "string",
+            "enum": [
+              "initial",
+              "edit"
+            ],
+            "description": "initial starts a new unheld plan; edit changes the current verified proposal. For edit, copy its exact baseProposalRef and supply only requested changes; omitted choices are preserved. Legacy callers may omit intent only for an initial plan."
+          },
+          "baseProposalRef": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "Exact proposalRef returned by the current proposal, required only for intent edit. Never invent a reference or use an old card's reference."
+          },
+          "childAges": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 17
+            },
+            "maxItems": 10,
+            "description": "Guest-supplied ages of the children attending, one per child ticket. Copy already supplied ages; never infer from history. An anchored edit preserves ages only for the unchanged party. Required before accepting a new explicit family proposal."
+          },
           "seats": {
             "type": "array",
             "items": {

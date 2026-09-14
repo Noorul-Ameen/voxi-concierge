@@ -783,7 +783,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     [conversation, humanMode, session, mode, lang, push],
   );
 
-  const ask = async (text: string) => {
+  const ask = async (text: string, proposalRef?: string) => {
     if (!text.trim()) return;
     if (humanMode && session) { say(text); return; }
     const epoch = authEpochRef.current;
@@ -791,13 +791,20 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     // A card click is a new explicit request, so restore the transport before sending it.
     for (let i = 0; i < 66 && statusRef.current !== "connected" && epoch === authEpochRef.current; i++) await new Promise((resolve) => setTimeout(resolve, 300));
     if (epoch !== authEpochRef.current) return;
-    if (statusRef.current === "connected") say(text);
+    if (statusRef.current === "connected") {
+      if (proposalRef) acknowledge(JSON.stringify({ proposalEdit: { intent: "edit", baseProposalRef: proposalRef }, applied: false }));
+      say(text);
+    }
   };
 
   const act: CardActions = useMemo(
     () => ({
-      say: (text) => { if (statusRef.current === "connected" || humanMode) say(text); else void ask(text); },
+      say: (text, proposalRef) => { if (statusRef.current === "connected" || humanMode) {
+        if (proposalRef && !humanMode) acknowledge(JSON.stringify({ proposalEdit: { intent: "edit", baseProposalRef: proposalRef }, applied: false }));
+        say(text);
+      } else void ask(text, proposalRef); },
       command: async (cmd) => {
+        if (cmd.type === "proposal.preview") cmd = { ...cmd, input: { intent: "initial", ...(cmd.input as Record<string, unknown>) } };
         activityRef.current.lastUserAt = Date.now();
         const current = sessionRef.current;
         if (!current) return { ok: false, error: "no session" };

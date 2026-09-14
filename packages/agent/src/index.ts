@@ -161,7 +161,7 @@ const AGENT_TOOL_USAGE: Partial<Record<ToolName, string>> = {
   investigate_payment:
     "For an initial missing-booking/debit report, omit unknown optional IDs and inspect authenticated context. userSessionId is an actual returned order ID. Copy transactionReference and cardLast4 only from genuine guest-provided values. When a suggested booking is rejected, retain that as handover context and obtain the actual missing transaction details before another investigation. A known paid booking with a QR rendering error needs receipt assistance.",
   propose_booking:
-    "Carry known composition on every proposal/edit: tickets is ADULT count, childTickets is CHILD count. One parent with one child means tickets:1, childTickets:1, not tickets:2 or totalTickets. Before a child's proposal use get_age_rules with the actual returned rating and known childAge, including PG. Use only declared parameters and actual guest/returned film titles or IDs. A failed proposal supplies no price, seats or acceptance token: explain the unresolved preview; never invent a replacement film/price or ask to hold an unreturned proposal.",
+    "Use intent initial for a new plan; pass known adult/child counts and only guest-supplied childAges. Use intent edit with the current exact baseProposalRef and only requested changes; the server preserves omitted draft choices and rechecks current film/experience admission. Copy data.proposalRef or currentProposal.proposalRef, never construct one. A child's proposal may be accepted only with admission.verified:true, every child allowed:true and a current proposalToken. needs:child_age asks only missing ages; needs:child_tickets asks correct fare/count composition, not a film-admission refusal; needs:tickets asks quantity; proposal_refresh requires refreshing current context for a verified reference, never silently restarting an edit as initial. No token means no acceptance/hold. A failed proposal supplies no verified replacement price or seats.",
   prepare_payment:
     "This can open payment options. A booking request, saved-card mention, offer enquiry or current total is not a request to open payment. Call for an explicit review request or a requested balance-switch preview. A new balance_split_confirmation is an unanswered amount choice: first tell the guest the exact returned balance amount and card remainder, then wait for acceptance of those amounts. An earlier generic yes to using credit or opening review is preview consent only. After amount acceptance execute its exact redemptionInput; completed paymentReviewOpened:true with payment UI proves the review is open, so do not prepare again. Preserve VOX versus SHARE.",
   redeem_points:
@@ -236,20 +236,25 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
           "Optional actual bank name explicitly named by the guest or a verified card result. Omit for 'my saved card'; saved_card is not a bank name.",
       } as Prop;
     if (name === "propose_booking") {
+      properties.intent = {
+        ...properties.intent,
+        description:
+          "Required: initial for a new plan, edit for a requested change to the current verified proposal.",
+      } as Prop;
       properties.experience = {
         ...properties.experience,
         description:
-          "Optional experience explicitly requested/selected by the guest or supplied by a current verified proposal. On a film-only edit, preserve that proposal's experience unless the guest changes it. For an initial plan with no selected experience, omit it and let the backend infer preferences.",
+          "Optional experience explicitly requested/selected by the guest. For an initial plan with no selected experience, omit it for backend inference. On an edit, omit unchanged experience; the referenced proposal preserves it.",
       } as Prop;
       properties.tickets = {
         ...properties.tickets,
         description:
-          "Adult tickets only. Preserve a known count on every edit: one parent and one child is tickets:1 plus childTickets:1. Omit only if genuinely unknown.",
+          "Adult tickets only. On initial plans, one parent and one child is tickets:1 plus childTickets:1. On edits, omit unchanged counts; the referenced proposal preserves them.",
       } as Prop;
       properties.childTickets = {
         ...properties.childTickets,
         description:
-          "Child tickets, separate from adult tickets. Preserve the guest's known children on every proposal/edit; one parent with one child means 1 here and tickets:1.",
+          "Child tickets, separate from adult tickets. On initial plans, one parent with one child means 1 here and tickets:1. On edits, omit unchanged counts; the referenced proposal preserves them.",
       } as Prop;
     }
     if (!FILM_FILTER_TOOLS.has(name) && !Object.hasOwn(obj.properties, "language")) {
@@ -285,7 +290,8 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
         url: `${opts.conciergeUrl.replace(/\/$/, "")}/tools/${name}`,
         method: "POST" as const,
         content_type: "application/json" as const,
-        request_headers: headers,
+        request_headers:
+          name === "propose_booking" ? { ...headers, "x-voxi-proposal-context": "explicit" } : headers,
         request_body_schema: {
           type: "object" as const,
           properties,
@@ -293,6 +299,7 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
             "conversationId",
             ...(name === "quick_book" ? ["proposalToken"] : (obj.required ?? [])),
             ...(name === "redeem_points" ? ["balanceType"] : []),
+            ...(name === "propose_booking" && !obj.required?.includes("intent") ? ["intent"] : []),
           ],
         },
       },

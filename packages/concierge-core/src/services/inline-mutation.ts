@@ -5,6 +5,7 @@ import { and, eq, sql } from "drizzle-orm";
 import type { ActionRow } from "../actions/ledger.js";
 import type { ToolResult } from "../tools/types.js";
 import { assertNoPendingBasketEdits, invalidatePaymentConfirmations } from "./checkout.js";
+import { assertProposalAcceptance, currentProposal } from "./proposal-draft.js";
 import { resolveLinkedConversation } from "./relink.js";
 
 export async function beginInlineBasketMutation(
@@ -16,6 +17,8 @@ export async function beginInlineBasketMutation(
     payload: Record<string, unknown>;
     toolCallId: string;
     authGeneration: number;
+    proposalRef?: string;
+    proposalToken?: boolean;
   },
 ) {
   try {
@@ -27,6 +30,7 @@ export async function beginInlineBasketMutation(
           "Your session changed. Please check the current booking before continuing.",
         );
       const active = conversation.metadata?.activeOrder;
+      if (input.proposalToken) assertProposalAcceptance(conversation, input.proposalRef);
       const resource =
         typeof active === "string" && active ? `order:${active}` : `conversation:${conversation.id}`;
       await assertNoPendingBasketEdits(tx, resource, undefined, conversation.id);
@@ -40,7 +44,11 @@ export async function beginInlineBasketMutation(
           // Remains valid when the tool creates/replaces an order partway through its provider calls.
           resourceKey: `conversation:${conversation.id}`,
           idempotencyKey: input.idempotencyKey,
-          input: { ...input.payload, _widgetAuthGeneration: input.authGeneration },
+          input: {
+            ...input.payload,
+            _widgetAuthGeneration: input.authGeneration,
+            _proposalRef: input.proposalRef,
+          },
           status: "running",
           attempts: 1,
           maxAttempts: 1,
@@ -63,26 +71,47 @@ export async function beginInlineBasketMutation(
   }
 }
 
-export async function finishInlineBasketMutation(db: Db, action: ActionRow, result: ToolResult) {
-  const rows = await db
-    .update(S.actions)
-    .set({
-      status: result.ok ? "succeeded" : "failed",
-      result: { toolResult: result },
-      error: result.error ? { ...result.error, retryable: result.error.retryable ?? false } : null,
-      finishedAt: new Date(),
-      leaseUntil: null,
-      lockedBy: null,
-    })
-    .where(
-      and(
-        eq(S.actions.id, action.id),
-        eq(S.actions.status, "running"),
-        eq(S.actions.lockedBy, action.lockedBy!),
-        eq(S.actions.attempts, action.attempts),
-        sql`${S.actions.leaseUntil} > now()`,
-      ),
-    )
-    .returning({ id: S.actions.id });
-  return rows.length > 0;
+export async function finishInlineBasketMutation(
+  db: Db,
+  action: ActionRow,
+  result: ToolResult,
+  proposalReplay?: { orderId: string; snapshot: string },
+) {
+  return db.transaction(async (tx) => {
+    const conversation = await resolveLinkedConversation(tx, action.conversationId, true);
+    const rows = await tx
+      .update(S.actions)
+      .set({
+        status: result.ok ? "succeeded" : "failed",
+        result: { toolResult: result, ...(proposalReplay ? { proposalReplay } : {}) },
+        error: result.error ? { ...result.error, retryable: result.error.retryable ?? false } : null,
+        finishedAt: new Date(),
+        leaseUntil: null,
+        lockedBy: null,
+      })
+      .where(
+        and(
+          eq(S.actions.id, action.id),
+          eq(S.actions.status, "running"),
+          eq(S.actions.lockedBy, action.lockedBy!),
+          eq(S.actions.attempts, action.attempts),
+          sql`${S.actions.leaseUntil} > now()`,
+        ),
+      )
+      .returning({ id: S.actions.id });
+    if (rows.length && result.ok && action.input._proposalRef && conversation) {
+      const draft = currentProposal(conversation);
+      if (draft?.ref === action.input._proposalRef)
+        await tx
+          .update(S.conversations)
+          .set({
+            metadata: {
+              ...conversation.metadata,
+              bookingProposalDraft: { ...draft, acceptedActionId: action.id },
+            },
+          })
+          .where(eq(S.conversations.id, conversation.id));
+    }
+    return rows.length > 0;
+  });
 }

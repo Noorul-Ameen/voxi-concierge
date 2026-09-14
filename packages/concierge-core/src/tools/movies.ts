@@ -8,6 +8,7 @@ import {
   similarity,
   spokenDateRangeEnd,
 } from "@voxi/domain";
+import { evaluateAdmission } from "../services/admission.js";
 import type { Film, Session } from "../services/catalog.js";
 import { fmtDate, fmtDateTime, fmtMinutes, fmtTime, joinList, t } from "../services/format.js";
 import { type ToolCtx, type ToolHandlers, err, ok } from "./types.js";
@@ -604,36 +605,20 @@ export const movieTools: Pick<
       Private: "The person booking a Private cinema must be 21 or over.",
     };
     let verdict: string | undefined;
-    const rule = classification(input.rating);
-    const filmAllowed =
-      input.childAge != null && rule.minimumAge != null ? input.childAge >= rule.minimumAge : null;
-    const restrictedExperience = input.experience === "GOLD" || input.experience === "THEATRE";
-    const experienceBlocked = restrictedExperience && input.childAge != null && input.childAge < 5;
-    const allowed = experienceBlocked ? false : filmAllowed;
-    const minimumAge =
-      rule.minimumAge != null
-        ? Math.max(rule.minimumAge, restrictedExperience ? 5 : 0)
-        : experienceBlocked
-          ? 5
-          : null;
-    const experienceAdmission = restrictedExperience
-      ? {
-          experience: input.experience,
-          minimumAge: 5,
-          meetsMinimumAge: input.childAge == null ? null : input.childAge >= 5,
-          parentOrGuardianRequired:
-            input.childAge == null ? null : input.childAge >= 5 && input.childAge <= 18,
-          accompanimentThroughAge: 18,
-          subjectToFilmRating: true,
-          source:
-            input.experience === "THEATRE"
-              ? "https://uae.voxcinemas.com/ways-to-watch/theatre"
-              : "https://uae.voxcinemas.com/faq",
-        }
-      : undefined;
+    const {
+      rule,
+      checkedChildAge,
+      filmAllowed,
+      restrictedExperience,
+      experienceBlocked,
+      allowed,
+      minimumAge,
+      experienceAdmission,
+      filmAccompanimentRequired,
+    } = evaluateAdmission(input.rating, input.experience, input.childAge);
     if (input.childAge != null && input.rating) {
       const min = rule.minimumAge;
-      const pg = rule.guidanceAge != null && input.childAge <= rule.guidanceAge;
+      const pg = filmAccompanimentRequired === true;
       verdict =
         filmAllowed == null
           ? t(
@@ -696,6 +681,7 @@ export const movieTools: Pick<
         filmAllowed,
         minimumAge,
         filmMinimumAge: rule.minimumAge,
+        checkedChildAge,
         experienceAdmission,
         classificationKnown: rule.known,
         provisional: rule.provisional,

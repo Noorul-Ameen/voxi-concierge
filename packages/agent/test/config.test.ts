@@ -26,8 +26,8 @@ describe("agent configuration contracts", () => {
   it("replaces only the native proposal experience guidance while preserving the runtime contract", () => {
     const tools = buildWebhookTools(opts);
     const proposal = tools.find((tool) => tool.name === "propose_booking")!.api_schema.request_body_schema;
-    expect(proposal.properties.experience.description).toContain("current verified proposal");
-    expect(proposal.properties.experience.description).toContain("On a film-only edit, preserve");
+    expect(proposal.properties.experience.description).toContain("referenced proposal preserves it");
+    expect(proposal.properties.experience.description).toContain("On an edit, omit unchanged");
     expect(proposal.properties.experience.description).toContain("For an initial plan");
     expect(proposal.properties.experience.description).not.toContain("Default Standard");
     expect(proposal.properties.experience.description).not.toContain("Only when the guest asked");
@@ -36,6 +36,23 @@ describe("agent configuration contracts", () => {
     expect(TOOL_REGISTRY.propose_booking.input.shape.experience.safeParse("Premier").success).toBe(true);
     const sessions = tools.find((tool) => tool.name === "search_sessions")!.api_schema.request_body_schema;
     expect(sessions.properties.experience.description).not.toContain("On a film-only edit, preserve");
+  });
+  it("requires explicit proposal intent only on the native capability route", () => {
+    const tools = buildWebhookTools(opts);
+    const proposal = tools.find((tool) => tool.name === "propose_booking")!;
+    const schema = proposal.api_schema.request_body_schema;
+    expect(schema.required).toContain("intent");
+    expect(schema.properties.intent).toMatchObject({ type: "string", enum: ["initial", "edit"] });
+    expect(schema.properties.baseProposalRef).toMatchObject({ type: "string" });
+    expect(schema.properties.childAges).toMatchObject({ type: "array", items: { type: "integer" } });
+    expect(proposal.api_schema.request_headers).toHaveProperty("x-voxi-proposal-context", "explicit");
+    for (const other of tools.filter((tool) => tool.name !== "propose_booking"))
+      expect(other.api_schema.request_headers).not.toHaveProperty("x-voxi-proposal-context");
+    expect(TOOL_REGISTRY.propose_booking.input.safeParse({ tickets: 2, date: "tomorrow" }).success).toBe(
+      true,
+    );
+    expect(schema.required).not.toContain("baseProposalRef");
+    expect(schema.required).not.toContain("childAges");
   });
   it("requires an explicit balance type for agent redemptions while preserving the legacy HTTP shape", () => {
     const tool = buildWebhookTools(opts).find((tool) => tool.name === "redeem_points")!;

@@ -108,14 +108,18 @@ export async function appendEvent(
   payload: Record<string, unknown>,
   actor: "user" | "agent" | "system" | "human_agent" = "system",
   expectedAuthGeneration?: number,
-): Promise<{ id: string; seq: number }> {
+): Promise<{ id: string; seq: number; suppressed: boolean }> {
   // seq allocated atomically per conversation
   const row = await db.transaction(async (tx) => {
     const current = await resolveLinkedConversation(tx, conversationId, true);
     const liveId = current?.id ?? conversationId;
+    const ui = payload.ui as { meta?: { proposalRef?: unknown } } | undefined;
+    const proposalRef = ui?.meta?.proposalRef;
+    const currentRef = (current?.metadata?.bookingProposalDraft as { ref?: string } | undefined)?.ref;
     const stale =
-      expectedAuthGeneration != null &&
-      expectedAuthGeneration !== Number(current?.metadata?.widgetAuthGeneration ?? 0);
+      (typeof proposalRef === "string" && proposalRef !== currentRef) ||
+      (expectedAuthGeneration != null &&
+        expectedAuthGeneration !== Number(current?.metadata?.widgetAuthGeneration ?? 0));
     const eventType = stale ? "audit.stale_ui" : type;
     const eventPayload = stale
       ? { ...payload, originalType: type, widgetAuthGeneration: expectedAuthGeneration }
@@ -136,7 +140,7 @@ export async function appendEvent(
       actor,
       payload: eventPayload,
     });
-    return { id, seq: Number(next), conversationId: liveId, type: eventType };
+    return { id, seq: Number(next), conversationId: liveId, type: eventType, suppressed: stale };
   });
   if (bus) {
     const ev = toWidgetEvent(row.type, row.seq, payload, row.id);

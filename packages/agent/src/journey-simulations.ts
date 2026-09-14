@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { CLIENT_TOOLS, TOOL_REGISTRY } from "@voxi/contracts";
+import { guardProposalAges, proposalEvidence } from "./proposal-fixtures.js";
 import { type SimulationMock, type SimulationSuite, rejectUnexpectedFilters } from "./simulations.js";
 
 const receiptFailureGuidance = JSON.parse(
@@ -20,13 +21,15 @@ const deny: SimulationMock = {
 };
 const mock = (
   data: unknown,
-  conditions: Record<string, string | boolean | number> = {},
+  conditions: Record<string, string | boolean | number | number[]> = {},
   ui?: unknown,
 ): SimulationMock[] => [
   {
     parameter_conditions: Object.entries(conditions).map(([path, value]) => ({
       path,
-      eval: { type: "exact" as const, expected_value: String(value) },
+      eval: Array.isArray(value)
+        ? { type: "regex" as const, pattern: `^\\[\\s*${value.join("\\s*,\\s*")}\\s*\\]$` }
+        : { type: "exact" as const, expected_value: String(value) },
     })),
     mock_result: JSON.stringify({ ok: true, data, ...(ui ? { ui } : {}) }),
     is_error: false,
@@ -77,6 +80,20 @@ const proposal = {
   held: false,
   reason: "Usual cinema, preferred Premier experience and middle seats, close to the usual evening time",
 };
+const familyEvidence = proposalEvidence(
+  { ...proposal, tickets: 1, childTickets: 1 },
+  "fixture_family_ref",
+  [7],
+  "fixture_proposal",
+);
+const adultEvidence = proposalEvidence(proposal, "fixture_adult_ref", [], "fixture_proposal");
+const unknownEvidence = proposalEvidence(
+  { ...show, held: false, seatingPreference: "middle", reason: proposal.reason },
+  "fixture_quantity_ref",
+  [],
+  undefined,
+  "tickets",
+);
 const offer = {
   offerId: "FIX_OFFER",
   eligible: true,
@@ -167,7 +184,7 @@ const journeys: Journey[] = [
       "No quick_book, hold, payment, or invented exact seats/total when quantity is unknown. Answer why from returned reasons; do not repeat a quantity question or claim nearest-home distance without location.",
     ],
     positiveCriteria: [
-      "Known parent plus one seven-year-old child means two people: pass the known adult/child quantities, check get_age_rules before claiming suitability, and do not manufacture a different ticket composition.",
+      "Known parent plus one seven-year-old child means two people: use intent:initial with tickets:1, childTickets:1 and the supplied childAges:[7]. The new proposal must return current verified admission with the child allowed before claiming suitability; a duplicate get_age_rules call is not required. Do not manufacture a different ticket composition.",
     ],
     negativeCriteria: [
       "Quantity and child attendance are unknown. Ask quantity once if needed; answer why without repeating that pending question. No child-age check is required for a child who was not mentioned.",
@@ -178,28 +195,20 @@ const journeys: Journey[] = [
         { rating: "PG", allowed: true, age: 7, description: "With an accompanying adult" },
         { rating: "PG", childAge: 7 },
       ),
-      propose_booking: mock(
-        {
-          proposal: { ...proposal, tickets: 1, childTickets: 1 },
-          proposalToken: "fixture_proposal",
-          needs: "proposal_acceptance",
-        },
-        { tickets: 1, childTickets: 1 },
-        {
-          type: "booking_proposal",
-          items: [{ ...proposal, tickets: 1, childTickets: 1, ticketQuantity: 2, adultTickets: 1 }],
-        },
+      propose_booking: rejectUnexpectedFilters(
+        mock(
+          familyEvidence.data,
+          { intent: "initial", tickets: 1, childTickets: 1, childAges: [7] },
+          familyEvidence.ui,
+        ),
+        { intent: ["initial"], baseProposalRef: [] },
       ),
     },
     negative: {
       get_recommendations: mock({ movies: [{ ...show, why: [proposal.reason], sessions: [show] }] }),
-      propose_booking: mock(
-        {
-          proposal: { ...show, held: false, seatingPreference: "middle", reason: proposal.reason },
-          needs: "tickets",
-        },
-        {},
-        { type: "booking_proposal", items: [{ ...show, seatingPreference: "middle" }] },
+      propose_booking: rejectUnexpectedFilters(
+        mock(unknownEvidence.data, { intent: "initial" }, unknownEvidence.ui),
+        { intent: ["initial"], baseProposalRef: [], tickets: [], childTickets: [], childAges: [] },
       ),
     },
   },
@@ -999,10 +1008,12 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     ];
     acceptance.tool_mock_overrides.propose_booking = alignResponseShapes(
       {
-        propose_booking: mock(
-          { proposal, proposalToken: "fixture_proposal", needs: "proposal_acceptance" },
-          { tickets: 2 },
-          { type: "booking_proposal", items: [proposal] },
+        propose_booking: guardProposalAges(
+          rejectUnexpectedFilters(
+            mock(adultEvidence.data, { intent: "initial", tickets: 2 }, adultEvidence.ui),
+            { intent: ["initial"], baseProposalRef: [], childTickets: ["0"] },
+          ),
+          [],
         ),
       },
       language,
@@ -1279,6 +1290,7 @@ function alignResponseShapes(overrides: Record<string, SimulationMock[]>, langua
           p.priceIncludesFees = true;
           p.tickets = undefined;
           p.seats = undefined;
+          if (data.proposalRef && result.ui?.type === "booking_proposal") result.ui.items = [p];
         }
         if (name === "check_cancellation_eligibility" && typeof data.eligible === "boolean") {
           result.data = {

@@ -76,6 +76,8 @@ export async function updateConversation(
         widgetEventAfterSeq: _floor,
         widgetAuthGeneration: _generation,
         linkedConversationId: _link,
+        // Draft revisions are exclusively written by the locked proposal service/acceptance path.
+        bookingProposalDraft: _proposal,
         ...business
       } = next.metadata;
       next.metadata = { ...(current.metadata ?? {}), ...business };

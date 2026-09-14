@@ -13,6 +13,7 @@ import { executeBalanceReview } from "../services/balance-review.js";
 import type { Catalog } from "../services/catalog.js";
 import { assertPaymentConsent } from "../services/checkout.js";
 import { markJourney, updateConversation } from "../services/conversation.js";
+import { offerFoodSuggestions } from "../services/food-suggestions.js";
 import { fmtDateTime, joinList, money, onDateTime, seatLabels, t } from "../services/format.js";
 import { resolveLinkedConversation } from "../services/relink.js";
 import { assertSwapRefundSelection } from "../services/swap-refund.js";
@@ -675,8 +676,47 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
               `${r.AppliedOffer?.Title} is applied to your order.`,
               `تم تطبيق ${r.AppliedOffer?.Title} على طلبك.`,
             );
+      let snackSuggestions =
+        !inp.remove &&
+        r.AppliedOffer &&
+        s.tickets.length > 0 &&
+        s.concessions.length === 0 &&
+        !["paid", "cancelled"].includes(r.Order.State)
+          ? await offerFoodSuggestions(ctx.vista, r.Order.CinemaId, ctx.conversation.customerId, ctx.lang)
+          : undefined;
+      if (snackSuggestions) {
+        try {
+          // repeatUsual must mean the items just offered, never an older menu's cached selection.
+          const remembered = await updateConversation(
+            ctx.db,
+            ctx.conversation.id,
+            {
+              metadata: {
+                widgetAuthGeneration: Number(a.input._widgetAuthGeneration ?? 0),
+                usualFnb: snackSuggestions.status === "ready" ? snackSuggestions.usual : [],
+              },
+            },
+            Number(a.input._widgetAuthGeneration ?? 0),
+          );
+          if (
+            remembered.customerId !== ctx.conversation.customerId ||
+            Number(remembered.metadata?.widgetAuthGeneration ?? 0) !==
+              Number(a.input._widgetAuthGeneration ?? 0)
+          )
+            snackSuggestions = { status: "unavailable", cinemaId: r.Order.CinemaId };
+        } catch {
+          // The offer is already applied; optional food context cannot turn it into a failed action.
+          snackSuggestions = { status: "unavailable", cinemaId: r.Order.CinemaId };
+        }
+      }
       return {
-        result: { speech, order: s, offer: r.AppliedOffer, nextPaymentMethod: inp.nextPaymentMethod },
+        result: {
+          speech,
+          order: s,
+          offer: r.AppliedOffer,
+          nextPaymentMethod: inp.nextPaymentMethod,
+          snackSuggestions,
+        },
         ui: { type: "order", items: [s] },
         journey: { name: "apply_offer", status: "completed" },
       };

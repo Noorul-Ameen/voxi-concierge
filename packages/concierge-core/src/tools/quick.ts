@@ -24,12 +24,17 @@ import { VistaClientError } from "@voxi/vista-client";
 import { eq, sql } from "drizzle-orm";
 import { renewLease } from "../actions/ledger.js";
 import { appendEvent } from "../events.js";
+import { evaluateAdmission } from "../services/admission.js";
 import type { Cinema, Film, Session } from "../services/catalog.js";
+import { assertNoPendingBasketEdits, checkoutSnapshot } from "../services/checkout.js";
 import { updateConversation } from "../services/conversation.js";
+import { loadFoodSuggestions } from "../services/food-suggestions.js";
 import { fmtDate, fmtTime, joinList, money, t } from "../services/format.js";
 import { beginInlineBasketMutation, finishInlineBasketMutation } from "../services/inline-mutation.js";
 import { buildBookingState } from "../services/order-state.js";
+import { beginProposal, currentProposal, proposalChanged, saveProposal } from "../services/proposal-draft.js";
 import { signProposal, verifyProposal } from "../services/proposal-token.js";
+import { resolveLinkedConversation } from "../services/relink.js";
 import { previewSeats, pricePreviewSeats } from "../services/seat-preview.js";
 import { customerTools, loadCustomer } from "./customer.js";
 import { filmCard, sessionCard } from "./movies.js";
@@ -769,7 +774,10 @@ const quickHandlers: Pick<
   ToolHandlers,
   "propose_booking" | "quick_book" | "recover_order" | "resume_order" | "suggest_fnb" | "order_fnb"
 > = {
-  async propose_booking(ctx, input) {
+  async propose_booking(ctx, request) {
+    const suppliedSessionKey = request.sessionKey;
+    const draftRequest = await beginProposal(ctx, request);
+    const input = draftRequest.input;
     const customer = await loadCustomer(ctx);
     let selection = { ...input };
     if (!selection.sessionKey && !selection.title && !selection.hoCode) {
@@ -800,6 +808,29 @@ const quickHandlers: Pick<
     const resolved = await resolveSession(ctx, selection, customer);
     if (resolved.kind === "result") return resolved.result;
     const { session: s, cinema, film } = resolved;
+    // An exact session is not permission to discard the other anchored choices.
+    if (draftRequest.explicit && suppliedSessionKey) {
+      const date = input.date ? resolveSpokenDate(input.date, ctx.nowLocal) : undefined;
+      const namedFilms = input.title ? await ctx.catalog.resolveFilms(input.title, 3) : undefined;
+      const namedCinema = input.cinemaName ? await ctx.catalog.resolveCinema(input.cinemaName) : undefined;
+      if (
+        (input.hoCode && s.hoCode !== input.hoCode) ||
+        (namedFilms && !namedFilms.some((match) => match.score >= 0.55 && match.film.hoCode === s.hoCode)) ||
+        (input.cinemaName && namedCinema?.cinema.id !== s.cinemaId) ||
+        (input.cinemaId && s.cinemaId !== input.cinemaId) ||
+        (date && s.showtime.slice(0, 10) !== date) ||
+        (input.experience && s.experience !== input.experience) ||
+        (input.time && hm(s.showtime) !== input.time) ||
+        (input.timeFrom && hm(s.showtime) < input.timeFrom) ||
+        (input.timeTo && hm(s.showtime) > input.timeTo) ||
+        ((input.filmLanguage ?? input.language) &&
+          similarity(
+            film?.language ?? "",
+            normaliseFilmLanguage(input.filmLanguage ?? input.language) ?? "",
+          ) < 0.7)
+      )
+        throw proposalChanged();
+    }
     const pref =
       input.seatPreference ??
       customer?.profile?.seatPreference ??
@@ -808,8 +839,30 @@ const quickHandlers: Pick<
     const adults = input.tickets ?? null;
     const children = input.childTickets ?? 0;
     const count = adults == null ? null : adults + children;
+    if (draftRequest.explicit && !children && input.childAges?.length)
+      return err(
+        ErrorCodes.VALIDATION,
+        t(
+          ctx.lang,
+          "Please confirm how many child tickets these ages are for.",
+          "يرجى تأكيد عدد تذاكر الأطفال لهذه الأعمار.",
+        ),
+        false,
+        { needs: "child_tickets" },
+      );
+    if (draftRequest.explicit && input.childAges?.some((age) => age < 3 || age > 12))
+      return err(
+        ErrorCodes.VALIDATION,
+        t(
+          ctx.lang,
+          "Child tickets are for ages 3–12. Please confirm the correct adult and child ticket counts for these ages.",
+          "تذاكر الأطفال للأعمار من 3 إلى 12 سنة. يرجى تأكيد عدد تذاكر البالغين والأطفال المناسب لهذه الأعمار.",
+        ),
+        false,
+        { needs: "child_tickets" },
+      );
     const childRating = children > 0 ? (await ctx.catalog.film(s.hoCode, true))?.rating : film?.rating;
-    if (children > 0 && !allowsChildTickets(childRating))
+    if (!draftRequest.explicit && children > 0 && !allowsChildTickets(childRating))
       return err(
         ErrorCodes.VALIDATION,
         t(
@@ -817,6 +870,35 @@ const quickHandlers: Pick<
           `Child eligibility is not confirmed for this film's ${childRating || "unknown"} rating. Please choose a film with a suitable confirmed classification.`,
           "لا يسمح تصنيف هذا الفيلم أو تصنيفه غير المؤكد باقتراح تذاكر أطفال. يرجى اختيار فيلم بتصنيف مناسب ومؤكد.",
         ),
+      );
+    const missingChildAges = draftRequest.explicit && children > 0 && input.childAges?.length !== children;
+    const admission = draftRequest.explicit
+      ? {
+          rating: childRating ?? null,
+          experience: s.experience,
+          childAges: input.childAges ?? [],
+          children: (input.childAges ?? []).map((age) => evaluateAdmission(childRating, s.experience, age)),
+          verified:
+            !missingChildAges &&
+            (input.childAges ?? []).every(
+              (age) => evaluateAdmission(childRating, s.experience, age).allowed === true,
+            ),
+        }
+      : undefined;
+    if (
+      draftRequest.explicit &&
+      ((children > 0 && !allowsChildTickets(childRating)) ||
+        (!missingChildAges && admission?.children.some((child) => child.allowed !== true)))
+    )
+      return err(
+        ErrorCodes.VALIDATION,
+        t(
+          ctx.lang,
+          "The supplied child ages do not confirm admission for this film and experience. Please choose an eligible option.",
+          "أعمار الأطفال المقدمة لا تؤكد السماح بالدخول لهذا الفيلم والتجربة. يرجى اختيار عرض مناسب.",
+        ),
+        false,
+        { needs: "child_admission", admission },
       );
     const [plan, types] = await Promise.all([
       ctx.vista.seatPlan(s.cinemaId, s.sessionId),
@@ -922,22 +1004,56 @@ const quickHandlers: Pick<
       preferredExperience,
       preferenceTradeoffs,
     };
-    const proposalToken =
-      priced && seats && totalCents != null
-        ? signProposal(ctx, {
+    const draft = draftRequest.explicit
+      ? await saveProposal(
+          ctx,
+          draftRequest.expectedRef,
+          {
+            ...input,
             sessionKey: s.key,
-            adults: adults!,
-            children,
-            preference: pref,
-            seats: seats.map(({ row, number }) => ({ row, number })),
-            tickets: priced.tickets,
-            totalCents,
-          })
+            hoCode: s.hoCode,
+            title: undefined,
+            cinemaId: s.cinemaId,
+            cinemaName: undefined,
+            date: s.showtime.slice(0, 10),
+            time: input.time ?? (input.timeFrom || input.timeTo ? undefined : hm(s.showtime)),
+            experience: s.experience,
+            tickets: adults ?? undefined,
+            childTickets: children,
+            seatPreference: pref,
+            seats: undefined,
+          },
+          draftRequest.expectedAcceptedActionId,
+          draftRequest.expectedActiveOrderId,
+        )
+      : undefined;
+    const proposalRef = draft?.ref;
+    const proposalToken =
+      !missingChildAges && priced && seats && totalCents != null
+        ? signProposal(
+            ctx,
+            {
+              sessionKey: s.key,
+              adults: adults!,
+              children,
+              preference: pref,
+              seats: seats.map(({ row, number }) => ({ row, number })),
+              tickets: priced.tickets,
+              totalCents,
+              ...(proposalRef ? { proposalRef, childAges: input.childAges ?? [] } : {}),
+            },
+            draft ? Date.parse(draft.quoteExpiresAt) : undefined,
+          )
         : undefined;
-    const needs =
-      count == null ? "tickets" : totalCents == null ? "price_unavailable" : "proposal_acceptance";
+    const needs = missingChildAges
+      ? "child_age"
+      : count == null
+        ? "tickets"
+        : totalCents == null
+          ? "price_unavailable"
+          : "proposal_acceptance";
     return ok(
-      { proposal, proposalToken, needs },
+      { proposal, proposalToken, proposalRef, admission, needs },
       (preferenceTradeoffs.length
         ? `${preferenceTradeoffs.map((tradeoff) => tradeoff.message).join(" ")} `
         : "") +
@@ -946,17 +1062,21 @@ const quickHandlers: Pick<
           : "") +
         t(
           ctx.lang,
-          count == null
-            ? `${proposal.filmTitle}, ${proposal.experience} at ${proposal.cinemaName}, ${fmtTime(s.showtime, ctx.lang)}. How many are going?`
-            : "Here’s your suggested option.",
-          count == null
-            ? `${proposal.filmTitle} في ${proposal.cinemaName}، ${proposal.experience} الساعة ${fmtTime(s.showtime, ctx.lang)}. كم عدد التذاكر؟`
-            : "هذا اقتراحي لك.",
+          missingChildAges
+            ? "What are the children's ages?"
+            : count == null
+              ? `${proposal.filmTitle}, ${proposal.experience} at ${proposal.cinemaName}, ${fmtTime(s.showtime, ctx.lang)}. How many are going?`
+              : "Here’s your suggested option.",
+          missingChildAges
+            ? "ما أعمار الأطفال؟"
+            : count == null
+              ? `${proposal.filmTitle} في ${proposal.cinemaName}، ${proposal.experience} الساعة ${fmtTime(s.showtime, ctx.lang)}. كم عدد التذاكر؟`
+              : "هذا اقتراحي لك.",
         ),
       {
         type: "booking_proposal",
         items: [proposal],
-        meta: { proposalToken, needs, editable: true },
+        meta: { proposalToken, proposalRef, admission, needs, editable: true },
         actions: [
           ...(proposalToken
             ? [{ label: t(ctx.lang, "Hold these seats", "احجز هذه المقاعد مؤقتاً"), value: "proposal:accept" }]
@@ -994,6 +1114,19 @@ const quickHandlers: Pick<
           { needs: "proposal_refresh" },
         );
       const s = resolved.session;
+      if (proof.proposalRef && proof.children > 0) {
+        const rating = (await ctx.catalog.film(s.hoCode, true))?.rating;
+        if (
+          proof.childAges?.length !== proof.children ||
+          proof.childAges.some((age) => evaluateAdmission(rating, s.experience, age).allowed !== true)
+        )
+          return err(
+            ErrorCodes.VALIDATION,
+            "Child admission must be checked for the current film and experience before holding.",
+            false,
+            { needs: "child_admission" },
+          );
+      }
       const [plan, types] = await Promise.all([
         ctx.vista.seatPlan(s.cinemaId, s.sessionId),
         ctx.vista.ticketTypes(s.cinemaId, s.sessionId),
@@ -1366,51 +1499,16 @@ const quickHandlers: Pick<
     const cinemaId =
       input.cinemaId ?? (unpaid ? active.CinemaId : booking?.CinemaId) ?? meta(ctx).lastCinemaId;
     if (!cinemaId) return ok({ needs: "cinema" }, t(lang, "Which cinema is this for?", "لأي سينما؟"));
-    const { ConcessionTabs } = await ctx.vista.concessions(String(cinemaId));
-    const items: Record<string, any>[] = ConcessionTabs.flatMap((tab) =>
-      tab.Items.map((i) => ({ ...i, Tab: tab.Name })),
+    const suggestions = await loadFoodSuggestions(
+      ctx.vista,
+      String(cinemaId),
+      ctx.conversation.customerId,
+      lang,
     );
-    const card = (i: Record<string, any>, tag?: string) => ({
-      itemId: i.Id,
-      name: lang === "ar" && i.DescriptionAlt ? i.DescriptionAlt : i.Description,
-      nameEn: i.Description,
-      description: i.ExtendedDescription,
-      priceCents: i.PriceInCents,
-      price: money(i.PriceInCents, lang),
-      imageUrl: i.ImageUrl,
-      tab: i.Tab,
-      isCombo: i.IsCombo,
-      isBestSeller: i.IsBestSeller,
-      tag,
-      modifiers: (i.ModifierGroups ?? []).map((g: any) => ({
-        name: g.Name,
-        required: g.IsRequired,
-        options: g.Modifiers.map((m: any) => ({ id: m.Id, name: m.Description, priceCents: m.PriceInCents })),
-      })),
-    });
-    // "your usual": the F&B on the member's most recent booking that had any
-    let usual: Record<string, any>[] = [];
-    let usualIds: { itemId: string; quantity: number }[] = [];
-    if (ctx.conversation.customerId) {
-      const hist = await ctx.vista
-        .customerHistory(ctx.conversation.customerId)
-        .catch(() => ({ history: [] as Record<string, any>[] }));
-      const last = hist.history.find((h) => (h.concessionItemIds ?? []).length);
-      if (last) {
-        const counts = new Map<string, number>();
-        for (const id of last.concessionItemIds as string[]) counts.set(id, (counts.get(id) ?? 0) + 1);
-        usualIds = [...counts.entries()].map(([itemId, quantity]) => ({ itemId, quantity }));
-        usual = usualIds
-          .map((u) => items.find((i) => i.Id === u.itemId))
-          .filter(Boolean)
-          .map((i) => card(i!, t(lang, "Your usual", "طلبك المعتاد")));
-      }
-    }
-    const popular = items
-      .filter((i) => i.IsBestSeller && !usual.some((u) => u.itemId === i.Id))
-      .slice(0, 3)
-      .map((i) => card(i, t(lang, "Popular", "الأكثر طلباً")));
-    const picks = [...usual, ...popular];
+    const usualIds = suggestions.usual;
+    const picks = suggestions.items;
+    const usual = picks.filter((item) => usualIds.some((entry) => entry.itemId === item.itemId));
+    const popular = picks.filter((item) => !usualIds.some((entry) => entry.itemId === item.itemId));
     await setMeta(ctx, { usualFnb: usualIds });
     const usualText = usual
       .map((u) => `${usualIds.find((x) => x.itemId === u.itemId)?.quantity ?? 1}× ${u.nameEn}`)
@@ -1430,7 +1528,7 @@ const quickHandlers: Pick<
           )}. هل تريد شيئاً للعرض؟`,
         );
     return ok(
-      { usual: usualIds, items: picks, cinemaId },
+      suggestions,
       speech,
       {
         type: "menu",
@@ -1607,11 +1705,12 @@ async function runQuick<N extends "quick_book" | "recover_order" | "order_fnb">(
   const requestKey = (input as { idempotencyKey?: string }).idempotencyKey ?? ctx.toolCallId;
   const proposalToken =
     name === "quick_book" ? (input as { proposalToken?: string }).proposalToken : undefined;
+  let proposalProof: Awaited<ReturnType<typeof verifyProposal>> | undefined;
   if (proposalToken) {
     // A transport retry addresses the accepted proposal, even after relinking. Validate identity
     // and expiry before replay, so a stale card cannot revive an old hold or another account's result.
     try {
-      await verifyProposal(ctx, proposalToken);
+      proposalProof = await verifyProposal(ctx, proposalToken);
     } catch (error) {
       if (error instanceof DomainError)
         return err(error.code, error.message, false, { needs: "proposal_refresh" });
@@ -1626,13 +1725,65 @@ async function runQuick<N extends "quick_book" | "recover_order" | "order_fnb">(
     const existing = (
       await tx.select().from(S.actions).where(eq(S.actions.idempotencyKey, idempotencyKey))
     )[0];
-    if (existing?.result?.toolResult) return existing.result.toolResult as ToolResult;
+    if (existing?.result?.toolResult) {
+      if (proposalProof?.proposalRef) {
+        const current = await resolveLinkedConversation(tx, ctx.conversation.id, true);
+        const draft = current && currentProposal(current);
+        const guard = existing.result.proposalReplay as { orderId?: string; snapshot?: string } | undefined;
+        if (
+          !current ||
+          draft?.ref !== proposalProof.proposalRef ||
+          draft.acceptedActionId !== existing.id ||
+          !guard?.orderId ||
+          current.metadata?.activeOrder !== guard.orderId
+        )
+          return err(
+            ErrorCodes.CONFIRMATION_EXPIRED,
+            "That accepted proposal is no longer the current booking.",
+            false,
+            { needs: "proposal_refresh" },
+          );
+        await assertNoPendingBasketEdits(tx, `order:${guard.orderId}`, undefined, current.id);
+        const order = (await ctx.vista.getOrder(guard.orderId).catch(() => null))?.Order;
+        if (
+          !order ||
+          ["paid", "cancelled"].includes(order.State) ||
+          holdExpired(order) ||
+          JSON.stringify(checkoutSnapshot(order)) !== guard.snapshot
+        )
+          return err(
+            ErrorCodes.CONFIRMATION_EXPIRED,
+            "That booking changed or expired. Check its current state.",
+            false,
+            { needs: "proposal_refresh" },
+          );
+      }
+      return existing.result.toolResult as ToolResult;
+    }
     if (existing)
       return err(
         ErrorCodes.ORDER_INVALID_STATE,
         "That request hasn't confirmed its result. Check the current order before retrying.",
         true,
       );
+    if (proposalProof?.proposalRef && proposalProof.children > 0) {
+      const session = await ctx.catalog.sessionByKey(proposalProof.sessionKey);
+      const rating = session ? (await ctx.catalog.film(session.hoCode, true))?.rating : undefined;
+      if (
+        !session ||
+        !allowsChildTickets(rating) ||
+        proposalProof.childAges?.length !== proposalProof.children ||
+        proposalProof.childAges.some(
+          (age) => evaluateAdmission(rating, session.experience, age).allowed !== true,
+        )
+      )
+        return err(
+          ErrorCodes.VALIDATION,
+          "Child admission must be checked for the current film and experience before holding.",
+          false,
+          { needs: "child_admission" },
+        );
+    }
     let started: Awaited<ReturnType<typeof beginInlineBasketMutation>>;
     try {
       started = await beginInlineBasketMutation(ctx.db, {
@@ -1642,6 +1793,8 @@ async function runQuick<N extends "quick_book" | "recover_order" | "order_fnb">(
         payload: input as Record<string, unknown>,
         toolCallId: ctx.toolCallId,
         authGeneration: Number(ctx.conversation.metadata?.widgetAuthGeneration ?? 0),
+        proposalToken: !!proposalToken,
+        proposalRef: proposalProof?.proposalRef,
       });
     } catch (error) {
       if (error instanceof DomainError)
@@ -1675,7 +1828,17 @@ async function runQuick<N extends "quick_book" | "recover_order" | "order_fnb">(
     ) => Promise<ToolResult>;
     try {
       const result = await handler(ctx, input);
-      if (!(await finishInlineBasketMutation(ctx.db, started.action, result)))
+      let proposalReplay: { orderId: string; snapshot: string } | undefined;
+      if (result.ok && proposalProof?.proposalRef) {
+        const orderId = ctx.conversation.metadata?.activeOrder;
+        if (typeof orderId === "string") {
+          const order = (await ctx.vista.getOrder(orderId)).Order;
+          if (!order) throw proposalChanged();
+          proposalReplay = { orderId, snapshot: JSON.stringify(checkoutSnapshot(order)) };
+          if (result.ui) result.ui.meta = { ...result.ui.meta, proposalRef: proposalProof.proposalRef };
+        }
+      }
+      if (!(await finishInlineBasketMutation(ctx.db, started.action, result, proposalReplay)))
         return err(
           ErrorCodes.ORDER_INVALID_STATE,
           "That request needs a fresh status check. Check the current order before retrying.",
@@ -1702,6 +1865,20 @@ async function runQuick<N extends "quick_book" | "recover_order" | "order_fnb">(
 
 export const quickTools: typeof quickHandlers = {
   ...quickHandlers,
+  propose_booking: async (ctx, input) => {
+    try {
+      return await quickHandlers.propose_booking(ctx, input);
+    } catch (error) {
+      if (error instanceof DomainError)
+        return err(
+          error.code,
+          error.message,
+          error.retryable,
+          error.detail as Record<string, unknown> | undefined,
+        );
+      throw error;
+    }
+  },
   quick_book: (ctx, input) => runQuick("quick_book", ctx, input),
   recover_order: (ctx, input) => runQuick("recover_order", ctx, input),
   order_fnb: (ctx, input) => runQuick("order_fnb", ctx, input),

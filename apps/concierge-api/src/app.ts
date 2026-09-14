@@ -10,12 +10,14 @@ import {
   type AppContext,
   Catalog,
   GenesysHandover,
+  type ProposalDraft,
   type ToolCtx,
   type ToolResult,
   appendEvent,
   ensureConversation,
   eventsSince,
   ledger,
+  proposalSummary,
   relinkConversationWork,
   resolveLinkedConversation,
   runTool,
@@ -191,6 +193,17 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
             ].includes(k) && !k.startsWith("system__"),
         ),
       );
+    if (
+      name === "propose_booking" &&
+      c.req.header("x-voxi-proposal-context") === "explicit" &&
+      input.intent !== "initial" &&
+      input.intent !== "edit"
+    )
+      return c.json({
+        ok: false,
+        error: { code: "VALIDATION", message: "Specify initial or edit proposal intent.", retryable: false },
+        data: { needs: "proposal_intent" },
+      });
     // Agent tool calls may accept a reviewed proposal, but cannot use legacy direct booking
     // arguments. Reject before the inline mutation can invalidate checkout or replace a hold.
     // The widget's explicit booking.select command uses the internal handler separately.
@@ -294,8 +307,8 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         result.speech =
           `${result.speech ?? ""} ${lang === "ar" ? "ما زال قيد التنفيذ — سأخبرك بالنتيجة خلال لحظات." : "It's still processing — I'll confirm the result in a moment."}`.trim();
     }
-    if (result.ui)
-      await appendEvent(
+    if (result.ui) {
+      const delivery = await appendEvent(
         app.db,
         app.events,
         conversationId,
@@ -304,6 +317,16 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         "agent",
         Number(conversation.metadata?.widgetAuthGeneration ?? 0),
       );
+      if (result.ui.meta?.proposalRef && delivery.suppressed)
+        result = {
+          ok: false,
+          data: { needs: "proposal_refresh" },
+          error: {
+            code: "CONFIRMATION_EXPIRED",
+            message: "That proposal changed. Check the current proposal before continuing.",
+          },
+        };
+    }
     if (result.journey)
       await appendEvent(app.db, null, conversationId, "journey", { ...result.journey, tool: name }, "system");
     await appendEvent(
@@ -700,6 +723,16 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
           (target.customerId && target.customerId !== source.customerId)
         )
           return null;
+        const sourceDraft = source.metadata?.bookingProposalDraft as { ref?: string } | undefined;
+        const targetDraft = target.metadata?.bookingProposalDraft as { ref?: string } | undefined;
+        if (
+          targetDraft &&
+          (!sourceDraft ||
+            targetDraft.ref !== sourceDraft.ref ||
+            Number(target.metadata?.widgetAuthGeneration ?? 0) !==
+              Number(source.metadata?.widgetAuthGeneration ?? 0))
+        )
+          return null;
         await relinkConversationWork(tx, source.id, elevenLabsConversationId);
         await tx
           .update(S.conversations)
@@ -876,9 +909,9 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         correlationId: prefixedId("corr", 8),
         refundChoiceProof,
       };
-      const result = await runTool(name, toolCtx, input);
-      if (result.ui)
-        await appendEvent(
+      let result = await runTool(name, toolCtx, input);
+      if (result.ui) {
+        const delivery = await appendEvent(
           app.db,
           app.events,
           conv.id,
@@ -887,6 +920,16 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
           "user",
           Number(conv.metadata?.widgetAuthGeneration ?? 0),
         );
+        if (result.ui.meta?.proposalRef && delivery.suppressed)
+          result = {
+            ok: false,
+            data: { needs: "proposal_refresh" },
+            error: {
+              code: "CONFIRMATION_EXPIRED",
+              message: "That proposal changed. Check the current proposal before continuing.",
+            },
+          };
+      }
       if (result.journey)
         await appendEvent(app.db, null, conv.id, "journey", { ...result.journey, tool: name }, "user");
       return {
@@ -1468,6 +1511,7 @@ function clearBookingMetadata(metadata: Record<string, unknown>) {
     "activeSessionKey",
     "lastBookingId",
     "bookingDraft",
+    "bookingProposalDraft",
     "pendingBooking",
     "bookingState",
     "holdRequest",
@@ -1485,12 +1529,20 @@ function safeBookingMetadata(metadata: Record<string, unknown> | null) {
     "activeSessionKey",
     "lastBookingId",
     "bookingDraft",
+    "bookingProposalDraft",
     "pendingBooking",
     "bookingState",
     "fnbOrder",
   ];
   return Object.fromEntries(
-    allowed.filter((key) => metadata?.[key] !== undefined).map((key) => [key, redact(metadata![key])]),
+    allowed
+      .filter((key) => metadata?.[key] !== undefined)
+      .map((key) => [
+        key,
+        key === "bookingProposalDraft"
+          ? proposalSummary(metadata![key] as ProposalDraft)
+          : redact(metadata![key]),
+      ]),
   );
 }
 

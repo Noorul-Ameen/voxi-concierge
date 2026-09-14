@@ -52,7 +52,7 @@ export function auditJourneyTransitionEvidence(
   // agent/tool response is included as evidence of a generated transition.
   const finalAuthored = object(test.chat_history.at(-1));
   const fixedTrigger =
-    /transition-(enquiry-plan|swap-refund-choice)-(en|ar)$/.test(test.id) &&
+    /transition-(enquiry-plan|film-only-edit|swap-refund-choice)-(en|ar)$/.test(test.id) &&
     finalAuthored?.role === "user" &&
     typeof finalAuthored.message === "string" &&
     finalAuthored.message.trim();
@@ -69,6 +69,8 @@ export function auditJourneyTransitionEvidence(
   const findings: string[] = [];
   if (turns[0]?.role !== "user" || !turns[0]?.message?.trim())
     return ["Missing generated first user turn after the exact authored-history boundary."];
+  if (fixedTrigger && turns[1]?.role !== "agent")
+    findings.push("Fixed current-user trigger requires the first generated turn to be agent.");
   const reply = turns.findIndex((turn) => turn.role === "agent" && turn.message?.trim());
   if (reply < 0) findings.push("No generated first spoken response.");
   const nextUser = turns.findIndex((turn, index) => index > 0 && turn.role === "user");
@@ -144,7 +146,10 @@ export function auditJourneyTransitionEvidence(
         r.value.procedure_name === "VOX · Discover and book" &&
         calls.some((c) => c.requestId === r.requestId && c.name === "start_procedure" && c.index < r.index),
     );
-    if (!entry || calls.some((c) => external.has(c.name) && c.index < entry.index))
+    if (
+      !entry ||
+      calls.some((c) => external.has(c.name) && c.name !== "get_session_context" && c.index < entry.index)
+    )
       findings.push("Booking Procedure was not entered before the first plan response.");
     const proposal = succeeded("propose_booking").find((r) => {
       const p = r.value.data?.proposal;
@@ -159,7 +164,15 @@ export function auditJourneyTransitionEvidence(
         p.showtime &&
         p.selectedSeats?.length === 2 &&
         typeof p.totalCents === "number" &&
-        r.value.data?.proposalToken
+        r.value.data?.proposalToken &&
+        r.value.data?.proposalRef &&
+        r.value.data.admission?.verified === true &&
+        r.value.data.admission.rating === "PG13" &&
+        r.value.data.admission.experience === p.experience &&
+        JSON.stringify(r.value.data.admission.childAges) === "[7]" &&
+        r.value.data.admission.children?.length === 1 &&
+        r.value.data.admission.children[0].checkedChildAge === 7 &&
+        r.value.data.admission.children[0].allowed === true
       );
     });
     if (!proposal)
@@ -167,25 +180,82 @@ export function auditJourneyTransitionEvidence(
     const proposalCall =
       proposal && calls.find((c) => c.requestId === proposal.requestId && c.name === "propose_booking");
     const beforeProposal = proposalCall?.index ?? boundary;
+    // Authored data supplies only the expected date, never evidence of a new success.
+    // The caller separately verifies the complete authored prefix before this audit.
+    let priorProposalDate: string | undefined;
+    let priorProposalRef: string | undefined;
+    if (test.id.includes("film-only-edit"))
+      for (let i = test.chat_history.length - 1; i >= 0 && !priorProposalDate; i--) {
+        const authored = object(test.chat_history[i]);
+        for (const result of authored?.tool_results ?? []) {
+          const value = object(result.result_value);
+          const date = value?.data?.proposal?.showtime?.slice(0, 10);
+          if (
+            authored?.role === "agent" &&
+            result.tool_name === "propose_booking" &&
+            result.request_id &&
+            !result.is_error &&
+            value?.ok === true &&
+            typeof date === "string" &&
+            /^\d{4}-\d{2}-\d{2}$/.test(date) &&
+            value.data.proposal.showtime?.startsWith(`${date}T`) &&
+            test.chat_history
+              .slice(0, i)
+              .some((turn) =>
+                object(turn)?.tool_calls?.some(
+                  (call: Record<string, unknown>) =>
+                    call.tool_name === "propose_booking" && call.request_id === result.request_id,
+                ),
+              )
+          ) {
+            priorProposalDate = date;
+            priorProposalRef = value.data.proposalRef;
+          }
+        }
+      }
+    const args = proposalCall?.args;
     if (
-      test.id.includes("film-only-edit") &&
-      ((!succeeded("get_film", beforeProposal).length && !succeeded("search_films", beforeProposal).length) ||
-        !succeeded("get_age_rules", beforeProposal).some((r) => r.value.data?.allowed === true) ||
-        !calls.some(
-          (c) =>
-            c.name === "propose_booking" &&
-            c.index < boundary &&
-            c.args.cinemaId === "0002" &&
-            c.args.date === "tomorrow" &&
-            c.args.time === "18:45" &&
-            c.args.experience === "Premier" &&
-            c.args.tickets === 1 &&
-            c.args.childTickets === 1,
-        ))
+      test.id.includes("enquiry-plan") &&
+      (!args ||
+        args.intent !== "initial" ||
+        args.baseProposalRef !== undefined ||
+        args.tickets !== 1 ||
+        args.childTickets !== 1 ||
+        JSON.stringify(args.childAges) !== "[7]")
     )
       findings.push(
-        "Film-only change must verify the new film/age and preserve prior proposal choices before speaking.",
+        "Initial family proposal requires explicit initial intent and the supplied age7, not inferred admission.",
       );
+    if (test.id.includes("film-only-edit")) {
+      const p = proposal?.value.data?.proposal;
+      const optional = (key: string, expected: unknown) =>
+        args?.[key] === undefined || args[key] === expected;
+      if (
+        (!succeeded("get_film", beforeProposal).length &&
+          !succeeded("search_films", beforeProposal).length) ||
+        !args ||
+        args.intent !== "edit" ||
+        !priorProposalRef ||
+        args.baseProposalRef !== priorProposalRef ||
+        !proposal ||
+        proposal.value.data.proposalRef === priorProposalRef ||
+        !optional("cinemaId", "0002") ||
+        !optional("time", "18:45") ||
+        !optional("experience", "Premier") ||
+        !optional("tickets", 1) ||
+        !optional("childTickets", 1) ||
+        (args.childAges !== undefined && JSON.stringify(args.childAges) !== "[7]") ||
+        (args.date !== undefined && args.date !== "tomorrow" && args.date !== priorProposalDate) ||
+        p?.cinemaId !== "0002" ||
+        p?.experience !== "Premier" ||
+        p?.showtime?.slice(0, 10) !== priorProposalDate ||
+        !p?.showtime?.endsWith("T18:30:00+04:00") ||
+        p?.requested?.time !== "18:45"
+      )
+        findings.push(
+          "Film-only change must use the exact current edit reference and new verified admission, and preserve prior proposal choices before speaking.",
+        );
+    }
   } else if (test.id.includes("offer-snacks")) {
     forbidden(["apply_offer", "get_action_result", "suggest_fnb"]);
     const queued = succeeded("apply_offer").find((r) => r.value.data?.action?.status === "queued");
@@ -204,18 +274,35 @@ export function auditJourneyTransitionEvidence(
               c.args.actionId === queued.value.data.action.actionId,
           ),
       );
+    const enriched = completion?.value.data?.result?.snackSuggestions;
+    const ready =
+      enriched?.status === "ready" &&
+      enriched.purchaseRequiresConsent === true &&
+      enriched.cinemaId === "0001" &&
+      typeof enriched.checkedAtUtc === "string" &&
+      Array.isArray(enriched.items) &&
+      enriched.items.length > 0 &&
+      enriched.items.every(
+        (item: any) => item.itemId && (item.name || item.nameEn) && Number.isInteger(item.priceCents),
+      ) &&
+      Array.isArray(enriched.usual) &&
+      enriched.usual.every(
+        (item: any) =>
+          Number.isInteger(item.quantity) &&
+          item.quantity > 0 &&
+          enriched.items.some((menu: any) => menu.itemId === item.itemId),
+      );
     const menu =
       completion &&
       succeeded("suggest_fnb").find(
         (r) =>
-          r.index > completion.index &&
-          calls.some((c) => c.name === "suggest_fnb" && c.index > completion.index && c.index < r.index) &&
-          Array.isArray(r.value.data?.items) &&
-          r.value.data.items.length > 0,
+          r.index > completion.index && Array.isArray(r.value.data?.items) && r.value.data.items.length > 0,
       );
-    if (!queued || !completion || !menu)
+    if (enriched?.status === "ready" && calls.some((c) => c.name === "suggest_fnb"))
+      findings.push("Already verified ready snack facts must not trigger a duplicate menu lookup.");
+    if (!queued || !completion || (!ready && !menu))
       findings.push(
-        "First response must follow exact queued offer completion then successful proactive menu lookup; later user prompts cannot supply this step.",
+        "First response must follow exact queued offer completion with verified ready snack facts or an appropriate successful menu lookup; later user prompts cannot supply this step.",
       );
   } else if (test.id.includes("single-booking")) {
     forbidden(["get_session_context", "list_my_bookings"]);
