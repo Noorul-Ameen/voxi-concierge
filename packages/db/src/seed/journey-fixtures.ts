@@ -45,7 +45,8 @@ const fixtures = [
     bank: false,
   },
 ];
-const obsolete = ["WXA7K2M", "WM3PQ9X", "WMB6GQ2", "WKGRP33", "WK4DXC9", "WJG8LD7", "WJMX42R"];
+// WKGRP33 remains an active Rahul scenario alongside JYRAHL1; never archive it automatically.
+const obsolete = ["WXA7K2M", "WM3PQ9X", "WMB6GQ2", "WK4DXC9", "WJG8LD7", "WJMX42R"];
 export async function refreshDemoJourneyFixtures(db: Db, env = process.env, now = nowLocalDate()) {
   if (!demoScheduleEnabled(env)) return { enabled: false, inserted: 0, archived: 0 };
   return db.transaction(async (tx) => {
