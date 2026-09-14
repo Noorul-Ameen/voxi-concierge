@@ -143,16 +143,24 @@ const FILM_FILTER_TOOLS = new Set<string>([
 // These instructions sit beside the operation that can be misused, rather than
 // relying on a distant conversation example to override the generic API label.
 const AGENT_TOOL_USAGE: Partial<Record<ToolName, string>> = {
+  nearest_cinemas:
+    "Pass the guest's exact supplied area without requesting GPS or asking it again. Named-area distances are approximate from that area, not their home or driving distance. If that area is unsupported, stop and say it could not be matched. Never shorten/substitute its name, omit area, use old GPS, call list_cinemas as a substitute or guess a nearby cinema/minutes. Only the guest may choose a different area.",
+  get_film:
+    "Use only the guest's actual title or a verified returned hoCode. An exact code needs no filmLanguage. Never infer film language from Arabic/English conversation or invent an alternative title after a failed search.",
+  search_sessions:
+    "Keep the verified film, cinema, requested date/time and explicit film-language constraints on every retry. Empty/error results do not authorize dropping filters or moving to another cinema. Never send the reply language as filmLanguage or as an undeclared language parameter. For an existing booking's closest-match preview, prefer prepare_swap and its recommendedPreviewInput.",
+  prepare_swap:
+    "Read-only preview, not an exchange or payment. Start with the owned bookingId and requested date/time, keeping the original cinema/film. When recommendedPreviewInput is returned, call prepare_swap again with that exact input before speaking; it chooses the closest candidate for a seat-and-price preview without mutation. Do not ask the same time choice again. Only the later exact preview consent permits swap_booking.",
   get_age_rules:
     "First fetch the film's actual rating code; never pass its title as rating. Include a known childAge. Explain data.allowed:false as refusal, null as unconfirmed admission, and true using its exact conditions. For a family enquiry explain the rating and ask age once only if missing.",
   get_recommendations:
-    "Omit every optional cinema, time/window, experience, seat or film-language filter that the guest did not specify. 'Usual' requests server-side profile inference, not a guessed input. Only a prior verified context/result can supply a preference; a greeting, example or conversation language cannot.",
+    "Use for discovery when no film is already chosen. There is no title or query parameter: for a named film use get_film/search_films, then propose_booking. Omit every optional cinema, time/window, experience, seat or film-language filter the guest did not specify. 'Usual' requests server-side profile inference. After recommendations, check any child's admission and obtain propose_booking before asking acceptance; a recommendation alone does not verify a complete seating/price proposal.",
   list_offers:
     "For 'my saved card', omit bank and cardBin: the authenticated backend resolves the card. bank means an actual named bank, never saved_card or another sentinel. Quote only the returned eligible saving; it remains potential until applied.",
   investigate_payment:
     "For an initial missing-booking/debit report, omit unknown optional IDs and inspect authenticated context. userSessionId is an actual returned order ID, never the current conversation/test ID. A failed get_order does not validate its input for this tool. A known paid booking with a QR rendering error needs receipt assistance, not a new payment investigation.",
   propose_booking:
-    "Carry known composition on every proposal/edit: tickets is ADULT count, childTickets is CHILD count. One parent with one child means tickets:1, childTickets:1, not tickets:2 or totalTickets. Use only declared parameters. A failed proposal supplies no price, seats or acceptance token: explain the unresolved preview; never quote a replacement price or ask to hold an unreturned proposal.",
+    "Carry known composition on every proposal/edit: tickets is ADULT count, childTickets is CHILD count. One parent with one child means tickets:1, childTickets:1, not tickets:2 or totalTickets. Before a child's proposal use get_age_rules with the actual returned rating and known childAge, including PG. Use only declared parameters and actual guest/returned film titles or IDs. A failed proposal supplies no price, seats or acceptance token: explain the unresolved preview; never invent a replacement film/price or ask to hold an unreturned proposal.",
   prepare_payment:
     "This can open payment options. A booking request, saved-card mention, offer enquiry or current total is not a request to open payment. Call for an explicit review request or a requested balance-switch preview. A balance_split_confirmation is only a choice: after acceptance execute its exact redemptionInput including confirmationId/confirmed. That confirmed action reserves the chosen balance and opens the card review together. Its completed paymentReviewOpened:true and payment UI prove success; do not prepare again. Preserve VOX versus SHARE.",
   redeem_points:

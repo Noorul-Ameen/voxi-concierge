@@ -819,6 +819,12 @@ export function buildJourneySimulationSuite(): SimulationSuite {
             needs: "swap_session",
             bookingId: "fixture_booking",
             sameCinemaRequired: true,
+            nextStep: "preview_recommended",
+            recommendedPreviewInput: {
+              bookingId: "fixture_booking",
+              date: show.date,
+              targetSessionKey: "FIX_SWAP_SHOW",
+            },
             alternatives: [
               { ...show, sessionKey: "FIX_SWAP_SHOW", showtime: "2030-06-04T19:05:00+04:00", time: "19:05" },
             ],
@@ -828,6 +834,9 @@ export function buildJourneySimulationSuite(): SimulationSuite {
       );
     }
     const noSwap = suite.tests.find((test) => test.id === `08-negative-${language}`)!;
+    swap.success_conditions.push(
+      "When the closest-match response supplies recommendedPreviewInput, obtain its actual priced preview without asking the already-requested time again. This is read-only; exchange still requires later exact consent.",
+    );
     noSwap.tool_mock_overrides.prepare_swap = ["tomorrow", show.date].flatMap((date) =>
       mock(
         { needs: "swap_session", bookingId: "fixture_booking", sameCinemaRequired: true, alternatives: [] },

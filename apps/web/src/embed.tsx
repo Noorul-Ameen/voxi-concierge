@@ -13,8 +13,9 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { Concierge } from "./components/Concierge";
 import { PageAccountDialog } from "./components/PageAccountDialog";
-import { configureApiBase, type Lang } from "./lib/api";
+import { API_BASE, configureApiBase, type Lang } from "./lib/api";
 import { notifyPageAccountActivity, pageSession } from "./lib/page-session";
+import { mountHostCatalogue } from "./lib/host-catalogue";
 import css from "./styles.css?inline";
 import stateCss from "./concierge-state.css?inline";
 import accountCss from "./page-account.css?inline";
@@ -65,6 +66,7 @@ function mount() {
   shadow.appendChild(root);
   const app = ReactDOM.createRoot(root);
   const knownHost = location.hostname === "voxi.kris-pradip.workers.dev";
+  const hostCatalogue = mountHostCatalogue({ document, hostname: location.hostname, apiBase: API_BASE });
   const loginSelector = window.VoxiConfig?.hostLoginSelector ?? (knownHost ? "#loginBtn" : undefined);
   const getLoginButton = () => {
     try { return loginSelector ? document.querySelector<HTMLElement>(loginSelector) : null; } catch { return null; }
@@ -185,6 +187,7 @@ function mount() {
     logout: () => window.dispatchEvent(new CustomEvent("voxi:logout")),
     profile: () => window.dispatchEvent(new CustomEvent("voxi:profile")),
     unmount: () => {
+      hostCatalogue.dispose();
       document.removeEventListener("click", pageClick, true);
       document.removeEventListener("submit", pageSubmit, true);
       document.removeEventListener("input", pageActivity, true);

@@ -1,0 +1,4 @@
+{
+  "prefix": "[widget] User interface updates: ",
+  "instruction": "Briefly acknowledge the latest meaningful choice once. For draftSelection with applied:false, name only the selected option (for example, Card selected / اخترت الدفع بالبطاقة); it is an unsubmitted preference, not a failed action or confirmed payment. Do not answer with a generic promise to be brief. Successful API results are authoritative. Do not repeat completed actions with tools, ask for known information, or append a question to a draft-selection acknowledgement. Pending actions are not completed."
+}

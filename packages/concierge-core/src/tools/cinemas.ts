@@ -1,5 +1,6 @@
 import type { Cinema } from "../services/catalog.js";
 import { joinList, t } from "../services/format.js";
+import { locationAreas, resolveLocationArea } from "../services/location-areas.js";
 import { type ToolHandlers, err, ok } from "./types.js";
 
 const DAY_EN = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -114,8 +115,24 @@ export const cinemaTools: Pick<ToolHandlers, "list_cinemas" | "get_cinema" | "ne
   },
 
   async nearest_cinemas(ctx, input) {
-    const lat = ctx.conversation.geo?.lat;
-    const lng = ctx.conversation.geo?.lng;
+    const area = input.area !== undefined ? resolveLocationArea(input.area) : undefined;
+    if (input.area !== undefined && !area)
+      return err(
+        "LOCATION_REQUIRED",
+        t(
+          ctx.lang,
+          `I couldn't match "${input.area}" to a supported area. Choose an area from the location picker or share your location.`,
+          `لم أتمكن من مطابقة «${input.area}» مع منطقة مدعومة. اختر منطقة من قائمة الموقع أو شارك موقعك.`,
+        ),
+        false,
+        {
+          needs: "supported_area",
+          requestedArea: input.area,
+          supportedAreas: locationAreas.map((a) => ({ label: a.label, labelAr: a.labelAr, group: a.group })),
+        },
+      );
+    const lat = area?.lat ?? ctx.conversation.geo?.lat;
+    const lng = area?.lng ?? ctx.conversation.geo?.lng;
     if (lat == null || lng == null)
       return err(
         "LOCATION_REQUIRED",
@@ -132,22 +149,29 @@ export const cinemaTools: Pick<ToolHandlers, "list_cinemas" | "get_cinema" | "ne
         t(ctx.lang, "I couldn't find cinemas near that location.", "لم أجد سينمات قريبة من هذا الموقع."),
       );
     const items = near.map((c) => cinemaCard(c, ctx.lang));
-    const where = ctx.conversation.geo?.label ? ` to ${ctx.conversation.geo.label}` : "";
+    const label = area ? t(ctx.lang, area.label, area.labelAr) : ctx.conversation.geo?.label;
+    const origin = {
+      source: area ? "named_area" : (ctx.conversation.geo?.source ?? "shared_location"),
+      label,
+      lat,
+      lng,
+      approximate: !!area || ctx.conversation.geo?.source === "manual",
+      distanceMethod: "straight_line",
+    };
+    const where = label ? ` to ${label}` : "";
     const speech = t(
       ctx.lang,
-      `The nearest VOX cinemas${where} are ${joinList(near.map((c) => `${c.name} (${c.distanceKm} km)`))}. Which one would you like showtimes for?`,
-      `أقرب سينمات فوكس هي ${joinList(
-        near.map((c) => `${c.nameAlt || c.name} (${c.distanceKm} كم)`),
-        "ar",
-      )}.`,
+      `${area ? `Using the approximate ${label} area reference, the` : "The"} nearest VOX cinema${area ? "" : where} is ${near[0]!.name} (${near[0]!.distanceKm} km). Distances are straight-line estimates.`,
+      `${area ? `بالاعتماد على نقطة تقريبية لمنطقة ${label}، ` : ""}أقرب سينما فوكس هي ${near[0]!.nameAlt || near[0]!.name} (${near[0]!.distanceKm} كم). المسافات تقديرية بخط مستقيم.`,
     );
     return ok(
-      { cinemas: items },
+      { cinemas: items, origin },
       speech,
       {
         type: "cinema",
         title: t(ctx.lang, "Nearest cinemas", "أقرب السينمات"),
         items,
+        meta: { origin },
         actions: near.map((c) => ({ label: c.name, value: `sessions:${c.id}` })),
       },
       { name: "cinema_info", status: "completed" },

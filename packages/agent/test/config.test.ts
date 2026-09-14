@@ -84,7 +84,9 @@ describe("agent configuration contracts", () => {
     expect(qr.parameters.required).toEqual(["bookingId"]);
     expect(Object.keys(qr.parameters.properties ?? {})).toEqual(["bookingId"]);
     expect(qr.description).toContain("ok:true and rendered:true");
-    expect(qr.description).toContain("without claiming it is displayed");
+    expect(qr.description).toContain("without claiming display");
+    expect(qr.description).toContain("only when the guest currently asks to see it");
+    expect(qr.description).toContain("do not call after a pause or goodbye");
   });
   it("keeps film language free of the UI language enum and includes booking refinements", () => {
     const tools = buildWebhookTools(opts);

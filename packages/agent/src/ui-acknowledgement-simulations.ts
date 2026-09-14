@@ -1,5 +1,10 @@
+import { readFileSync } from "node:fs";
 import { CLIENT_TOOLS, TOOL_REGISTRY } from "@voxi/contracts";
 import type { SimulationDefinition, SimulationMock, SimulationSuite } from "./simulations.js";
+
+const widgetAcknowledgement = JSON.parse(
+  readFileSync(new URL("../../../apps/web/src/lib/widget-acknowledgement.json", import.meta.url), "utf8"),
+) as { prefix: string; instruction: string };
 
 const denied: SimulationMock = {
   parameter_conditions: [],
@@ -31,7 +36,8 @@ const scenarios: Scenario[] = [
       succeeded: true,
       pending: false,
       speech: "You're booked — reference FIXPAID. Your booking details and QR are on screen. Enjoy the show!",
-      state: { receipt: { bookingId: "FIXPAID", paid: true, rendered: true } },
+      // actionContext retains the verified speech; the current pay_order fields are not in its state allowlist.
+      state: {},
     },
     expected:
       "Acknowledge the verified paid result in one short sentence; point to the reference/QR already shown or give the exact FIXPAID reference. Do not repeat movie, cinema, time, seats, card or price, request another yes, call payment, offer snacks, claim email delivery or ask another question.",
@@ -76,10 +82,8 @@ const scenarios: Scenario[] = [
     persona: "Layla",
     member: false,
     event: {
-      action: "ui_selection",
-      succeeded: false,
-      pending: false,
-      state: { selection: { kind: "payment_method", label: "Credit or debit card", status: "unsubmitted" } },
+      draftSelection: { kind: "payment_method", label: "Credit or debit card" },
+      applied: false,
     },
     expected:
       "Acknowledge only the draft card-method selection. It is not a submitted Pay click, applied discount or completed purchase. Do not claim payment or booking success, ask for a saved card, invent member history or invoke a financial action.",
@@ -135,7 +139,7 @@ export function buildUiAcknowledgementSuite(clockLocal: string): SimulationSuite
         language === "ar"
           ? "أرى تفاصيل الطلب على الشاشة؛ أريد تأكيداً قصيراً فقط، ولا أريد أي إجراء آخر."
           : "I can see the order details; just give a brief acknowledgement, and take no other action.";
-      const widget = `[widget] User interface updates: ${JSON.stringify(scenario.event)}. Briefly acknowledge the latest meaningful choice once. Draft selections are not applied offers or completed purchases; successful API results are authoritative. Do not repeat completed actions with tools. Pending actions are not completed.`;
+      const widget = `${widgetAcknowledgement.prefix}${JSON.stringify(scenario.event)}. ${widgetAcknowledgement.instruction}`;
       return {
         id: `ui-${scenario.key}-${language}`,
         scenario_group: "verified-ui-acknowledgement",

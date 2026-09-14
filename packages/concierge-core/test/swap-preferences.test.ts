@@ -160,3 +160,58 @@ it("preserves an explicit different experience choice", async () => {
   expect(result.data?.alternatives.map((s: { sessionKey: string }) => s.sessionKey)).toEqual(["imax"]);
   expect(createConfirmation).not.toHaveBeenCalled();
 });
+
+it("returns a read-only closest-match continuation and requires a separate priced preview", async () => {
+  const { ctx, input } = fixture();
+  const found = await prepareSwap(ctx, input);
+  expect(found.data?.nextStep).toBe("preview_recommended");
+  expect(found.data?.recommendedPreviewInput).toMatchObject({
+    ...input,
+    date: "2030-06-04",
+    targetSessionKey: "standard-near",
+  });
+  expect(found.data).not.toHaveProperty("confirmationId");
+  expect(createConfirmation).not.toHaveBeenCalled();
+  const priced = await prepareSwap(ctx, found.data!.recommendedPreviewInput);
+  expect(priced.data?.summary.newTotalCents).toBe(15000);
+  expect(createConfirmation).toHaveBeenCalledTimes(1);
+});
+
+it("does not substitute a recommendation for an invalid customer-selected target or an empty match", async () => {
+  const { ctx, input } = fixture();
+  const invalid = await prepareSwap(ctx, { ...input, targetSessionKey: "missing" });
+  expect(invalid.data).not.toHaveProperty("recommendedPreviewInput");
+  ctx.catalog.sessions = async () => [];
+  const empty = await prepareSwap(ctx, input);
+  expect(empty.data?.alternatives).toEqual([]);
+  expect(empty.data).not.toHaveProperty("recommendedPreviewInput");
+  expect(createConfirmation).not.toHaveBeenCalled();
+});
+
+it("keeps an omitted-date recommendation usable when the original day has no replacement", async () => {
+  const { ctx, input, booking } = fixture();
+  const original = structuredClone(booking);
+  const found = await prepareSwap(ctx, { ...input, date: undefined });
+  expect(found.data?.recommendedPreviewInput).toMatchObject({
+    bookingId: "ORIGINAL",
+    date: "2030-06-04",
+    time: "19:00",
+    targetSessionKey: "standard-near",
+    keepSeatsIfPossible: true,
+  });
+  expect(booking.Showtime).toBe("2030-06-03T19:00:00");
+  expect(createConfirmation).not.toHaveBeenCalled();
+  const priced = await prepareSwap(ctx, found.data!.recommendedPreviewInput);
+  expect(priced.ok).toBe(true);
+  expect(priced.data?.summary).toMatchObject({
+    bookingId: "ORIGINAL",
+    targetCinemaId: "cinema",
+    targetSessionKey: "standard-near",
+    targetShowtime: "2030-06-04T19:15:00",
+    targetExperience: "Standard",
+    differenceCents: 0,
+  });
+  expect(priced.data?.confirmationId).toBe("swap-review");
+  expect(createConfirmation).toHaveBeenCalledTimes(1);
+  expect(booking).toEqual(original);
+});

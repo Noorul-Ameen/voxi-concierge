@@ -11,6 +11,7 @@ import { type CardActions, Cards, createTicketQr, Feedback, seatRange } from "./
 import { type Loc, LocationBar } from "./LocationBar";
 import { ACCOUNT_ACTIVITY_EVENT, AUTH_CHANGE_SIGNAL, notifyPageAuthChange, pageSession, usePageSession, type PageSessionRuntime } from "../lib/page-session";
 import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, directSeatMapFeedback, holdSeconds, isCurrentHold, recordUserActivity, renderVerifiedSeatMap, verifyHoldNotice, type HoldNoticeSnapshot, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
+import widgetAcknowledgement from "../lib/widget-acknowledgement.json";
 import { receiptCompletesCurrentOrder, renderVerifiedReceipt } from "../lib/receipt";
 import { connectionVariables, isCurrentConnection, nextWelcomeVariant, type ConnectionSnapshot } from "../lib/welcome";
 import { applyVerifiedHumanMode, type HumanMode } from "../lib/human-mode";
@@ -243,7 +244,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     ackTimerRef.current = setTimeout(() => {
       const changes = ackQueueRef.current.splice(0);
       if (statusRef.current !== "connected" || !changes.length) return;
-      conversation.sendUserMessage('[widget] User interface updates: ' + changes.join('; ') + '. Briefly acknowledge the latest meaningful choice once. Draft selections are not applied offers or completed purchases; successful API results are authoritative. Do not repeat completed actions with tools or ask for known information. Pending actions are not completed.');
+      conversation.sendUserMessage(widgetAcknowledgement.prefix + changes.join('; ') + '. ' + widgetAcknowledgement.instruction);
     }, 650);
   };
   useEffect(() => () => { if (ackTimerRef.current) clearTimeout(ackTimerRef.current); }, []);
