@@ -27,7 +27,7 @@ ElevenLabs handles conversation and calls 44 server tools. The concierge API val
 
 ## Demo and embedding
 
-The deployment targets are the [Railway demo](https://voxi-demo.up.railway.app) and the [Cloudflare website](https://voxi.kris-pradip.workers.dev/). Current deployment/version evidence belongs in the acceptance record; source changes are not proof that either target has been promoted.
+The deployment targets are the [Railway demo](https://voxi-demo.up.railway.app) and the [Cloudflare website](https://vox.kris-pradip.workers.dev/). Current deployment/version evidence belongs in the acceptance record; source changes are not proof that either target has been promoted.
 
 ```html
 <script src="https://voxi-demo.up.railway.app/embed/voxi.js" charset="utf-8" defer></script>

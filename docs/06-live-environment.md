@@ -5,7 +5,7 @@ These identifiers belong to the existing VOX Cinemas Virtual Assistant deploymen
 | Component | Hosting / identifier |
 |---|---|
 | Shared widget and standalone demo | [Railway web](https://voxi-demo.up.railway.app), dashboard at `/dashboard` |
-| Embedded website | [Cloudflare host](https://voxi.kris-pradip.workers.dev/), using the same Railway-built widget |
+| Embedded website | [Cloudflare host](https://vox.kris-pradip.workers.dev/), using the same Railway-built widget |
 | Concierge API | `https://concierge-api-production-3d90.up.railway.app`; health `/healthz`, contract `/openapi.json` |
 | Vista mock / Postgres | Railway private service network; inspect the environment for the current host/credentials |
 | Railway project | `voxi-concierge`, ID `52e8f8a4-19fd-41a1-8978-6c60ee8f930a` |

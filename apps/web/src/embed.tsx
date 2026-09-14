@@ -65,7 +65,7 @@ function mount() {
   for (const [k, v] of Object.entries(window.VoxiConfig?.vars ?? {})) if (k.startsWith("--")) root.style.setProperty(k, v);
   shadow.appendChild(root);
   const app = ReactDOM.createRoot(root);
-  const knownHost = location.hostname === "voxi.kris-pradip.workers.dev";
+  const knownHost = location.hostname === "vox.kris-pradip.workers.dev";
   const hostCatalogue = mountHostCatalogue({ document, hostname: location.hostname, apiBase: API_BASE });
   const loginSelector = window.VoxiConfig?.hostLoginSelector ?? (knownHost ? "#loginBtn" : undefined);
   const getLoginButton = () => {
