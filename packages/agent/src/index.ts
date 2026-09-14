@@ -236,6 +236,11 @@ export function buildWebhookTools(opts: AgentBuildOptions) {
           "Optional actual bank name explicitly named by the guest or a verified card result. Omit for 'my saved card'; saved_card is not a bank name.",
       } as Prop;
     if (name === "propose_booking") {
+      properties.experience = {
+        ...properties.experience,
+        description:
+          "Optional experience explicitly requested/selected by the guest or supplied by a current verified proposal. On a film-only edit, preserve that proposal's experience unless the guest changes it. For an initial plan with no selected experience, omit it and let the backend infer preferences.",
+      } as Prop;
       properties.tickets = {
         ...properties.tickets,
         description:

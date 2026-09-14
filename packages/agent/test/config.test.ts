@@ -23,6 +23,20 @@ describe("agent configuration contracts", () => {
     expect(byName("log_journey").description).toContain("only after successful cancel_booking");
     expect(byName("list_my_bookings").description).toContain("reference-free change");
   });
+  it("replaces only the native proposal experience guidance while preserving the runtime contract", () => {
+    const tools = buildWebhookTools(opts);
+    const proposal = tools.find((tool) => tool.name === "propose_booking")!.api_schema.request_body_schema;
+    expect(proposal.properties.experience.description).toContain("current verified proposal");
+    expect(proposal.properties.experience.description).toContain("On a film-only edit, preserve");
+    expect(proposal.properties.experience.description).toContain("For an initial plan");
+    expect(proposal.properties.experience.description).not.toContain("Default Standard");
+    expect(proposal.properties.experience.description).not.toContain("Only when the guest asked");
+    expect(proposal.required).not.toContain("experience");
+    expect(TOOL_REGISTRY.propose_booking.input.shape.experience.description).toContain("Default Standard");
+    expect(TOOL_REGISTRY.propose_booking.input.shape.experience.safeParse("Premier").success).toBe(true);
+    const sessions = tools.find((tool) => tool.name === "search_sessions")!.api_schema.request_body_schema;
+    expect(sessions.properties.experience.description).not.toContain("On a film-only edit, preserve");
+  });
   it("requires an explicit balance type for agent redemptions while preserving the legacy HTTP shape", () => {
     const tool = buildWebhookTools(opts).find((tool) => tool.name === "redeem_points")!;
     expect(tool.api_schema.request_body_schema.required).toContain("balanceType");

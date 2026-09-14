@@ -423,7 +423,7 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
         read("get_session_context", {}, context, "rating_context"),
         [
           "Resolve the named Spider-Man rating from get_film/search_films and explain the UAE VOX PG13 rule: guests aged13 AND UNDER need accompaniment by someone aged13 OR OLDER (https://uae.voxcinemas.com/faq). Exactly13 is included; do not grade against another country's generic PG13 policy. In the FIRST response ask one CONDITIONAL age question (if this is for your child), without asserting that a child is attending or that admission is already allowed.",
-          "Only after the user actually supplies age7 call get_age_rules with the exact returned PG13 and childAge7. Explain its actual accompanied-admission conditions. Do not ask that known age again or prepare/hold/book anything; after the final thanks stop.",
+          "Only after the user actually supplies age7 call get_age_rules with the exact returned PG13 and childAge7. Explain its actual accompanied-admission conditions. One relevant invitation to see showtimes is permitted in that admission answer BEFORE the user's final thanks; it is not a question after thanks. Do not ask that known age again or prepare/hold/book anything. AFTER the final thanks, close briefly without any question or invitation.",
         ],
         ar
           ? "قولي أولاً: ما التصنيف العمري لفيلم سبايدرمان؟ فقط إذا سُئلت عن العمر قولي: عمره 7 سنوات. إذا لم يسأل المساعد، قولي: شكراً، هذا كل شيء، ثم توقفي دون تقديم العمر. بعد جواب العمر قولي: شكراً، هذا كل شيء."
@@ -728,7 +728,8 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
             date: [targetDate],
             time: ["20:00"],
             experience: ["Standard"],
-            language: [],
+            // The generated native schema declares reply-language transport metadata.
+            language: ["en", "ar"],
             // Native condition evaluation may stringify JSON booleans with Python casing.
             keepSeatsIfPossible: ["true", "True"],
             refundMethodForDifference: ["VOX_CREDIT", "ORIGINAL_PAYMENT"],

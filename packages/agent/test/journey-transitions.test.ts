@@ -1,5 +1,6 @@
 import { CLIENT_TOOLS, TOOL_REGISTRY } from "@voxi/contracts";
 import { describe, expect, it } from "vitest";
+import { buildWebhookTools } from "../src/index.js";
 import { auditJourneyTransitionEvidence } from "../src/journey-transition-evidence.js";
 import { buildJourneyTransitionSuite } from "../src/journey-transition-simulations.js";
 import { materializeSimulations } from "../src/simulations.js";
@@ -195,6 +196,9 @@ describe("journey transition regressions", () => {
         invoke("rating-definition", "get_age_rules", { rating: "PG13", childAge: 7 }, language).error,
       ).toBe(true);
       expect(testFor("named-rating-age", language).simulation_max_turns).toBe(3);
+      const criteria = testFor("named-rating-age", language).success_conditions.join(" ");
+      expect(criteria).toContain("BEFORE the user's final thanks");
+      expect(criteria).toContain("AFTER the final thanks, close briefly without any question or invitation");
     });
     it(`${language}: a film-only edit cannot silently discard the current proposal's time or experience`, () => {
       const args = {
@@ -520,7 +524,7 @@ describe("journey transition regressions", () => {
         { targetSessionKey: "OTHER" },
         { date: "today" },
         { time: "16:50" },
-        { language: "ar" },
+        { language: "unsupported" },
         { refundMethodForDifference: "OTHER_CARD" },
         { keepSeatsIfPossible: false },
       ])
@@ -662,5 +666,44 @@ describe("journey transition regressions", () => {
       { keepSeatsIfPossible: false },
     ])
       expect(invoke("swap-refund-choice", "prepare_swap", { ...exact, ...change }).error).toBe(true);
+  });
+
+  it("matches the generated native swap language schema rather than only the business Zod input", () => {
+    const native = buildWebhookTools({
+      conciergeUrl: "https://fixture.invalid",
+      toolSecretHeader: { secret_id: "fixture-secret" },
+    });
+    const swap = native.find((t) => t.name === "prepare_swap")!;
+    const proposal = native.find((t) => t.name === "propose_booking")!;
+    expect(swap.api_schema.request_body_schema.properties.language).toMatchObject({
+      type: "string",
+      enum: ["en", "ar"],
+    });
+    expect(proposal.api_schema.request_body_schema.properties.language).toBeUndefined();
+    for (const language of ["en", "ar"]) {
+      expect(
+        invoke(
+          "swap-refund-choice",
+          "prepare_swap",
+          {
+            bookingId: "FIXRAH1",
+            date: "2027-01-02",
+            time: "20:00",
+            experience: "Standard",
+            keepSeatsIfPossible: true,
+            language,
+          },
+          language,
+        ).error,
+      ).toBe(false);
+      expect(
+        invoke(
+          "enquiry-plan",
+          "propose_booking",
+          { hoCode: "FIX_SPIDER", date: "tomorrow", tickets: 1, childTickets: 1, language },
+          language,
+        ).error,
+      ).toBe(true);
+    }
   });
 });

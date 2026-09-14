@@ -13,7 +13,7 @@ export const PROCEDURE_DEFINITIONS: readonly {
     type: "free_form",
     name: "VOX · Discover and book",
     trigger:
-      "The latest message asks for a movie plan/recommendation, a new booking, or an unpaid proposal/order step, including changing only the film in a visible proposal, seats, snacks, saved-card offers and checkout. Enter this procedure even when the conversation began with parking, a movie rating or showtimes: a later 'I would like to watch a movie with my son tomorrow' starts booking preparation. Reuse verified choices; do not remain in the earlier information-only flow. Excludes pure factual enquiries, paid-booking cancellation/exchange and a debit with missing/uncertain booking confirmation.",
+      "Resolve the latest message against the current conversation stage: a movie plan/recommendation, new booking, unpaid proposal/order step, or acceptance of a pending booking choice such as 'yes, apply that offer' enters or continues this procedure. This includes film-only edits to a visible proposal, seats, snacks, saved-card offers and checkout, even after parking, rating or showtime information. Reuse verified choices; do not remain in the earlier information-only flow. Excludes stops, information-only refusals, pure factual enquiries, paid-booking cancellation/exchange and a debit with missing/uncertain booking confirmation.",
   },
   {
     key: "cancellation",
