@@ -175,6 +175,47 @@ describe("named-film proposal fixture grounding", () => {
     }
   });
 
+  it("does not let an initial success contradict explicit Premier or evening-time constraints", () => {
+    for (const { body } of tests) {
+      const mocks = body.tool_mock_overrides.fixture_propose_booking;
+      const initialInput = {
+        intent: "initial",
+        title: common.filmTitle,
+        date: "tomorrow",
+        tickets: 1,
+        childTickets: 1,
+        childAges: [7],
+      };
+      for (const changes of [
+        { experience: "Premier" },
+        { time: "19:00" },
+        { experience: "Premier", time: "19:00" },
+        { timeFrom: "18:00", timeTo: "20:00" },
+      ]) {
+        const result = resolve(mocks, { ...initialInput, ...changes });
+        expect(result.ok).toBe(false);
+        expect(result.data).toBeUndefined();
+      }
+      expect(resolve(mocks, initialInput).data.proposal).toMatchObject({
+        experience: "KIDS",
+        showtime: initial.showtime,
+        held: false,
+      });
+      expect(resolve(mocks, { ...initialInput, experience: "KIDS" }).ok).toBe(true);
+      expect(
+        resolve(mocks, {
+          intent: "edit",
+          baseProposalRef: "fixture_initial_ref",
+          experience: "Premier",
+          time: "19:00",
+        }).data,
+      ).toMatchObject({
+        proposalRef: "fixture_edited_ref",
+        proposal: { experience: "Premier", showtime: revised.showtime },
+      });
+    }
+  });
+
   it("requires the first complete proposal before acceptance while every financial action stays denied", () => {
     for (const { body } of tests) {
       expect(body.success_conditions[0]).toContain("Before the FIRST request to accept/book/hold");

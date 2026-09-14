@@ -212,6 +212,32 @@ export function buildProposalEditSuite(
         propose_booking: guardProposalAges(
           rejectUnexpectedFilters(
             [
+              // These initial-result facts cannot satisfy the edited Premier/time constraints.
+              // This checks mock data fidelity, not the intent of a natural-language request.
+              ...["experience", "time", "timeTo"].map(
+                (path): SimulationMock => ({
+                  parameter_conditions: [
+                    { path: "intent", eval: { type: "exact", expected_value: "initial" } },
+                    {
+                      path,
+                      eval: {
+                        type: "regex",
+                        pattern: path === "experience" ? "^(?!KIDS$).+" : ".+",
+                      },
+                    },
+                  ],
+                  is_error: true,
+                  mock_result: JSON.stringify({
+                    ok: false,
+                    error: {
+                      code: "UNEXPECTED_SIMULATION_PARAMETER",
+                      message:
+                        "The initial KIDS 23:00 fixture does not satisfy the supplied time or experience constraint.",
+                      retryable: false,
+                    },
+                  }),
+                }),
+              ),
               {
                 parameter_conditions: [
                   { path: "experience", eval: { type: "exact", expected_value: "Standard" } },
