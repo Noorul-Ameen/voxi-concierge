@@ -29,7 +29,7 @@ Snapshot taken 9 Sep 2026, 16:55 Dubai. Everything below is what is deployed and
 | Concierge API | https://concierge-api-production-3d90.up.railway.app (every route also under `/api/*`) |
 | OpenAPI | `GET /openapi.json` on the API |
 | Health | `GET /healthz` and `GET /readyz` on the API |
-| Prototype site using the embed | https://voxi.kris-pradip.workers.dev/ (navy theme matches it) |
+| Prototype site using the embed | https://vox.kris-pradip.workers.dev/ (navy theme matches it) |
 
 ## 3. Runtime architecture (as deployed)
 

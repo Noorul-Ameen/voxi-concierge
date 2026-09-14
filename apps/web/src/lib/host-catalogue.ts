@@ -1,5 +1,5 @@
 /** Only the existing linked demo uses title/name values in its own booking handlers. */
-const LINKED_HOST = "voxi.kris-pradip.workers.dev";
+const LINKED_HOST = "vox.kris-pradip.workers.dev";
 type Choice = { value: string; label: string };
 type CatalogueMount = { ready: Promise<void>; dispose: () => void };
 const mounts = new WeakMap<Document, CatalogueMount>();

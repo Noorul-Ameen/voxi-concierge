@@ -50,12 +50,12 @@ const payloads = {
   films: { films: [{ hoCode: "new-film-id", title: "Red Flag", language: "Arabic", status: "now_showing" }, { hoCode: "other-film-id", title: "Runner", language: "Tamil", status: "now_showing" }, { title: "Later film", status: "coming_soon" }] },
 };
 const success = () => vi.fn(async (url: string | URL | Request) => new Response(JSON.stringify(String(url).endsWith("/cinemas") ? payloads.cinemas : payloads.films))) as unknown as ReturnType<typeof vi.fn> & typeof fetch;
-const mount = (document: Document, fetcher: typeof fetch, hostname = "voxi.kris-pradip.workers.dev") => mountHostCatalogue({ document, hostname, apiBase: "https://catalogue.example.test/", fetcher });
+const mount = (document: Document, fetcher: typeof fetch, hostname = "vox.kris-pradip.workers.dev") => mountHostCatalogue({ document, hostname, apiBase: "https://catalogue.example.test/", fetcher });
 
 describe("known-host catalogue options", () => {
   it("never fetches or changes any other hostname, including lookalike suffixes", async () => {
     const f = fixture(); const fetcher = success();
-    for (const hostname of ["localhost", "voxi-demo.up.railway.app", "voxi.kris-pradip.workers.dev.example.test"]) await mount(f.document, fetcher, hostname).ready;
+    for (const hostname of ["localhost", "voxi-demo.up.railway.app", "vox.kris-pradip.workers.dev.example.test"]) await mount(f.document, fetcher, hostname).ready;
     expect(fetcher).not.toHaveBeenCalled();
     expect(f.cinemas.options).toHaveLength(3);
   });
