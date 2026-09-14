@@ -20,6 +20,8 @@ This change follows live checks of the supplied customer journeys on the linked 
 
 ## Test approach
 
+The final website walkthrough also prompted three display corrections: archived cards explicitly say “Earlier result,” selection summaries require a real matching film identifier or title, and signed-in checkout uses a generic account acknowledgement instead of displaying the customer's name, email and phone. Payment-change summaries reuse the existing English/Arabic payment labels. These changes preserve checkout actions and guest contact fields.
+
 The regression suite covers authenticated greetings, account/transfer races, payment consent and reservations, classification refresh/admission, exchange preference and price preservation, and truthful financial reporting. Hosted checks use fresh synthetic guest transactions for actual payment/refund/swap execution; named spreadsheet bookings remain read-only and member balance checks stop before payment.
 
 ElevenLabs simulations exercise the existing journeys plus verified widget acknowledgements, child-rating boundaries, proposal edits, VOX/card continuation and explicit card refusal, correction of rejected SHARE selection, and reference-less confirmed-booking lookup in English and Arabic. Provider pass counters are reviewed against tool results and spoken facts; a provider pass alone does not establish acceptance.

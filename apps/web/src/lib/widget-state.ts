@@ -1,6 +1,6 @@
 import type { CommandResult, Lang, UiHint, WidgetEvent } from "./api";
 import { cinemaDate } from "./cinema-time";
-import { money } from "./i18n";
+import { money, paymentMethodLabel } from "./i18n";
 
 export type UserActivityClock = { lastUserAt: number; lastProviderPingAt: number };
 
@@ -85,7 +85,7 @@ export function decisionSummary(ui: UiHint, lang: Lang): string {
   const seats = typeof item.seats === "string" ? item.seats : Array.isArray(item.seats) ? item.seats.join(", ") : item.tickets?.map((ticket: any) => ticket.seat).filter(Boolean).join(", ") ?? meta.selectedSeats;
   const details = [film, cinema, when, count ? ar ? `${count} تذاكر` : `${count} ticket${count === 1 ? "" : "s"}` : null, seats ? `${ar ? "المقاعد" : "Seats"} ${seats}` : null].filter(Boolean);
   const amount = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? money(value, lang) : undefined;
-  if (ui.type === "payment_switch") return [ar ? "تغيير العرض" : "Offer change", amount(item.currentTotalCents), "→", amount(item.totalAfterCents), item.nextPaymentMethod].filter(Boolean).join(" · ");
+  if (ui.type === "payment_switch") return [ar ? "تغيير العرض" : "Offer change", amount(item.currentTotalCents), "→", amount(item.totalAfterCents), item.nextPaymentMethod ? paymentMethodLabel(item.nextPaymentMethod, lang) : undefined].filter(Boolean).join(" · ");
   if (item.swapTo) {
     const swap = item.swapTo;
     details.push(...["→", swap.cinemaName, swap.showtimeLabel, swap.experience, Array.isArray(swap.seats) ? swap.seats.join(", ") : undefined, typeof swap.differenceCents === "number" ? `${ar ? "فرق السعر" : "Price difference"} ${amount(swap.differenceCents)}` : undefined].filter((value): value is string => typeof value === "string"));
@@ -111,7 +111,11 @@ function retainSelection(previous: UiHint, next: UiHint): UiHint {
   }
   if (["movie", "recommendation"].includes(previous.type)) {
     const title = meta.film?.title ?? summary?.filmTitle;
-    const selectedFilm = previous.items.find((movie) => movie.hoCode === meta.film?.hoCode || (title && [movie.title, movie.titleEn].includes(title)));
+    const hoCode = meta.film?.hoCode ?? summary?.hoCode;
+    const hasCode = typeof hoCode === "string" && !!hoCode.trim();
+    const selectedFilm = previous.items.find((movie) => hasCode
+      ? movie.hoCode === hoCode
+      : typeof title === "string" && !!title.trim() && [movie.title, movie.titleEn, movie.filmTitle].includes(title));
     if (selectedFilm) return { ...previous, meta: { ...previous.meta, selectedFilm } };
   }
   if (["quantity", "seatmap", "menu"].includes(previous.type) && Array.isArray(summary?.tickets)) return { ...previous, meta: { ...previous.meta, selectedSummary: summary } };

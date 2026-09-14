@@ -67,4 +67,8 @@ const STR = {
 export type Key = keyof typeof STR;
 export const t = (lang: Lang, k: Key) => STR[k][lang];
 export const isRtl = (lang: Lang) => lang === "ar";
+export function paymentMethodLabel(method: unknown, lang: Lang): string {
+  const labels: Record<string, [string, string]> = { VOX_CREDIT: ["VOX Credit", "رصيد فوكس"], SHARE_POINTS: ["SHARE Points", "نقاط شير"], ORIGINAL_PAYMENT: ["Original payment method", "طريقة الدفع الأصلية"], CARD: ["Original card", "البطاقة الأصلية"], SAVED_CARD: ["Saved card", "البطاقة المحفوظة"] };
+  return labels[String(method)]?.[lang === "ar" ? 1 : 0] ?? (lang === "ar" ? "طريقة غير محددة" : "Method not specified");
+}
 export const money = (cents: number, lang: Lang) => (lang === "ar" ? `${(cents / 100).toFixed(cents % 100 ? 2 : 0)} د.إ` : `AED ${(cents / 100).toFixed(cents % 100 ? 2 : 0)}`);
