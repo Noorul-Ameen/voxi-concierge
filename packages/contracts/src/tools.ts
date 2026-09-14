@@ -91,6 +91,15 @@ export const ListCinemasInput = z.object({
 });
 export const GetCinemaInput = z.object({ cinemaId: z.string().optional(), name: z.string().optional() });
 export const NearestCinemasInput = z.object({
+  area: z
+    .string()
+    .trim()
+    .min(1)
+    .max(120)
+    .optional()
+    .describe(
+      "Area explicitly supplied by the guest, for example Al Barsha or البرشاء. Pass it directly without requesting GPS again. Uses the supported area reference point, not the guest's exact location. Omit only when the guest has not named an area; never infer an area from booking history.",
+    ),
   limit: z.number().int().min(1).max(5).default(3),
   experience: Experience.optional(),
 });
@@ -659,7 +668,7 @@ export const TOOL_REGISTRY = {
     input: NearestCinemasInput,
     kind: "read",
     description:
-      "Three nearest cinemas to the location the guest shared or picked in the widget (no coordinates needed — never invent any). If it returns LOCATION_REQUIRED, ask the guest to tap the location button or name an area, or call request_location.",
+      "Nearest cinemas to the exact named area or location shared in the widget. Named-area distances are approximate straight-line distances. If a supplied area is unsupported, explain that it could not be matched and await another area; never substitute a name, remove the area or use old location data. If no area or location was supplied, ask for an area or request_location.",
   },
   get_age_rules: {
     input: GetAgeRulesInput,
@@ -911,7 +920,7 @@ export const CLIENT_TOOLS = {
   },
   render_qr: {
     description:
-      "Retrieve and display the exact verified booking receipt and its real QR code in the widget. Await the result; say the receipt or QR is shown only when ok:true and rendered:true. If unavailable, explain the returned error without claiming it is displayed or asking the guest to pay again. This read-only view does not change any booking or current basket.",
+      "Display a verified booking receipt and QR only when the guest currently asks to see it and it is not already shown. An email-delivery question or 'leave it there' is not a display/retry request; do not call after a pause or goodbye. Await ok:true and rendered:true before claiming display. Explain a failure without claiming display, delivery or another payment. This read-only view does not change a booking or basket.",
     params: z.object({
       bookingId: z
         .string()

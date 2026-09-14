@@ -1,5 +1,6 @@
 import { CLIENT_TOOLS, TOOL_REGISTRY } from "@voxi/contracts";
 import { describe, expect, it } from "vitest";
+import { actionContext } from "../../../apps/web/src/lib/widget-state.js";
 import { buildBalanceContinuationSuite } from "../src/balance-continuation-simulations.js";
 import { buildChildClassificationSuite } from "../src/child-classification-simulations.js";
 import { buildAgentConfig } from "../src/index.js";
@@ -168,13 +169,31 @@ describe("verified UI acknowledgement regression fixtures", () => {
       return JSON.parse(json);
     };
     expect(event("paid")).toMatchObject({ action: "payment.token", succeeded: true, pending: false });
+    const paid = event("paid");
+    expect(paid).toEqual(
+      JSON.parse(
+        actionContext("payment.token", {
+          ok: true,
+          speech: paid.speech,
+          data: {
+            speech: paid.speech,
+            bookingId: "FIXPAID",
+            qrPayload: "fixture-qr-only",
+            booking: { bookingId: "FIXPAID", paid: true },
+          },
+          action: { type: "pay_order", status: "succeeded" },
+        }),
+      ),
+    );
+    expect(paid.state).toEqual({});
     expect(event("reheld")).toMatchObject({ action: "order.recover", succeeded: true, pending: false });
     expect(event("pending")).toMatchObject({ succeeded: false, pending: true });
     expect(event("failed")).toMatchObject({ succeeded: false, pending: false });
     expect(event("selection")).toMatchObject({
-      succeeded: false,
-      state: { selection: { status: "unsubmitted" } },
+      applied: false,
+      draftSelection: { kind: "payment_method", label: "Credit or debit card" },
     });
+    expect(event("selection")).not.toHaveProperty("succeeded");
     expect(JSON.stringify(event("pending"))).not.toContain("actionId");
   });
 

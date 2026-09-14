@@ -31,6 +31,16 @@ export function buildProposalEditSuite(
   )
     throw new Error("Use captured same-film/site one-adult one-child proposals");
   const { common_tool_mock_overrides, fixture } = buildUiAcknowledgementSuite(clockLocal);
+  const titleAliases = [...new Set([initial.filmTitle, "Spider-Man", "سبايدرمان", "سبايدر مان"])];
+  // Only captured identity/classification facts; no recommendation or showtime is implied by a film read.
+  const film = {
+    title: initial.filmTitle,
+    titleEn: initial.filmTitle,
+    hoCode: initial.hoCode,
+    rating: "PG13",
+    language: "English",
+    status: "now_showing",
+  };
   const ok = (
     data: unknown,
     conditions: Record<string, string | number> = {},
@@ -45,12 +55,18 @@ export function buildProposalEditSuite(
   });
   const first = {
     ...initial,
+    adultTickets: initial.tickets,
+    ticketQuantity: initial.tickets + initial.childTickets,
+    selectedSeats: initial.seats,
     showtimeLabel: "tomorrow at 11:00 pm",
     preferredExperience: "KIDS",
     held: false,
   };
   const next = {
     ...revised,
+    adultTickets: revised.tickets,
+    ticketQuantity: revised.tickets + revised.childTickets,
+    selectedSeats: revised.seats,
     showtimeLabel: "tomorrow at 6:30 pm",
     isAlternative: true,
     requested: { time: "19:00" },
@@ -77,7 +93,7 @@ export function buildProposalEditSuite(
       },
       chat_history: [],
       success_conditions: [
-        "Read the actual recommended show and produce an unheld proposal for one adult and one seven-year-old; obtain the real PG13 age rule before suitability. Do not invent a usual cinema, exact price or available seats.",
+        "Resolve the guest's named Spider-Man film using a supported title lookup (get_film or search_films), then obtain its actual PG13 rule for age7 before stating suitability. A general get_recommendations call is not a named-film lookup: title and query are undeclared for that tool. Before the FIRST request to accept/book/hold, call propose_booking and receive the complete successful unheld proposal (film, cinema, showtime, experience, one adult plus one child, seats, total and proposalToken). A recommendation or age result alone is insufficient. Do not invent a usual cinema, price, seats or token.",
         "The first KIDS23:00 option is outside the returned usual18:00–20:00 window. Never call it the usual time or conceal the late alternative.",
         "After the guest requests around19:00, propose the returned Premier18:30 show. Explain the changed experience/time and exact new total AED108.50 briefly, without repeating unchanged film/cinema/ticket count or calculating a price difference. Keep both proposals unheld until accepted.",
         "The guest declines to reserve after the edit. No quick_book, hold, food, offer application, payment or new booking is permitted; no repeated next-step question after refusal.",
@@ -131,6 +147,8 @@ export function buildProposalEditSuite(
             }),
           ],
           {
+            title: [],
+            query: [],
             cinemaId: [initial.cinemaId],
             cinemaName: [initial.cinemaName, "MOE"],
             time: [],
@@ -141,8 +159,23 @@ export function buildProposalEditSuite(
             language: [],
           },
         ),
-        search_films: [ok({ films: [{ title: initial.filmTitle, hoCode: initial.hoCode, rating: "PG13" }] })],
-        get_film: [ok({ film: { title: initial.filmTitle, hoCode: initial.hoCode, rating: "PG13" } })],
+        search_films: rejectUnexpectedFilters(
+          titleAliases.map((query) => ok({ films: [film] }, { query }, { type: "movie", items: [film] })),
+          { query: titleAliases, title: [], hoCode: [], filmLanguage: ["English"], language: [] },
+        ),
+        get_film: rejectUnexpectedFilters(
+          [
+            ok({ film }, { hoCode: initial.hoCode }, { type: "movie", items: [film] }),
+            ...titleAliases.map((title) => ok({ film }, { title }, { type: "movie", items: [film] })),
+          ],
+          {
+            title: titleAliases,
+            query: [],
+            hoCode: [initial.hoCode],
+            filmLanguage: ["English"],
+            language: [],
+          },
+        ),
         get_age_rules: [
           ok(
             {
@@ -156,59 +189,80 @@ export function buildProposalEditSuite(
             { rating: "PG13", childAge: 7 },
           ),
         ],
-        search_sessions: [
-          ok({ sessions: [revised] }, { cinemaId: revised.cinemaId }),
-          ok({ sessions: [revised] }, { cinemaName: revised.cinemaName }),
-        ],
-        propose_booking: [
+        search_sessions: rejectUnexpectedFilters(
+          [
+            ok({ sessions: [revised] }, { cinemaId: revised.cinemaId }),
+            ok({ sessions: [revised] }, { cinemaName: revised.cinemaName }),
+          ],
           {
-            parameter_conditions: [
-              { path: "experience", eval: { type: "exact", expected_value: "Standard" } },
-            ],
-            is_error: true,
-            mock_result: JSON.stringify({
-              ok: false,
-              error: {
-                code: "NO_MATCH",
-                message:
-                  "No Standard show matches this request; the supplied experience cannot silently return KIDS or Premier.",
-                retryable: false,
-              },
-            }),
+            cinemaId: [revised.cinemaId],
+            cinemaName: [revised.cinemaName, "MOE"],
+            hoCode: [initial.hoCode],
+            filmLanguage: ["English"],
+            language: [],
           },
-          ok(
-            { proposal: next, proposalToken: "fixture_edited_proposal", needs: "proposal_acceptance" },
-            { time: "19:00", tickets: 1, childTickets: 1 },
-            { type: "booking_proposal", items: [next] },
-          ),
-          ok(
-            { proposal: next, proposalToken: "fixture_edited_proposal", needs: "proposal_acceptance" },
-            { sessionKey: revised.sessionKey, tickets: 1, childTickets: 1 },
-            { type: "booking_proposal", items: [next] },
-          ),
-          ok(
-            { proposal: next, proposalToken: "fixture_edited_proposal", needs: "proposal_acceptance" },
-            { timeFrom: "18:00", timeTo: "20:00", tickets: 1, childTickets: 1 },
-            { type: "booking_proposal", items: [next] },
-          ),
-          ok(
-            { proposal: first, proposalToken: "fixture_initial_proposal", needs: "proposal_acceptance" },
-            { sessionKey: initial.sessionKey, tickets: 1, childTickets: 1 },
-            { type: "booking_proposal", items: [first] },
-          ),
-          ...(
-            [{ title: initial.filmTitle }, { title: "Spider-Man" }, { hoCode: initial.hoCode }] as Record<
-              string,
-              string
-            >[]
-          ).map((selected) =>
+        ),
+        propose_booking: rejectUnexpectedFilters(
+          [
+            {
+              parameter_conditions: [
+                { path: "experience", eval: { type: "exact", expected_value: "Standard" } },
+              ],
+              is_error: true,
+              mock_result: JSON.stringify({
+                ok: false,
+                error: {
+                  code: "NO_MATCH",
+                  message:
+                    "No Standard show matches this request; the supplied experience cannot silently return KIDS or Premier.",
+                  retryable: false,
+                },
+              }),
+            },
+            ok(
+              { proposal: next, proposalToken: "fixture_edited_proposal", needs: "proposal_acceptance" },
+              { time: "19:00", tickets: 1, childTickets: 1 },
+              { type: "booking_proposal", items: [next] },
+            ),
+            ok(
+              { proposal: next, proposalToken: "fixture_edited_proposal", needs: "proposal_acceptance" },
+              { sessionKey: revised.sessionKey, tickets: 1, childTickets: 1 },
+              { type: "booking_proposal", items: [next] },
+            ),
+            ok(
+              { proposal: next, proposalToken: "fixture_edited_proposal", needs: "proposal_acceptance" },
+              { timeFrom: "18:00", timeTo: "20:00", tickets: 1, childTickets: 1 },
+              { type: "booking_proposal", items: [next] },
+            ),
             ok(
               { proposal: first, proposalToken: "fixture_initial_proposal", needs: "proposal_acceptance" },
-              { ...selected, tickets: 1, childTickets: 1 },
+              { sessionKey: initial.sessionKey, tickets: 1, childTickets: 1 },
               { type: "booking_proposal", items: [first] },
             ),
-          ),
-        ],
+            ...(
+              [...titleAliases.map((title) => ({ title })), { hoCode: initial.hoCode }] as Record<
+                string,
+                string
+              >[]
+            ).map((selected) =>
+              ok(
+                { proposal: first, proposalToken: "fixture_initial_proposal", needs: "proposal_acceptance" },
+                { ...selected, tickets: 1, childTickets: 1 },
+                { type: "booking_proposal", items: [first] },
+              ),
+            ),
+          ],
+          {
+            title: titleAliases,
+            query: [],
+            hoCode: [initial.hoCode],
+            cinemaId: [initial.cinemaId],
+            cinemaName: [initial.cinemaName, "MOE"],
+            sessionKey: [initial.sessionKey, revised.sessionKey],
+            filmLanguage: ["English"],
+            language: [],
+          },
+        ),
       },
     })),
   };

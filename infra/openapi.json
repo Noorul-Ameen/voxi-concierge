@@ -421,6 +421,12 @@
           "lng": {
             "type": "number"
           },
+          "area": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "Area explicitly supplied by the guest, for example Al Barsha or البرشاء. Pass it directly without requesting GPS again. Uses the supported area reference point, not the guest's exact location. Omit only when the guest has not named an area; never infer an area from booking history."
+          },
           "limit": {
             "type": "integer",
             "minimum": 1,
@@ -3708,7 +3714,7 @@
     },
     "/tools/nearest_cinemas": {
       "post": {
-        "summary": "Three nearest cinemas to the location the guest shared or picked in the widget (no coordinates needed — never invent any). If it returns LOCATION_REQUIRED, ask the guest to tap the location button or name an area, or call request_location.",
+        "summary": "Nearest cinemas to the exact named area or location shared in the widget. Named-area distances are approximate straight-line distances. If a supplied area is unsupported, explain that it could not be matched and await another area; never substitute a name, remove the area or use old location data. If no area or location was supplied, ask for an area or request_location.",
         "tags": [
           "reads"
         ],

@@ -49,16 +49,37 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
         a.showtime.localeCompare(other.showtime),
     );
   const alternatives = sessions.slice(0, 3).map((s) => sessionCard(s, ctx.lang, ctx.nowLocal, cinemaName));
+  // Finding the best candidate is read-only. A separate priced preview still
+  // supplies its own confirmation before any exchange or payment is possible.
+  const recommendedPreviewInput =
+    !input.targetSessionKey && sessions[0]
+      ? {
+          ...input,
+          bookingId: b.VistaBookingId,
+          date: sessions[0].showtime.slice(0, 10),
+          targetSessionKey: sessions[0].key,
+        }
+      : undefined;
   const target = input.targetSessionKey ? await ctx.catalog.sessionByKey(input.targetSessionKey) : undefined;
   if (!target || !sessions.some((s) => s.key === target.key))
     return ok(
-      { needs: "swap_session", bookingId: b.VistaBookingId, sameCinemaRequired: true, alternatives },
+      {
+        needs: "swap_session",
+        bookingId: b.VistaBookingId,
+        sameCinemaRequired: true,
+        alternatives,
+        ...(recommendedPreviewInput ? { nextStep: "preview_recommended", recommendedPreviewInput } : {}),
+      },
       t(
         ctx.lang,
         target?.cinemaId && target.cinemaId !== b.CinemaId
           ? `The swap must stay at ${cinemaName}. Here are the closest available showtimes for the same film.`
-          : "Choose one of these closest available showtimes at the same cinema. Your original booking remains confirmed.",
-        "اختر أحد أقرب المواعيد المتاحة للفيلم نفسه في السينما نفسها. يظل حجزك الأصلي مؤكداً.",
+          : alternatives.length
+            ? "The closest matching showtimes are available at the same cinema. Your original booking remains confirmed."
+            : "No matching showtimes were found at the same cinema. Your original booking remains confirmed.",
+        alternatives.length
+          ? "هذه أقرب المواعيد المتاحة للفيلم نفسه في السينما نفسها. يظل حجزك الأصلي مؤكداً."
+          : "لم أجد موعداً مطابقاً في السينما نفسها. يظل حجزك الأصلي مؤكداً.",
       ),
       {
         type: "showtimes",

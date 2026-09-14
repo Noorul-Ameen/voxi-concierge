@@ -1,4 +1,4 @@
-import type { SimulationSuite } from "./simulations.js";
+import { type SimulationSuite, rejectUnexpectedFilters } from "./simulations.js";
 import { buildUiAcknowledgementSuite } from "./ui-acknowledgement-simulations.js";
 
 /** Read-only rating probes. The named film/rating must come from a captured current catalogue. */
@@ -83,19 +83,28 @@ export function buildChildClassificationSuite(
               localTime: clockLocal,
               activeOrder: null,
             }),
-            get_film: [
-              ...["title", "hoCode"].map((path) => ({
-                parameter_conditions: [
-                  {
-                    path,
-                    eval: { type: "exact" as const, expected_value: currentFilm[path as "title" | "hoCode"] },
-                  },
-                ],
-                is_error: false,
-                mock_result: JSON.stringify({ ok: true, data: { film: currentFilm } }),
-              })),
-            ],
-            search_films: okMock({ films: [currentFilm] }),
+            get_film: rejectUnexpectedFilters(
+              [
+                ...["title", "hoCode"].map((path) => ({
+                  parameter_conditions: [
+                    {
+                      path,
+                      eval: {
+                        type: "exact" as const,
+                        expected_value: currentFilm[path as "title" | "hoCode"],
+                      },
+                    },
+                  ],
+                  is_error: false,
+                  mock_result: JSON.stringify({ ok: true, data: { film: currentFilm } }),
+                })),
+              ],
+              { title: [currentFilm.title], hoCode: [currentFilm.hoCode], filmLanguage: [], language: [] },
+            ),
+            search_films: rejectUnexpectedFilters(okMock({ films: [currentFilm] }), {
+              filmLanguage: [],
+              language: [],
+            }),
             get_age_rules: [
               {
                 parameter_conditions: [
