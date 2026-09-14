@@ -113,7 +113,12 @@ export const GetAgeRulesInput = z.object({
 
 export const ListOffersInput = z.object({
   cinemaId: z.string().optional(),
-  sessionKey: z.string().optional().describe("'{cinemaId}-{sessionId}'"),
+  sessionKey: z
+    .string()
+    .optional()
+    .describe(
+      "Copy the selected show's exact sessionKey from a successful tool result. Do not construct it, add a cinema prefix or change its format. Omit only when checking general offers without a selected show.",
+    ),
   experience: Experience.optional(),
   type: z.enum(["bank", "promo", "loyalty", "member", "partner", "any"]).default("any"),
   bank: z
