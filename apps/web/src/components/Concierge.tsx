@@ -15,6 +15,7 @@ import widgetAcknowledgement from "../lib/widget-acknowledgement.json";
 import { receiptCompletesCurrentOrder, renderVerifiedReceipt } from "../lib/receipt";
 import { connectionVariables, isCurrentConnection, nextWelcomeVariant, type ConnectionSnapshot } from "../lib/welcome";
 import { applyVerifiedHumanMode, type HumanMode } from "../lib/human-mode";
+import { cancelledCurrentOrder, isCancelledOrderUi, removeCancelledOrderCards } from "../lib/order-cancellation";
 
 
 const nid = () => crypto.randomUUID();
@@ -117,7 +118,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         try { await conversation.endSession(); } catch { /* Server identity already changed. */ } finally { switchingRef.current = false; }
         if (epoch !== authEpochRef.current) return;
         setItems([]); commitOrder(null); setMode("idle"); clearHumanMode();
-        pendingAckRef.current.clear(); completedActionsRef.current.clear(); ackQueueRef.current = [];
+        pendingAckRef.current.clear(); completedActionsRef.current.clear(); cancelledOrdersRef.current.clear(); ackQueueRef.current = [];
       }
       setCustomer(r.customer);
       void refreshProfile(next);
@@ -154,7 +155,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       try { await conversation.endSession(); } catch { /* Backend sign-out already succeeded. */ } finally { switchingRef.current = false; }
       commitSession({ ...current, token: result.token ?? current.token, isLoggedIn: false, dynamicVariables: result.dynamicVariables ?? current.dynamicVariables });
       setCustomer(null); setProfile(null); setHistory([]); setProfileLoading(false); commitOrder(null); setItems([]); setAuthOpen(false); setMode("idle"); clearHumanMode();
-      pendingAckRef.current.clear(); completedActionsRef.current.clear(); ackQueueRef.current = [];
+      pendingAckRef.current.clear(); completedActionsRef.current.clear(); cancelledOrdersRef.current.clear(); ackQueueRef.current = [];
       onAuth?.(null);
       notifyPageAuthChange();
     } catch { setAuthErr(lang === "ar" ? "تعذر تسجيل الخروج. حاول مرة أخرى." : "Could not sign out. Please try again."); }
@@ -189,6 +190,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const eventIdsRef = useRef(new Set<string>());
   const pendingAckRef = useRef(new Set<string>());
   const completedActionsRef = useRef(new Map<string, { type: string; status: string; result?: Record<string, unknown>; error?: { message: string } }>());
+  const cancelledOrdersRef = useRef(new Set<string>());
   const ackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ackQueueRef = useRef<string[]>([]);
   const [humanMode, storeHumanMode] = useState<HumanMode | null>(null);
@@ -236,6 +238,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const statusRef = useRef<string>("disconnected"); // live connection status for callbacks that outlive a render
   const push = useCallback((it: ItemBody) => {
     if (it.kind === "cards" && it.ui.type === "login") { pageSession.requestLogin(); return; }
+    if (it.kind === "cards" && isCancelledOrderUi(it.ui, cancelledOrdersRef.current)) return;
     setItems((xs) => appendTranscript(xs, { ...it, id: nid() } as Item));
   }, []);
   const acknowledge = (context: string) => {
@@ -274,7 +277,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         if (!s) return JSON.stringify({ ok: false, rendered: false, error: "The widget is not ready." });
         return JSON.stringify(await renderVerifiedSeatMap(
           () => sendCommand(s, { type: "seat.plan", sessionKey: p.sessionKey, userSessionId: p.userSessionId }),
-          (ui) => push({ kind: "cards", ui }),
+          (ui) => { if (isCancelledOrderUi(ui, cancelledOrdersRef.current)) throw new Error("Order cancelled"); push({ kind: "cards", ui }); },
           () => sessionRef.current?.token === s.token,
         ));
       },
@@ -377,7 +380,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     setCustomer(null); setProfile(null); setHistory([]); setProfileLoading(false); setAuthErr(null); setAuthOpen(false);
     commitOrder(null); setHoldLeft(null); warnedRef.current = {}; holdCheckRef.current = null;
     setItems([]); setInput(""); clearHumanMode(); setMode("idle"); setSseStatus("closed");
-    pendingAckRef.current.clear(); completedActionsRef.current.clear(); ackQueueRef.current = [];
+    pendingAckRef.current.clear(); completedActionsRef.current.clear(); cancelledOrdersRef.current.clear(); ackQueueRef.current = [];
     eventSeqRef.current.clear(); eventIdsRef.current.clear();
     if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
     try {
@@ -428,6 +431,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   /** Cards that carry the order's hold expiry (Review & Pay, order summary) keep the timer in sync; a receipt ends it. */
   const trackOrderFromUi = (ui?: UiHint) => {
     if (!ui) return;
+    if (isCancelledOrderUi(ui, cancelledOrdersRef.current)) return;
     if (ui.type === "login") { setAuthOpen(true); return; }
     if (ui.type === "qr") {
       if (receiptCompletesCurrentOrder(ui)) commitOrder(null);
@@ -481,15 +485,28 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           if (e.ui?.type) push({ kind: "cards", ui: e.ui });
           trackOrderFromUi(e.ui);
           break;
-        case "action.completed":
+        case "action.completed": {
           completedActionsRef.current.set(e.action.actionId, e.action);
           if (completedActionsRef.current.size > 100) completedActionsRef.current.delete(completedActionsRef.current.keys().next().value!);
           if (pendingAckRef.current.delete(e.action.actionId)) acknowledge(actionContext(e.action.type, { ok: e.action.status === "succeeded", action: e.action, error: e.action.error?.message }));
+          const currentSession = sessionRef.current;
+          const cancelled = cancelledCurrentOrder(e, orderRef.current?.userSessionId,
+            { token: session.token, conversationId: session.conversationId, epoch },
+            currentSession && !authBusyRef.current ? { token: currentSession.token, conversationId: currentSession.conversationId, epoch: authEpochRef.current } : null);
+          if (cancelled) {
+            cancelledOrdersRef.current.add(cancelled);
+            if (cancelledOrdersRef.current.size > 100) cancelledOrdersRef.current.delete(cancelledOrdersRef.current.values().next().value!);
+            // Clear the ref immediately so an in-flight expiry response also fails its hold snapshot guard.
+            commitOrder(null); setHoldLeft(null); warnedRef.current = {}; holdCheckRef.current = null;
+            setItems(xs => removeCancelledOrderCards(xs, cancelled));
+          }
           if (e.ui?.type) push({ kind: "cards", ui: e.ui });
           else if (e.action.status !== "succeeded" && e.action.error?.message) push({ kind: "note", text: `⚠️ ${e.action.error.message}` });
           trackOrderFromUi(e.ui);
           break;
+        }
         case "order.updated": {
+          if (cancelledOrdersRef.current.has(e.userSessionId)) break;
           const sm = e.summary as Record<string, any>;
           if (sm?.expiresAtUtc !== orderRef.current?.expiresAtUtc) warnedRef.current = {};
           if (sm && (sm.state === "paid" || sm.state === "cancelled")) commitOrder(null);
@@ -787,6 +804,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         const result = await sendCommand(current, { ...cmd, ...(["booking.select", "order.recover"].includes(String(cmd.type)) && !cmd.idempotencyKey ? { idempotencyKey: crypto.randomUUID() } : {}) })
           .catch((): Awaited<ReturnType<typeof sendCommand>> => ({ ok: false, error: langRef.current === "ar" ? "انقطع الاتصال. تحقق من حالة الحجز قبل إعادة المحاولة." : "The connection was interrupted. Check the booking status before trying again." }));
         if (sessionRef.current?.token !== current.token) return { ok: false, error: langRef.current === "ar" ? "تغيرت جلسة الحساب. تحقق من الطلب مجدداً." : "Your account session changed. Check the current booking again." };
+        if (result.ui && isCancelledOrderUi(result.ui, cancelledOrdersRef.current)) return { ok: false, error: langRef.current === "ar" ? "تم إلغاء هذا الطلب." : "This order was cancelled." };
         if (result.ui) { trackOrderFromUi(result.ui); push({ kind: "cards", ui: result.ui }); }
         const mapFeedback = directSeatMapFeedback(String(cmd.type), result, langRef.current, statusRef.current === "connected", sessionRef.current?.token === current.token);
         if (mapFeedback) {

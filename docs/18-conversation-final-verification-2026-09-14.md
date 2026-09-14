@@ -1,0 +1,13 @@
+# Conversation follow-up verification — 14 September 2026
+
+Cancelling an expired unpaid basket succeeded on the server but left its expired hold and recovery controls visible. Successful cancellation now returns the cancelled order ID. The widget clears only the matching basket in the current account and conversation, and ignores later responses for that cancelled order. Failed or unrelated actions cannot clear another basket. Paid receipts and archived conversation history remain available.
+
+Seventeen regression tests cover cancellation identity, account changes, event ordering and late responses. The complete application suite passed 760 tests across 71 files on this fix. The checks used the isolated local test database; the hosted observation used one temporary unpaid QA basket, with no payment or changes to named demo bookings or balances.
+
+Conversation review also found an altered session identifier, unsupported advice after an email-delivery question, and an Arabic refund acknowledgement that changed days into working days after its Procedure ended. Tool guidance now says to copy the exact returned session key. The existing delivery rule has a short English/Arabic answer example, and the global prompt preserves the approved 5–10 days wording after a Procedure ends.
+
+The offer-journey simulation now rejects explicitly conflicting show, cinema and experience identifiers while accepting valid omitted filters. Its food result includes the actual order card, amount and unchanged hold expiry, and its requested summary callback matches the widget. Six fixture-integrity tests pass; the agent suite passes 154 tests. Static simulation phases remain explicit and are not evidence of live transaction chronology.
+
+Native ElevenLabs inspection revealed that nine attached knowledge documents had no retrieval index despite a completion label in the list. Creating a candidate-only text document through the console queued indexing for the attachments automatically, including three inherited policy documents. Their content was not changed. Subsequent retrieval with the candidate's existing multilingual settings returned all nine original document IDs, with the revised checkout and admission documents ranked first for their respective queries. Pre-index simulation results remain diagnostic and are not counted as final acceptance.
+
+The corrected agent configuration, its fresh indexed English/Arabic scenarios, deployment verification and connected browser checks are separate release gates. This source change does not itself promote an ElevenLabs candidate or certify that the linked website's separate showtime popup is integrated with the backend.

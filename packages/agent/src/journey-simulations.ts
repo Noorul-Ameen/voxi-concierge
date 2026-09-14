@@ -729,6 +729,70 @@ export function buildJourneySimulationSuite(): SimulationSuite {
   for (const language of ["en", "ar"] as const) {
     const offerSuccess = suite.tests.find((test) => test.id === `03-positive-${language}`)!;
     const snackOrder = JSON.parse(offerSuccess.tool_mock_overrides.order_fnb![0]!.mock_result).data.order;
+    snackOrder.offers = [offer];
+    // The active-basket order_fnb path returns bookingReview, including this UI.
+    // Its success is not merely a data-only total or a prepared payment sheet.
+    offerSuccess.tool_mock_overrides.order_fnb = mock(
+      {
+        userSessionId: order.userSessionId,
+        sessionKey: show.sessionKey,
+        combinedCheckout: true,
+        order: snackOrder,
+        bookingState: {
+          userSessionId: order.userSessionId,
+          selectedMovie: show.filmTitle,
+          selectedCinema: show.cinemaId,
+          cinemaName: show.cinemaName,
+          selectedShowtime: show.showtime,
+          ticketQuantity: order.ticketCount,
+          selectedSeats: seats.map((seat) => `${seat.row}${seat.number}`).join(", "),
+          foodCart: snackOrder.concessions,
+          offers: snackOrder.offers,
+          totalCents: snackOrder.totalCents,
+          seatHoldExpiry: order.expiresAtUtc,
+          requiresFreshHold: false,
+          currentJourneyStage: "seats",
+        },
+      },
+      {},
+      {
+        type: "order",
+        title: language === "ar" ? "حجزك" : "Your booking",
+        items: [snackOrder],
+        meta: {
+          userSessionId: order.userSessionId,
+          sessionKey: show.sessionKey,
+          expiresAtUtc: order.expiresAtUtc,
+          stage: "seats",
+          combinedCheckout: true,
+        },
+        actions: [
+          { label: language === "ar" ? "تغيير المقاعد" : "Change seats", value: "seats:open" },
+          { label: language === "ar" ? "إضافة وجبات خفيفة" : "Add snacks", value: "fnb:suggest" },
+          {
+            label: language === "ar" ? "متابعة الدفع" : "Continue to payment",
+            value: "pay:start",
+            style: "primary",
+          },
+        ],
+      },
+    );
+    const foodResult = JSON.parse(offerSuccess.tool_mock_overrides.order_fnb[0]!.mock_result);
+    foodResult.speech =
+      language === "ar"
+        ? "تمت إضافة الوجبات الخفيفة. التذاكر والطعام جاهزان للدفع معاً."
+        : "Snacks added. Your tickets and food are ready for one payment.";
+    offerSuccess.tool_mock_overrides.order_fnb[0]!.mock_result = JSON.stringify(foodResult);
+    offerSuccess.tool_mock_overrides.render_order_summary = [
+      {
+        parameter_conditions: [
+          { path: "userSessionId", eval: { type: "exact", expected_value: order.userSessionId } },
+        ],
+        // Match the existing client callback; do not invent a rendered:true proof.
+        mock_result: JSON.stringify("The order summary is shown after each order step."),
+        is_error: false,
+      },
+    ];
     const appliedOrder = { ...order, offers: [offer], totalCents: 9600, total: "AED 96.00" };
     offerSuccess.tool_mock_overrides.apply_offer = mock(
       {
@@ -804,6 +868,8 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     offerFailure.tool_mock_overrides.get_action_result = [deny];
     offerFailure.tool_mock_overrides.add_concessions = [deny];
     offerFailure.tool_mock_overrides.order_fnb = [deny];
+    // No successful food/display step exists in this failure path.
+    offerFailure.tool_mock_overrides.render_order_summary = [deny];
     offerFailure.tool_mock_overrides.prepare_payment = [deny];
     offerFailure.tool_mock_overrides.cancel_order = failure(
       "CANCEL_UNAVAILABLE",
@@ -1030,6 +1096,9 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     if (test.tool_mock_overrides.list_offers)
       test.tool_mock_overrides.list_offers = rejectUnexpectedFilters(test.tool_mock_overrides.list_offers, {
         bank: [offer.savedCard.bank],
+        ...(test.scenario_group === "journey-03"
+          ? { sessionKey: [show.sessionKey], cinemaId: [show.cinemaId], experience: [show.experience] }
+          : {}),
       });
     if (test.scenario_group === "journey-02" && test.tool_mock_overrides.get_recommendations)
       test.tool_mock_overrides.get_recommendations = rejectUnexpectedFilters(

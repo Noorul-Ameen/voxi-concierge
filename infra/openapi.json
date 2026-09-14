@@ -573,7 +573,7 @@
           },
           "sessionKey": {
             "type": "string",
-            "description": "'{cinemaId}-{sessionId}'"
+            "description": "Copy the selected show's exact sessionKey from a successful tool result. Do not construct it, add a cinema prefix or change its format. Omit only when checking general offers without a selected show."
           },
           "experience": {
             "type": "string",

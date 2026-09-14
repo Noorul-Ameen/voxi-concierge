@@ -842,6 +842,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
       });
       return {
         result: {
+          userSessionId: inp.userSessionId,
           speech: t(ctx.lang, "Order cancelled and seats released.", "تم إلغاء الطلب وتحرير المقاعد."),
         },
         journey: { name: "guided_booking", status: "abandoned" },
