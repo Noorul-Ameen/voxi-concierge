@@ -13,7 +13,7 @@ export const PROCEDURE_DEFINITIONS: readonly {
     type: "free_form",
     name: "VOX · Discover and book",
     trigger:
-      "The guest wants a movie recommendation, a new booking, or to edit/resume an unpaid proposal or order, including seats, snacks, saved-card offers and checkout. Excludes cancellation or exchange of a paid booking and reports of a debit with missing/uncertain booking confirmation.",
+      "The latest message asks for a movie plan/recommendation, a new booking, or an unpaid proposal/order step, including seats, snacks, saved-card offers and checkout. Enter this procedure even when the conversation began with parking, a movie rating or showtimes: a later 'I would like to watch a movie with my son tomorrow' starts booking preparation. Reuse verified film/age/preferences; do not remain in the earlier information-only flow. Excludes pure factual enquiries, paid-booking cancellation/exchange and a debit with missing/uncertain booking confirmation.",
   },
   {
     key: "cancellation",
@@ -27,7 +27,7 @@ export const PROCEDURE_DEFINITIONS: readonly {
     type: "free_form",
     name: "VOX · Change a booked show",
     trigger:
-      "The guest wants to change an existing/current confirmed booking, including 'make changes to my current booking' without a reference or target date yet. Identify their booking first. Excludes edits to an explicitly unpaid proposal/order, cancellation without a replacement show, and uncertain or missing payment confirmation.",
+      "The guest wants to change an existing/current confirmed booking, including 'make changes to my current booking' without a reference or target date yet. Identify their booking first, then ask what they want to change if that is still missing. Selecting the existing booking does not select a replacement date/time. Excludes unpaid proposal/order edits, cancellation without a replacement show, and uncertain or missing payment confirmation.",
   },
   {
     key: "payment-investigation",

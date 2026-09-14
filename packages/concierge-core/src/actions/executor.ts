@@ -15,6 +15,7 @@ import { assertPaymentConsent } from "../services/checkout.js";
 import { markJourney, updateConversation } from "../services/conversation.js";
 import { fmtDateTime, joinList, money, onDateTime, seatLabels, t } from "../services/format.js";
 import { resolveLinkedConversation } from "../services/relink.js";
+import { assertSwapRefundSelection } from "../services/swap-refund.js";
 import { bookingCard, orderSummary, seatRange, toSnapshot } from "../tools/index.js";
 import type { ToolCtx } from "../tools/types.js";
 import { type ActionRow, complete, fail } from "./ledger.js";
@@ -289,6 +290,7 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
     },
 
     async swap_booking(ctx, a, steps) {
+      assertSwapRefundSelection(a.input);
       const inp = a.input as {
         bookingId: string;
         expectedVersion: number;

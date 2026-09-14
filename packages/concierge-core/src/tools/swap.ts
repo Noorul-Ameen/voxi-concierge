@@ -1,7 +1,8 @@
-import { ErrorCodes, type ToolInput } from "@voxi/contracts";
+import { DomainError, ErrorCodes, type ToolInput } from "@voxi/contracts";
 import { evaluateCancellation, resolveSpokenDate } from "@voxi/domain";
 import { createConfirmation } from "../services/confirmations.js";
 import { fmtDateTime, money, t } from "../services/format.js";
+import { signRefundChoice, verifyRefundChoice } from "../services/refund-choice-proof.js";
 import { previewSeats } from "../services/seat-preview.js";
 import { bookingCard, toSnapshot, verifyOwnership } from "./bookings.js";
 import { loadCustomer } from "./customer.js";
@@ -9,9 +10,25 @@ import { sessionCard } from "./movies.js";
 import { type ToolCtx, err, ok } from "./types.js";
 
 export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">) {
+  const keepSeatsIfPossible = input.keepSeatsIfPossible ?? true;
   const b = (await ctx.vista.getBooking(input.bookingId).catch(() => null))?.Booking;
   if (!b) return err(ErrorCodes.BOOKING_NOT_FOUND, "I couldn't find that booking.");
-  const ownership = verifyOwnership(ctx, b, input.verification);
+  if (ctx.refundChoiceProof) {
+    try {
+      await verifyRefundChoice(ctx, ctx.refundChoiceProof, {
+        bookingId: b.VistaBookingId,
+        bookingVersion: b.Version,
+        swapTargetSessionKey: input.targetSessionKey,
+        keepSeatsIfPossible,
+      });
+    } catch (error) {
+      if (error instanceof DomainError) return err(error.code, error.message);
+      throw error;
+    }
+  }
+  const ownership = ctx.refundChoiceProof
+    ? { ok: true as const }
+    : verifyOwnership(ctx, b, input.verification);
   if (!ownership.ok) return err("VERIFICATION_REQUIRED", ownership.message);
   const eligibility = evaluateCancellation(toSnapshot(b), ctx.nowLocal, undefined, ctx.cfg.policy);
   if (!eligibility.eligible || b.Status !== "confirmed")
@@ -26,6 +43,33 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
   const date = resolveSpokenDate(input.date ?? b.Showtime.slice(0, 10), ctx.nowLocal);
   const wanted = `${date}T${input.time ?? b.Showtime.slice(11, 16)}:00`;
   const preferredExperience = input.experience ?? b.Experience;
+  if (
+    !input.targetSessionKey &&
+    input.keepSeatsIfPossible !== false &&
+    date === b.Showtime.slice(0, 10) &&
+    (!input.time || input.time === b.Showtime.slice(11, 16)) &&
+    preferredExperience === b.Experience
+  )
+    return ok(
+      {
+        needs: "swap_change",
+        bookingId: b.VistaBookingId,
+        originalBookingUnchanged: true,
+        current: {
+          cinemaId: b.CinemaId,
+          cinemaName,
+          filmTitle: b.FilmTitle,
+          date: b.Showtime.slice(0, 10),
+          time: b.Showtime.slice(11, 16),
+          experience: b.Experience,
+        },
+      },
+      t(
+        ctx.lang,
+        "That matches your current booking. What would you like to change: the date, time, experience or seats? Your booking is unchanged.",
+        "هذا يطابق حجزك الحالي. ماذا تريد تغييره: اليوم أو الوقت أو التجربة أو المقاعد؟ حجزك لم يتغير.",
+      ),
+    );
   const sessions = (await ctx.catalog.sessions(b.CinemaId))
     .filter(
       (s) =>
@@ -138,7 +182,7 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
       Areas: (seatPlan.SeatLayoutData?.Areas ?? []).filter((a: any) => String(a.AreaCategoryCode) === area),
     };
     const previous = group.map((t) => ({ row: String(t.SeatRowId), number: String(t.SeatNumber) }));
-    const same = input.keepSeatsIfPossible ? previewSeats(layout, group.length, "middle", previous) : null;
+    const same = keepSeatsIfPossible ? previewSeats(layout, group.length, "middle", previous) : null;
     // Exact original seats remain first. If unavailable, honour verified profile
     // preference; passing "near" here would override its target row.
     const selected =
@@ -222,45 +266,69 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
         : "CARD";
   const paymentMethod = input.paymentMethodForDifference ?? defaultPayment;
   const refundMethod =
-    input.refundMethodForDifference ?? (defaultPayment === "CARD" ? "ORIGINAL_PAYMENT" : defaultPayment);
+    differenceCents < 0
+      ? input.refundMethodForDifference
+      : (input.refundMethodForDifference ??
+        (defaultPayment === "CARD" ? "ORIGINAL_PAYMENT" : defaultPayment));
+  const cardPayments = (b.PaymentInfoCollection ?? []).filter(
+    (p: any) => p.PaymentTenderCategory === "CREDIT",
+  );
+  const cardLast4 =
+    String(cardPayments[0]?.CardNumber ?? "")
+      .replace(/\D/g, "")
+      .slice(-4) || undefined;
+  const sameCard =
+    cardPayments.length > 0 &&
+    !!cardLast4 &&
+    new Set(cardPayments.map((p: any) => String(p.CardNumber).replace(/\s/g, ""))).size === 1;
+  const permitted = b.Customer?.MemberId ? ctx.cfg.policy.refundMethods : ctx.cfg.policy.guestRefundMethods;
+  const refundMethods =
+    differenceCents < 0
+      ? permitted.flatMap<ReturnType<typeof evaluateCancellation>["refundMethods"][number]>((method) => {
+          if (method === "ORIGINAL_PAYMENT")
+            return sameCard &&
+              -differenceCents <= cardPayments.reduce((n: number, p: any) => n + p.PaymentValueCents, 0)
+              ? [
+                  {
+                    method,
+                    amountCents: -differenceCents,
+                    eta: "5–10 days to the same original card",
+                    cardLast4,
+                  },
+                ]
+              : [];
+          if (!b.Customer?.MemberId) return [];
+          return [
+            {
+              method,
+              amountCents: -differenceCents,
+              eta:
+                method === "VOX_CREDIT"
+                  ? "VOX credit valid for 90 days"
+                  : "SHARE Points returned immediately",
+              ...(method === "VOX_CREDIT" ? { validityDays: 90 } : {}),
+            },
+          ];
+        })
+      : [];
+  const selectedRefund = refundMethods.find((m) => m.method === refundMethod);
   if (
-    (paymentMethod === "VOX_CREDIT" ||
-      paymentMethod === "SHARE_POINTS" ||
-      refundMethod === "VOX_CREDIT" ||
-      refundMethod === "SHARE_POINTS") &&
+    differenceCents > 0 &&
+    (paymentMethod === "VOX_CREDIT" || paymentMethod === "SHARE_POINTS") &&
     !b.Customer?.MemberId
   )
     return err(ErrorCodes.LOGIN_REQUIRED, "A member balance cannot be used for this guest booking.");
-  if (
-    (differenceCents > 0 && !["CARD", "SAVED_CARD", "VOX_CREDIT", "SHARE_POINTS"].includes(paymentMethod)) ||
-    (differenceCents < 0 && !["ORIGINAL_PAYMENT", "VOX_CREDIT", "SHARE_POINTS"].includes(refundMethod))
-  )
+  if (differenceCents > 0 && !["CARD", "SAVED_CARD", "VOX_CREDIT", "SHARE_POINTS"].includes(paymentMethod))
     return err(ErrorCodes.VALIDATION, "Choose a supported method for the exchange difference.");
   if (
-    ((differenceCents > 0 && ["CARD", "SAVED_CARD"].includes(paymentMethod)) ||
-      (differenceCents < 0 && refundMethod === "ORIGINAL_PAYMENT")) &&
+    differenceCents > 0 &&
+    ["CARD", "SAVED_CARD"].includes(paymentMethod) &&
     !b.PaymentInfoCollection?.some((p: any) => p.PaymentTenderCategory === "CREDIT")
   )
     return err(
       ErrorCodes.VALIDATION,
       "This booking has no original card available for the price difference.",
     );
-  if (
-    differenceCents < 0 &&
-    refundMethod === "ORIGINAL_PAYMENT" &&
-    -differenceCents >
-      (b.PaymentInfoCollection ?? [])
-        .filter((p: any) => p.PaymentTenderCategory === "CREDIT")
-        .reduce((n: number, p: any) => n + p.PaymentValueCents, 0)
-  )
-    return err(
-      ErrorCodes.VALIDATION,
-      "The difference exceeds the amount paid on the original card. Choose another permitted refund destination.",
-    );
-  const cardLast4 =
-    String(b.PaymentInfoCollection?.find((p: any) => p.PaymentTenderCategory === "CREDIT")?.CardNumber ?? "")
-      .replace(/\D/g, "")
-      .slice(-4) || undefined;
   const financial = {
     settlementType: "difference_only",
     originalTotalCents: b.TotalValueCents,
@@ -269,14 +337,19 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
     chargeCents: Math.max(0, differenceCents),
     refundCents: Math.max(0, -differenceCents),
     paymentMethod,
-    refundMethod,
+    refundMethod: differenceCents < 0 ? selectedRefund?.method : refundMethod,
+    ...(differenceCents < 0
+      ? { refundMethodSelected: !!selectedRefund, permittedRefundMethods: refundMethods.map((m) => m.method) }
+      : {}),
     cardLast4,
     refundEta:
-      refundMethod === "ORIGINAL_PAYMENT"
-        ? "5–10 days to the same original card"
-        : refundMethod === "SHARE_POINTS"
-          ? "SHARE Points returned immediately"
-          : "VOX credit valid for 90 days",
+      differenceCents < 0 && !selectedRefund
+        ? undefined
+        : refundMethod === "ORIGINAL_PAYMENT"
+          ? "5–10 days to the same original card"
+          : refundMethod === "SHARE_POINTS"
+            ? "SHARE Points returned immediately"
+            : "VOX credit valid for 90 days",
     originalPaidValueTransferredCents: Math.min(b.TotalValueCents, newTotalCents),
   };
   const summary = {
@@ -287,6 +360,8 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
     targetCinemaId: target.cinemaId,
     targetSessionId: target.sessionId,
     targetShowtime: target.showtime,
+    targetShowtimeLabel: fmtDateTime(target.showtime, ctx.lang, ctx.nowLocal),
+    targetCinemaName: cinemaName,
     targetExperience: target.experience,
     ticketCount: originalTickets.length,
     tickets,
@@ -296,6 +371,47 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
     expectedVersion: b.Version,
     ...financial,
   };
+  if (differenceCents < 0 && !selectedRefund) {
+    if (!refundMethods.length)
+      return err(
+        ErrorCodes.BOOKING_NOT_ELIGIBLE,
+        "No permitted refund destination is available for this exchange. Your original booking is unchanged; Customer Care can help.",
+      );
+    return ok(
+      {
+        needs: "swap_refund_method",
+        bookingId: b.VistaBookingId,
+        targetSessionKey: target.key,
+        summary,
+        refundMethods,
+        requestedMethodAllowed: !input.refundMethodForDifference,
+      },
+      t(
+        ctx.lang,
+        `${input.refundMethodForDifference ? "That destination is unavailable. " : ""}This exchange returns ${money(-differenceCents, ctx.lang)}. Choose ${refundMethods.map((m) => (m.method === "ORIGINAL_PAYMENT" ? `the same original card${cardLast4 ? ` ending ${cardLast4}` : ""} in 5–10 days` : m.method === "VOX_CREDIT" ? "VOX credit, valid for 90 days" : "SHARE Points")).join(" or ")}. Your booking is unchanged; you will review the exchange before confirming.`,
+        `فرق السعر المسترد ${money(-differenceCents, "ar")}. اختر ${refundMethods.map((m) => (m.method === "ORIGINAL_PAYMENT" ? `البطاقة الأصلية نفسها${cardLast4 ? ` المنتهية بـ ${cardLast4}` : ""} خلال 5–10 أيام` : m.method === "VOX_CREDIT" ? "رصيد VOX الصالح لمدة 90 يوماً" : "نقاط SHARE")).join(" أو ")}. حجزك لم يتغير؛ ستراجع التبديل قبل تأكيده.`,
+      ),
+      {
+        type: "refund_options",
+        title: t(ctx.lang, "Choose exchange refund", "اختر طريقة استرداد فرق السعر"),
+        items: refundMethods,
+        meta: {
+          journey: "swap",
+          bookingId: b.VistaBookingId,
+          targetSessionKey: target.key,
+          keepSeatsIfPossible,
+          summary,
+          refundChoiceProof: signRefundChoice(ctx, {
+            bookingId: b.VistaBookingId,
+            bookingVersion: b.Version,
+            swapTargetSessionKey: target.key,
+            keepSeatsIfPossible,
+          }),
+        },
+        actions: [],
+      },
+    );
+  }
   const financialText =
     differenceCents > 0
       ? `Only ${money(differenceCents, ctx.lang)} extra will be charged to ${paymentMethod === "VOX_CREDIT" ? "VOX credit" : paymentMethod === "SHARE_POINTS" ? "SHARE Points" : `the original card${cardLast4 ? ` ending ${cardLast4}` : ""}`}.`

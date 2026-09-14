@@ -3,7 +3,13 @@ import { DomainError, ErrorCodes } from "@voxi/contracts";
 import type { ToolCtx } from "../tools/types.js";
 import { resolveLinkedConversation } from "./relink.js";
 
-type RefundChoice = { bookingId: string; bookingVersion: number; ticketIds?: string[] };
+type RefundChoice = {
+  bookingId: string;
+  bookingVersion: number;
+  ticketIds?: string[];
+  swapTargetSessionKey?: string;
+  keepSeatsIfPossible?: boolean;
+};
 type Proof = RefundChoice & {
   purpose: "refund-choice";
   conversationId: string;
@@ -54,7 +60,9 @@ export async function verifyRefundChoice(ctx: ToolCtx, token: string, choice: Re
     (value.customerId && value.customerId !== ctx.conversation.customerId) ||
     value.bookingId !== choice.bookingId ||
     value.bookingVersion !== choice.bookingVersion ||
-    ticketsKey(value.ticketIds) !== ticketsKey(choice.ticketIds)
+    ticketsKey(value.ticketIds) !== ticketsKey(choice.ticketIds) ||
+    value.swapTargetSessionKey !== choice.swapTargetSessionKey ||
+    value.keepSeatsIfPossible !== choice.keepSeatsIfPossible
   )
     throw reject();
   if (

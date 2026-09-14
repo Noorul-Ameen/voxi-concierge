@@ -70,7 +70,7 @@ function fixture() {
     conversation: { id: "conversation", isLoggedIn: true, customerId: "customer", memberId: "member" },
     nowLocal: "2030-06-03T12:00:00",
     lang: "en",
-    cfg: { policy: DEFAULT_POLICY, confirmationTtlSeconds: 60 },
+    cfg: { policy: DEFAULT_POLICY, confirmationTtlSeconds: 60, widgetJwtSecret: "swap-test-only-key" },
     catalog: {
       cinema: async () => ({ name: "Cinema" }),
       sessions: async () => sessions,
@@ -237,10 +237,10 @@ it.each(["en", "ar"] as const)(
   },
 );
 
-it("labels original date/time/experience defaults as preferences in an empty result", async () => {
+it("keeps explicit seat-change discovery separate from an unchanged booking selection", async () => {
   const { ctx } = fixture();
   ctx.catalog.sessions = async () => [];
-  const result = await prepareSwap(ctx, { bookingId: "ORIGINAL", keepSeatsIfPossible: true });
+  const result = await prepareSwap(ctx, { bookingId: "ORIGINAL", keepSeatsIfPossible: false });
   expect(result.data?.requestedScope).toMatchObject({
     date: "2030-06-03",
     dateMatch: "original_day_preferred",
@@ -256,11 +256,11 @@ it("labels original date/time/experience defaults as preferences in an empty res
 it("keeps an omitted-date recommendation usable when the original day has no replacement", async () => {
   const { ctx, input, booking } = fixture();
   const original = structuredClone(booking);
-  const found = await prepareSwap(ctx, { ...input, date: undefined });
+  const found = await prepareSwap(ctx, { ...input, date: undefined, time: "19:30" });
   expect(found.data?.recommendedPreviewInput).toMatchObject({
     bookingId: "ORIGINAL",
     date: "2030-06-04",
-    time: "19:00",
+    time: "19:30",
     targetSessionKey: "standard-near",
     keepSeatsIfPossible: true,
   });
@@ -279,4 +279,153 @@ it("keeps an omitted-date recommendation usable when the original day has no rep
   expect(priced.data?.confirmationId).toBe("swap-review");
   expect(createConfirmation).toHaveBeenCalledTimes(1);
   expect(booking).toEqual(original);
+});
+
+it.each([undefined, "today", "2030-06-03"])(
+  "asks for an actual change before finding replacements for unchanged date %s",
+  async (date) => {
+    const { ctx, input, booking } = fixture();
+    const read = vi.spyOn(ctx.catalog, "sessions");
+    const original = structuredClone(booking);
+    const result = await prepareSwap(ctx, { ...input, date, time: "19:00", experience: "Standard" });
+    expect(result.data).toMatchObject({
+      needs: "swap_change",
+      bookingId: "ORIGINAL",
+      originalBookingUnchanged: true,
+    });
+    expect(result.data).not.toHaveProperty("confirmationId");
+    expect(result.data).not.toHaveProperty("recommendedPreviewInput");
+    expect(read).not.toHaveBeenCalled();
+    expect(createConfirmation).not.toHaveBeenCalled();
+    expect(booking).toEqual(original);
+  },
+);
+
+it("treats tomorrow as unchanged when that is already the original booking day", async () => {
+  const { ctx, input, booking } = fixture();
+  booking.Showtime = "2030-06-04T19:00:00";
+  const result = await prepareSwap(ctx, input);
+  expect(result.data?.needs).toBe("swap_change");
+  expect(createConfirmation).not.toHaveBeenCalled();
+});
+
+function cheaperFixture() {
+  const f = fixture();
+  f.ctx.vista.ticketTypes = async () =>
+    ({
+      BookingFeeCentsPerTicket: 0,
+      Tickets: [{ TicketTypeCode: "TARGET-1001", AreaCategoryCode: "regular", PriceInCents: 4000 }],
+    }) as any;
+  return { ...f, input: { ...f.input, targetSessionKey: "standard-near" } };
+}
+
+it.each(["en", "ar"] as const)(
+  "requires refund destination before a cheaper exchange confirmation in %s",
+  async (lang) => {
+    const { ctx, input, booking } = cheaperFixture();
+    ctx.lang = lang;
+    const original = structuredClone(booking);
+    const result = await prepareSwap(ctx, input);
+    expect(result.data).toMatchObject({
+      needs: "swap_refund_method",
+      requestedMethodAllowed: true,
+      summary: {
+        originalTotalCents: 15000,
+        newTotalCents: 12000,
+        differenceCents: -3000,
+        refundMethodSelected: false,
+      },
+      refundMethods: [
+        { method: "VOX_CREDIT", amountCents: 3000, validityDays: 90 },
+        { method: "ORIGINAL_PAYMENT", amountCents: 3000, cardLast4: "1234" },
+      ],
+    });
+    expect(result.data?.summary.refundMethod).toBeUndefined();
+    expect(result.data).not.toHaveProperty("confirmationId");
+    expect(result.ui).toMatchObject({
+      type: "refund_options",
+      actions: [],
+      meta: { journey: "swap", targetSessionKey: input.targetSessionKey, keepSeatsIfPossible: true },
+    });
+    expect(result.ui?.meta?.refundChoiceProof).toEqual(expect.any(String));
+    expect(result.speech).toContain("5–10");
+    expect(result.speech).toContain("90");
+    expect(createConfirmation).not.toHaveBeenCalled();
+    expect(booking).toEqual(original);
+  },
+);
+
+it.each(["VOX_CREDIT", "ORIGINAL_PAYMENT"] as const)(
+  "binds only the explicitly chosen %s destination in a separate confirmation",
+  async (method) => {
+    const { ctx, input } = cheaperFixture();
+    const result = await prepareSwap(ctx, { ...input, refundMethodForDifference: method });
+    expect(result.data?.confirmationId).toBe("swap-review");
+    expect(result.data?.summary).toMatchObject({
+      refundMethod: method,
+      refundMethodSelected: true,
+      differenceCents: -3000,
+      permittedRefundMethods: ["VOX_CREDIT", "ORIGINAL_PAYMENT"],
+    });
+    expect(result.data?.summary.refundEta).toContain(method === "VOX_CREDIT" ? "90" : "5–10");
+    expect(createConfirmation).toHaveBeenCalledTimes(1);
+  },
+);
+
+it("does not default or bind an unavailable refund method", async () => {
+  const { ctx, input } = cheaperFixture();
+  const result = await prepareSwap(ctx, { ...input, refundMethodForDifference: "SHARE_POINTS" });
+  expect(result.data).toMatchObject({ needs: "swap_refund_method", requestedMethodAllowed: false });
+  expect(result.data?.summary.refundMethod).toBeUndefined();
+  expect(createConfirmation).not.toHaveBeenCalled();
+});
+
+it("normalizes omitted keep-seats before signing a widget choice", async () => {
+  const { ctx, input } = cheaperFixture();
+  const options = await prepareSwap(ctx, { ...input, keepSeatsIfPossible: undefined } as any);
+  expect(options.ui?.meta?.keepSeatsIfPossible).toBe(true);
+  ctx.refundChoiceProof = options.ui!.meta!.refundChoiceProof as string;
+  const reviewed = await prepareSwap(ctx, {
+    ...input,
+    keepSeatsIfPossible: true,
+    refundMethodForDifference: "ORIGINAL_PAYMENT",
+  });
+  expect(reviewed.data?.confirmationId).toBe("swap-review");
+});
+
+it("carries verified guest ownership across only the exact refund-choice click", async () => {
+  const { ctx, booking, input } = cheaperFixture();
+  (booking.Customer as any).MemberId = undefined;
+  ctx.conversation.isLoggedIn = false;
+  ctx.conversation.customerId = null;
+  ctx.conversation.memberId = null;
+  const options = await prepareSwap(ctx, { ...input, verification: { email: "guest@example.com" } });
+  expect(options.data?.refundMethods.map((m: any) => m.method)).toEqual(["ORIGINAL_PAYMENT"]);
+  ctx.refundChoiceProof = options.ui!.meta!.refundChoiceProof as string;
+  const selected = { ...input, refundMethodForDifference: "ORIGINAL_PAYMENT" as const };
+  expect((await prepareSwap(ctx, selected)).data?.confirmationId).toBe("swap-review");
+  vi.mocked(createConfirmation).mockClear();
+  for (const changed of [
+    { ...selected, targetSessionKey: "standard-later" },
+    { ...selected, keepSeatsIfPossible: false },
+  ])
+    expect((await prepareSwap(ctx, changed)).error?.code).toBe("CONFIRMATION_EXPIRED");
+  booking.Version++;
+  expect((await prepareSwap(ctx, selected)).error?.code).toBe("CONFIRMATION_EXPIRED");
+  booking.Version--;
+  ctx.conversation.metadata = { widgetAuthGeneration: 1 };
+  expect((await prepareSwap(ctx, selected)).error?.code).toBe("CONFIRMATION_EXPIRED");
+  expect(createConfirmation).not.toHaveBeenCalled();
+});
+
+it("keeps extra-charge reviews unchanged and does not require a refund choice", async () => {
+  const { ctx, input, booking } = fixture();
+  booking.TotalValueCents = 14000;
+  const result = await prepareSwap(ctx, { ...input, targetSessionKey: "standard-near" });
+  expect(result.data?.summary).toMatchObject({
+    differenceCents: 1000,
+    chargeCents: 1000,
+    paymentMethod: "CARD",
+  });
+  expect(result.data?.confirmationId).toBe("swap-review");
 });

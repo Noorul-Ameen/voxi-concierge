@@ -7,6 +7,23 @@ import { Cards, cardConfirmationId, chooseShowtime, confirmedQrPayload, createTi
 const act: CardActions = { say: () => undefined, command: async () => ({ ok: true }), openLink: () => undefined, playTrailer: () => undefined };
 
 describe("concierge decision cards", () => {
+  it("keeps exchange refund selection separate from cancellation and final exchange consent", () => {
+    const meta = { journey: "swap", bookingId: "BOOK", targetSessionKey: "cinema-new", keepSeatsIfPossible: true, refundChoiceProof: "scoped-proof",
+      summary: { filmTitle: "The Journey", targetCinemaName: "Cinema", targetShowtimeLabel: "Tomorrow 7 pm", targetExperience: "Premier", selectedSeats: [{Row:"E",Number:"9"},{Row:"E",Number:"10"}], originalTotalCents:12000,newTotalCents:10000,refundCents:2000 } };
+    expect(refundChoiceCommand(meta,"VOX_CREDIT")).toEqual({type:"swap.refund.choose",bookingId:"BOOK",targetSessionKey:"cinema-new",keepSeatsIfPossible:true,refundMethod:"VOX_CREDIT",refundChoiceProof:"scoped-proof"});
+    for(const missing of ["targetSessionKey","refundChoiceProof","keepSeatsIfPossible"])
+      expect(refundChoiceCommand({...meta,[missing]:undefined},"ORIGINAL_PAYMENT")).toBeUndefined();
+    for(const lang of ["en","ar"] as const) {
+      const html=renderToStaticMarkup(<Cards lang={lang} act={act} ui={{type:"refund_options",meta,items:[{method:"VOX_CREDIT",amountCents:2000,validityDays:90},{method:"ORIGINAL_PAYMENT",amountCents:2000,cardLast4:"1234",eta:"5–10 days to the same original card"}],actions:[]}} />);
+      for(const text of ["120","100","20","90","5–10","1234","E9, E10"])expect(html).toContain(text);
+      expect(html).toContain(lang==="en"?"Your original booking is unchanged.":"حجزك الأصلي لم يتغير.");
+      expect(html).not.toContain("Confirm exchange");expect(html).not.toContain("Payment received");
+    }
+  });
+  it("renders only returned preference tradeoff explanations on an unheld proposal", () => {
+    const html=renderToStaticMarkup(<Cards lang="en" act={act} ui={{type:"booking_proposal",items:[{filmTitle:"Film",ticketQuantity:2,selectedSeats:[],preferenceTradeoffs:[{kind:"experience",message:"Premier keeps your requested evening time."},{kind:"invalid"}]}],meta:{}}}/>);
+    expect(html).toContain("Premier keeps your requested evening time.");expect(html).not.toContain("undefined");
+  });
   it("shows the chosen VOX credit and card remainder without substituting or promoting SHARE", () => {
     const ui = { type: "payment", items: [{ filmTitle: "The Journey", tickets: [], totalCents: 2550 }], meta: { requiresSheet: true, method: "CARD", amountCents: 2550, balancePayment: { method: "VOX_CREDIT", amountCents: 12000, remainingCents: 2550, totalCents: 14550 }, wallet: { voxCreditCents: 12000, sharePoints: 2450, sharePointsValueCents: 24500 }, offerHint: { title: "Unchosen bank offer", cardLabel: "Other card" } } };
     for (const lang of ["en", "ar"] as const) {

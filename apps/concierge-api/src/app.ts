@@ -967,6 +967,19 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
             idempotencyKey: cmd.idempotencyKey,
           }),
         );
+      case "swap.refund.choose":
+        return c.json(
+          await widgetTool(
+            "prepare_swap",
+            {
+              bookingId: cmd.bookingId,
+              targetSessionKey: cmd.targetSessionKey,
+              keepSeatsIfPossible: cmd.keepSeatsIfPossible,
+              refundMethodForDifference: cmd.refundMethod,
+            },
+            cmd.refundChoiceProof,
+          ),
+        );
       case "refund.choose":
         return c.json(
           await widgetTool(

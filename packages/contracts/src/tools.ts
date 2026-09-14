@@ -214,7 +214,9 @@ export const PrepareSwapInput = z.object({
   experience: Experience.optional(),
   keepSeatsIfPossible: z.boolean().default(true),
   paymentMethodForDifference: PaymentMethod.optional(),
-  refundMethodForDifference: RefundMethod.optional(),
+  refundMethodForDifference: RefundMethod.optional().describe(
+    "For a cheaper replacement, only the guest-selected destination from returned refundMethods. Omit to show choices; never default a refund destination. Selection prepares a separate exchange confirmation, not execution.",
+  ),
   verification: Verification.optional(),
 });
 export const SwapBookingInput = z.object({
@@ -719,7 +721,7 @@ export const TOOL_REGISTRY = {
     input: PrepareSwapInput,
     kind: "read",
     description:
-      "Prepare a swap to a different showtime: availability, price difference, refund/charge summary. Returns confirmationId.",
+      "Prepare a requested booking change. Unchanged date/time/experience without a selected target returns needs:swap_change. Discovery returns actual candidates; a cheaper target returns needs:swap_refund_method until the guest chooses a permitted refund destination. Only the final priced review returns confirmationId for separate exchange consent.",
   },
   get_action_result: {
     input: GetActionResultInput,

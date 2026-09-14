@@ -811,7 +811,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           push({ kind: "note", text: mapFeedback.text, polite: true });
           if (mapFeedback.context) acknowledge(mapFeedback.context);
         }
-        const meaningful = ["seat.select", "payment.token", "booking.select", "proposal.preview", "proposal.accept", "refund.choose", "order.recover"].includes(String(cmd.type));
+        const meaningful = ["seat.select", "payment.token", "booking.select", "proposal.preview", "proposal.accept", "refund.choose", "swap.refund.choose", "order.recover"].includes(String(cmd.type));
         if (meaningful && result.action && ["queued", "running"].includes(result.action.status)) {
           const completed = completedActionsRef.current.get(result.action.actionId);
           if (completed) acknowledge(actionContext(completed.type, { ok: completed.status === "succeeded", action: completed, error: completed.error?.message }));

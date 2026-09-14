@@ -68,6 +68,32 @@ const minutes = (hhmm: string) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.sl
 const clock = (m: number) =>
   `${String(Math.floor((((m % 1440) + 1440) % 1440) / 60)).padStart(2, "0")}:${String(((m % 60) + 60) % 60).padStart(2, "0")}`;
 
+function usualTimeWindow(customer: Record<string, any> | null, date: string) {
+  const profile = customer?.profile;
+  if (!profile) return null;
+  const day = visitDayType(`${date.slice(0, 10)}T12:00:00`, {
+    timeZone: profile.timeZone ?? "Asia/Dubai",
+    weekendDays: profile.weekendDays ?? [6, 0],
+  });
+  const timing = profile[day];
+  const validTime = (value: unknown): value is string =>
+    typeof value === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+  if (!validTime(timing?.around)) return null;
+  return {
+    around: timing.around as string,
+    from: validTime(timing.from) ? timing.from : clock(Math.max(0, minutes(timing.around) - 60)),
+    to: validTime(timing.to) ? timing.to : clock(Math.min(1439, minutes(timing.around) + 60)),
+  };
+}
+
+function distanceFromWindow(time: string, window: { from: string; to: string }) {
+  const value = minutes(time);
+  const from = minutes(window.from);
+  const to = minutes(window.to);
+  const within = from <= to ? value >= from && value <= to : value >= from || value <= to;
+  return within ? 0 : Math.min(Math.abs(value - from), Math.abs(value - to));
+}
+
 function cinemaName(c: Cinema | undefined | null, lang: "en" | "ar") {
   return c ? (lang === "ar" ? c.nameAlt || c.name : c.name) : "";
 }
@@ -546,11 +572,9 @@ async function resolveSession(
   const date = resolveSpokenDate(input.date, ctx.nowLocal);
   const from = input.time ? clock(minutes(input.time) - 30) : input.timeFrom;
   const to = input.time ? clock(minutes(input.time) + 30) : input.timeTo;
-  const profileTime =
-    customer?.profile && !input.time && !input.timeFrom && !input.timeTo
-      ? customer.profile[visitDayType(`${date}T12:00:00`, customer.profile)]?.around
-      : undefined;
-  const target = input.time ? minutes(input.time) : profileTime ? minutes(profileTime) : null;
+  const usualWindow =
+    !input.time && !input.timeFrom && !input.timeTo ? usualTimeWindow(customer, date) : null;
+  const target = input.time ? minutes(input.time) : usualWindow ? minutes(usualWindow.around) : null;
   const all = (await Promise.all(cinemaIds.map((id) => ctx.catalog.sessions(id))))
     .flat()
     .filter((s) => versions.has(s.hoCode) && !sessionUnavailableReason(s, ctx.nowLocal));
@@ -573,7 +597,19 @@ async function resolveSession(
     [...rows].sort(
       (a, b) => closeness(a) - closeness(b) || cinemaIds.indexOf(a.cinemaId) - cinemaIds.indexOf(b.cinemaId),
     );
-  const primary = rank(byExperience(inWindow(onDate(date))));
+  let candidateRows = inWindow(onDate(date));
+  if (input.experience) candidateRows = candidateRows.filter((s) => s.experience === input.experience);
+  // An inferred experience must not discard available shows in the guest's usual time window.
+  // Explicit experience/time choices still take precedence over historical preferences.
+  if (usualWindow && candidateRows.length) {
+    const closestWindowDistance = Math.min(
+      ...candidateRows.map((s) => distanceFromWindow(hm(s.showtime), usualWindow)),
+    );
+    candidateRows = candidateRows.filter(
+      (s) => distanceFromWindow(hm(s.showtime), usualWindow) === closestWindowDistance,
+    );
+  }
+  const primary = rank(byExperience(candidateRows));
   const requestedPast = !!input.time && `${date}T${input.time}:00` <= ctx.nowLocal;
   if (primary.length && !requestedPast)
     return {
@@ -824,6 +860,38 @@ const quickHandlers: Pick<
       (input.timeFrom && hm(s.showtime) < input.timeFrom) ||
       (input.timeTo && hm(s.showtime) > input.timeTo)
     );
+    const preferredExperience =
+      customer?.profile?.preferredExperience ?? customer?.preferences?.experiences?.[0] ?? null;
+    const usualWindow =
+      !input.time && !input.timeFrom && !input.timeTo ? usualTimeWindow(customer, s.showtime) : null;
+    const preferenceTradeoffs: {
+      kind: "experience" | "time";
+      preferred: string;
+      selected: string;
+      message: string;
+    }[] = [];
+    if (!input.sessionKey && !input.experience && preferredExperience && preferredExperience !== s.experience)
+      preferenceTradeoffs.push({
+        kind: "experience",
+        preferred: preferredExperience,
+        selected: s.experience,
+        message: t(
+          ctx.lang,
+          `This option is ${s.experience}, instead of your usual ${preferredExperience}.`,
+          `هذا الخيار بتجربة ${s.experience} بدلاً من تجربتك المعتادة ${preferredExperience}.`,
+        ),
+      });
+    if (!input.sessionKey && usualWindow && distanceFromWindow(hm(s.showtime), usualWindow) > 0)
+      preferenceTradeoffs.push({
+        kind: "time",
+        preferred: `${usualWindow.from}–${usualWindow.to}`,
+        selected: hm(s.showtime),
+        message: t(
+          ctx.lang,
+          `The ${fmtTime(s.showtime, ctx.lang)} show is outside your usual ${fmtTime(`${s.showtime.slice(0, 10)}T${usualWindow.from}:00`, ctx.lang)}–${fmtTime(`${s.showtime.slice(0, 10)}T${usualWindow.to}:00`, ctx.lang)} window.`,
+          `عرض الساعة ${fmtTime(s.showtime, ctx.lang)} خارج وقتك المعتاد من ${fmtTime(`${s.showtime.slice(0, 10)}T${usualWindow.from}:00`, ctx.lang)} إلى ${fmtTime(`${s.showtime.slice(0, 10)}T${usualWindow.to}:00`, ctx.lang)}.`,
+        ),
+      });
     const proposal = {
       isAlternative,
       ...(isAlternative
@@ -850,7 +918,8 @@ const quickHandlers: Pick<
       totalCents,
       held: false,
       priceIncludesFees: fee != null,
-      preferredExperience: customer?.profile?.preferredExperience ?? null,
+      preferredExperience,
+      preferenceTradeoffs,
     };
     const proposalToken =
       priced && seats && totalCents != null
@@ -868,9 +937,12 @@ const quickHandlers: Pick<
       count == null ? "tickets" : totalCents == null ? "price_unavailable" : "proposal_acceptance";
     return ok(
       { proposal, proposalToken, needs },
-      (isAlternative
-        ? t(ctx.lang, "This is an alternative to your requested time. ", "هذا موعد بديل عن الوقت المطلوب. ")
+      (preferenceTradeoffs.length
+        ? `${preferenceTradeoffs.map((tradeoff) => tradeoff.message).join(" ")} `
         : "") +
+        (isAlternative
+          ? t(ctx.lang, "This is an alternative to your requested time. ", "هذا موعد بديل عن الوقت المطلوب. ")
+          : "") +
         t(
           ctx.lang,
           count == null

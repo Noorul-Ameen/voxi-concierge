@@ -233,7 +233,13 @@ it("requires an allowed refund choice before confirmation and binds the chosen o
 it("finds closest same-cinema swap choices and quotes the exact difference without touching the original booking", async () => {
   const { c, bookingId } = await paidBooking();
   const original = (await h.ctx.vista.getBooking(bookingId)).Booking;
-  const choices = await h.tool("prepare_swap", c, { bookingId });
+  const later = new Date(`${original.Showtime}Z`);
+  later.setUTCMinutes(later.getUTCMinutes() + 30);
+  const choices = await h.tool("prepare_swap", c, {
+    bookingId,
+    date: later.toISOString().slice(0, 10),
+    time: later.toISOString().slice(11, 16),
+  });
   expect(choices.data.needs).toBe("swap_session");
   expect(choices.data.alternatives.length).toBeGreaterThan(0);
   expect(choices.data.alternatives.every((s: any) => s.cinemaId === original.CinemaId)).toBe(true);

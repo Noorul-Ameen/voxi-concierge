@@ -1,6 +1,6 @@
 import { schema as S } from "@voxi/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { customerTools } from "../src/tools/customer.js";
+import { customerTools, loadCustomer } from "../src/tools/customer.js";
 import { reviewAndPay } from "../src/tools/ordering.js";
 import { quickTools } from "../src/tools/quick.js";
 import type { ToolCtx } from "../src/tools/types.js";
@@ -474,6 +474,143 @@ describe("read-only booking proposal", () => {
     } as any);
     expect(alternative.data?.proposal).toMatchObject({ isAlternative: true, requested: { time: "19:00" } });
     expect(alternative.speech).toMatch(/alternative to your requested time/);
+  });
+  it.each([
+    {
+      label: "usual evening before a late preferred experience",
+      input: {},
+      kidsTime: "23:00",
+      premierTime: "18:30",
+      selected: "premier",
+      tradeoff: "experience",
+    },
+    {
+      label: "preferred experience inside the usual window",
+      input: {},
+      kidsTime: "19:30",
+      premierTime: "19:00",
+      selected: "kids",
+      tradeoff: null,
+    },
+    {
+      label: "explicit experience even when later than usual",
+      input: { experience: "KIDS" },
+      kidsTime: "23:00",
+      premierTime: "18:30",
+      selected: "kids",
+      tradeoff: "time",
+    },
+    {
+      label: "explicit late time over inferred usual time",
+      input: { time: "23:00" },
+      kidsTime: "23:00",
+      premierTime: "18:30",
+      selected: "kids",
+      tradeoff: null,
+    },
+    {
+      label: "closest time when the usual window is unavailable",
+      input: {},
+      kidsTime: "23:00",
+      premierTime: "17:30",
+      selected: "premier",
+      tradeoff: "time",
+    },
+  ])("selects $label without holding seats", async ({ input, kidsTime, premierTime, selected, tradeoff }) => {
+    const ctx = proposalContext();
+    ctx.conversation.memberId = "member-sara";
+    vi.mocked(loadCustomer).mockResolvedValueOnce({
+      profile: {
+        cinemaId: cinema.id,
+        preferredExperience: "KIDS",
+        seatPreference: "middle",
+        weekday: { from: "18:00", to: "20:00", around: "19:00", sampleCount: 6 },
+        weekendDays: [6, 0],
+      },
+    } as any);
+    const film = await ctx.catalog.film("film");
+    ctx.catalog.films = vi.fn(async () => [film!]);
+    ctx.catalog.sessions = vi.fn(
+      async () =>
+        [
+          {
+            ...session,
+            key: "kids",
+            sessionId: "kids",
+            experience: "KIDS",
+            showtime: `2026-09-10T${kidsTime}:00`,
+          },
+          {
+            ...session,
+            key: "premier",
+            sessionId: "premier",
+            experience: "Premier",
+            showtime: `2026-09-10T${premierTime}:00`,
+          },
+        ] as any,
+    );
+    const result = await quickTools.propose_booking(ctx, {
+      hoCode: "film",
+      cinemaId: cinema.id,
+      date: "2026-09-10",
+      tickets: 1,
+      childTickets: 1,
+      ...input,
+    } as any);
+    expect(result.data?.proposal).toMatchObject({
+      sessionKey: selected,
+      adultTickets: 1,
+      childTickets: 1,
+      held: false,
+      totalCents: 8500,
+    });
+    const tradeoffs = (result.data?.proposal as any).preferenceTradeoffs;
+    if (tradeoff)
+      expect(tradeoffs).toEqual(expect.arrayContaining([expect.objectContaining({ kind: tradeoff })]));
+    else expect(tradeoffs).toEqual([]);
+    expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+    expect(ctx.vista.setSeats).not.toHaveBeenCalled();
+  });
+  it("uses weekend timing when ranking a named movie and preserves an explicitly selected late session", async () => {
+    const ctx = proposalContext();
+    const customer = {
+      profile: {
+        cinemaId: cinema.id,
+        preferredExperience: "KIDS",
+        weekendDays: [6, 0],
+        weekday: { from: "18:00", to: "20:00", around: "19:00", sampleCount: 6 },
+        weekend: { from: "15:00", to: "17:00", around: "16:00", sampleCount: 6 },
+      },
+    };
+    const film = await ctx.catalog.film("film");
+    ctx.catalog.films = vi.fn(async () => [film!]);
+    const late = {
+      ...session,
+      key: "late",
+      sessionId: "late",
+      experience: "KIDS",
+      showtime: "2026-09-12T23:00:00",
+    };
+    ctx.catalog.sessions = vi.fn(
+      async () =>
+        [
+          late,
+          { ...session, key: "afternoon", experience: "Premier", showtime: "2026-09-12T16:15:00" },
+        ] as any,
+    );
+    vi.mocked(loadCustomer).mockResolvedValueOnce(customer as any);
+    const suggested = await quickTools.propose_booking(ctx, {
+      hoCode: "film",
+      cinemaId: cinema.id,
+      date: "2026-09-12",
+      tickets: 1,
+    });
+    expect(suggested.data?.proposal).toMatchObject({ sessionKey: "afternoon", held: false });
+    vi.mocked(loadCustomer).mockResolvedValueOnce(customer as any);
+    vi.mocked(ctx.catalog.sessionByKey).mockResolvedValueOnce(late as any);
+    const explicit = await quickTools.propose_booking(ctx, { sessionKey: "late", tickets: 1 });
+    expect(explicit.data?.proposal).toMatchObject({ sessionKey: "late", held: false });
+    expect(ctx.vista.addTickets).not.toHaveBeenCalled();
   });
   it.each(["18TC", "15TC", "TBC", "", "15+", "18+", "21+"])(
     "rejects %s child tickets in proposals and direct widget holds before provider mutation",

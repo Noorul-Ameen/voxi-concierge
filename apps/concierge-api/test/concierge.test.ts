@@ -253,6 +253,7 @@ describe("Phase 1 — swaps", () => {
       bookingId: "WJG8LD7",
       targetSessionKey: target.sessionKey,
       paymentMethodForDifference: "VOX_CREDIT",
+      refundMethodForDifference: "VOX_CREDIT",
     });
     expect(prep.ok).toBe(true);
     expect(prep.speech).toMatch(/food transfers unchanged/); // F&B on the booking is carried over

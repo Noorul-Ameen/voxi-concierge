@@ -2,9 +2,10 @@ import { DomainError, ErrorCodes } from "@voxi/contracts";
 import { type BookingSnapshot, evaluateCancellation, evaluateSwap } from "@voxi/domain";
 import { VistaClientError } from "@voxi/vista-client";
 import { enqueue, findByKey, idem, toRef } from "../actions/ledger.js";
-import { consumeConfirmation, createConfirmation } from "../services/confirmations.js";
+import { consumeConfirmation, createConfirmation, getConfirmation } from "../services/confirmations.js";
 import { fmtDateTime, joinList, money, onDateTime, seatLabels, t } from "../services/format.js";
 import { signRefundChoice, verifyRefundChoice } from "../services/refund-choice-proof.js";
+import { assertSwapRefundSelection } from "../services/swap-refund.js";
 import { prepareSwap } from "./swap.js";
 import { type ToolCtx, type ToolHandlers, type ToolResult, err, ok } from "./types.js";
 
@@ -502,6 +503,13 @@ export const bookingTools: Pick<
   async swap_booking(ctx, input) {
     let conf: Awaited<ReturnType<typeof consumeConfirmation>>;
     try {
+      const pending = await getConfirmation(ctx.db, input.confirmationId);
+      if (
+        pending?.conversationId === ctx.conversation.id &&
+        pending.actionType === "swap_booking" &&
+        pending.resourceKey === `booking:${input.bookingId.toUpperCase()}`
+      )
+        assertSwapRefundSelection(pending.summary);
       conf = await consumeConfirmation(ctx.db, {
         id: input.confirmationId,
         conversationId: ctx.conversation.id,

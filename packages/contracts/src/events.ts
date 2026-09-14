@@ -57,6 +57,14 @@ export const WidgetCommand = z.discriminatedUnion("type", [
     idempotencyKey: z.string().max(120).optional(),
   }),
   z.object({
+    type: z.literal("swap.refund.choose"),
+    bookingId: z.string().min(1),
+    targetSessionKey: z.string().min(1),
+    refundMethod: RefundMethod,
+    keepSeatsIfPossible: z.boolean().default(true),
+    refundChoiceProof: z.string().min(1).max(4000),
+  }),
+  z.object({
     type: z.literal("refund.choose"),
     bookingId: z.string(),
     refundMethod: RefundMethod,

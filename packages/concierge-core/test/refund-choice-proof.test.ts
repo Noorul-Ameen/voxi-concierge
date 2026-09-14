@@ -17,6 +17,26 @@ afterEach(() => {
 });
 
 describe("guest refund choice proof", () => {
+  it("separates cancellation from exchange choices and binds exact exchange target and seat intent", async () => {
+    const ctx = context();
+    const swap = {
+      bookingId: "BOOK1",
+      bookingVersion: 2,
+      swapTargetSessionKey: "cinema-target",
+      keepSeatsIfPossible: true,
+    };
+    const proof = signRefundChoice(ctx, swap);
+    await expect(verifyRefundChoice(ctx, proof, swap)).resolves.toBeUndefined();
+    for (const changed of [
+      { bookingId: "BOOK1", bookingVersion: 2 },
+      { ...swap, swapTargetSessionKey: "other" },
+      { ...swap, keepSeatsIfPossible: false },
+    ])
+      await expect(verifyRefundChoice(ctx, proof, changed)).rejects.toThrow("changed or expired");
+    await expect(
+      verifyRefundChoice(ctx, signRefundChoice(ctx, { bookingId: "BOOK1", bookingVersion: 2 }), swap),
+    ).rejects.toThrow("changed or expired");
+  });
   it("carries only the exact booking/version/subset and survives a legitimate linked transport", async () => {
     const ctx = context();
     const proof = signRefundChoice(ctx, choice);
