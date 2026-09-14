@@ -21,21 +21,22 @@ This section describes the approved simulated demo, not a universal promise abou
 # How to book tickets and what the virtual assistant can do
 
 ## Booking with the VOX Cinemas Virtual Assistant
-The virtual assistant demo supports choosing a movie, cinema, date and showtime, selecting the requested number of tickets and seats, adding optional snacks, using eligible offers or member balances, and reviewing one checkout. Later food purchases remain available. Use tool results for supported options, prices and current availability. Payment is simulated and the booking confirmation appears in the widget with a QR code; do not claim that an email or real payment was sent.
+The virtual assistant demo supports choosing a movie, cinema, date and showtime, selecting the requested number of tickets and seats, adding optional snacks, using eligible offers or member balances, and reviewing one checkout. Later food purchases remain available. Use tool results for supported options, prices and current availability. Payment is simulated. A successful payment verifies the booking; only a successful receipt render verifies its visible QR. Email/app delivery stays unconfirmed unless a tool explicitly verifies it.
 
 ## Booking on the website or app
+Use these public-channel steps only when the guest asks how to use the real VOX website or app; they are not the assistant's conversational sequence. For a requested recommendation or plan, prepare the complete read-only proposal before asking acceptance.
 1. Go to uae.voxcinemas.com or open the VOX Cinemas app and pick a movie under What's On.
 2. Choose the cinema, date and showtime.
 3. Select ticket types and seats. The current booking's timer shows how long the seats remain held. Use the backend expiry, rather than a fixed number of minutes. Reconnecting does not extend the hold; after expiry, ask before checking availability and creating a fresh hold.
 4. Add food and drinks (Prepare Now lets you skip the queue).
 5. Apply a bank offer (pay with the eligible card), promo code, Share Points or VOX credit.
-6. Review and pay through the website or app. For a booking made in this Virtual Assistant demo, payment is simulated and the confirmed receipt and QR appear in the widget. A visible receipt does not establish email delivery; only a tool result explicitly confirming delivery permits saying an email was sent.
+6. Review and pay through the public website or app. These instructions do not establish receipt display, delivery or cinema admission for a Virtual Assistant demo booking.
 
 ## Managing a booking
 - Find a booking with the booking reference (7 characters, e.g. WXA7K2M), the email or the mobile number used.
 - Cancel and refund: allowed up to 30 minutes before the showtime for tickets not yet collected/scanned and not bought with a bank/telco offer. The tools return the permitted refund destinations; apply the approved demo policy above without silently selecting a method.
 - Swap: preview the same film at the same cinema first. Use the actual returned price difference and supported settlement; do not promise a charge or refund before it succeeds.
-- Lost ticket: after the required verification, the assistant can show the returned booking and QR. Only claim an external resend when a tool confirms delivery.
+- Lost ticket: after the required verification, request the owned receipt and confirm its display only after successful rendering. A paid booking or QR payload alone does not establish display, app/email delivery or cinema admission. Claim an external resend only when a tool confirms delivery.
 
 ## Share Points and VOX credit
 - SHARE is Majid Al Futtaim's loyalty programme. Members earn Share Points on every purchase; 10 points = AED 1 and points can pay for tickets and food.

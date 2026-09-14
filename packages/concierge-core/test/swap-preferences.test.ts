@@ -181,10 +181,75 @@ it("does not substitute a recommendation for an invalid customer-selected target
   const { ctx, input } = fixture();
   const invalid = await prepareSwap(ctx, { ...input, targetSessionKey: "missing" });
   expect(invalid.data).not.toHaveProperty("recommendedPreviewInput");
+  expect(invalid.data).not.toHaveProperty("nextStep");
   ctx.catalog.sessions = async () => [];
   const empty = await prepareSwap(ctx, input);
   expect(empty.data?.alternatives).toEqual([]);
   expect(empty.data).not.toHaveProperty("recommendedPreviewInput");
+  expect(createConfirmation).not.toHaveBeenCalled();
+});
+
+it.each(["en", "ar"] as const)(
+  "keeps empty replacement evidence scoped and asks before widening in %s",
+  async (lang) => {
+    const { ctx, input, booking } = fixture();
+    ctx.lang = lang;
+    const original = structuredClone(booking);
+    const seatRead = vi.spyOn(ctx.vista, "seatPlan");
+    // Other experiences really exist on the requested day. An empty THEATRE
+    // replacement cannot truthfully establish that there are no shows all day.
+    const result = await prepareSwap(ctx, { ...input, experience: "THEATRE", time: "18:30" });
+    expect(result.data).toMatchObject({
+      bookingId: "ORIGINAL",
+      needs: "swap_session",
+      nextStep: "ask_before_widening",
+      alternatives: [],
+      sameCinemaRequired: true,
+      requestedScope: {
+        hoCode: "film",
+        filmTitle: "Film",
+        cinemaId: "cinema",
+        cinemaName: "Cinema",
+        date: "2030-06-04",
+        dateMatch: "requested_day",
+        time: "18:30",
+        timeMatch: "closest_to",
+        experience: "THEATRE",
+        experienceMatch: "required",
+      },
+      availabilityScope: "closest_matches_only",
+      canConcludeNoShowsAllDay: false,
+      originalBookingUnchanged: true,
+    });
+    expect(result.ui?.meta).toMatchObject({
+      requestedScope: result.data?.requestedScope,
+      nextStep: "ask_before_widening",
+      canConcludeNoShowsAllDay: false,
+    });
+    expect(result.ui?.actions).toEqual([]);
+    expect(result.data).not.toHaveProperty("confirmationId");
+    expect(result.data).not.toHaveProperty("recommendedPreviewInput");
+    expect(result.speech).toContain(lang === "en" ? "Would you like to change" : "هل ترغب في تغيير");
+    expect(result.speech).not.toMatch(/no showtimes|no shows|لا توجد عروض/);
+    expect(createConfirmation).not.toHaveBeenCalled();
+    expect(seatRead).not.toHaveBeenCalled();
+    expect(booking).toEqual(original);
+  },
+);
+
+it("labels original date/time/experience defaults as preferences in an empty result", async () => {
+  const { ctx } = fixture();
+  ctx.catalog.sessions = async () => [];
+  const result = await prepareSwap(ctx, { bookingId: "ORIGINAL", keepSeatsIfPossible: true });
+  expect(result.data?.requestedScope).toMatchObject({
+    date: "2030-06-03",
+    dateMatch: "original_day_preferred",
+    time: "19:00",
+    timeMatch: "closest_to",
+    experience: "Standard",
+    experienceMatch: "original_preferred",
+  });
+  expect(result.data?.nextStep).toBe("ask_before_widening");
   expect(createConfirmation).not.toHaveBeenCalled();
 });
 

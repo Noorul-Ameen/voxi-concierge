@@ -18,6 +18,8 @@ This section describes the approved simulated demo, not a universal promise abou
 
 ## Public website reference
 
+The public website/app steps below answer explicit questions about purchases on those channels. They are not evidence of delivery, display, preparation, printing or admission for this Virtual Assistant demo. For a demo booking, use its actual tool result; email/app delivery remains unconfirmed and QR display requires a successful render.
+
 # Frequently asked questions
 
 - **Entry Guidelines**
@@ -40,6 +42,8 @@ Please note that **it is** **against the law for underage people to enter Restri
 | PG 13 | Guests aged 13 and under may attend but must be accompanied by someone aged 13 or older. Please note that the content may not be suitable for guests aged 13 and below. Ticket purchases should be made at the discretion of parents or guardians. |
 | PG | Parental guidance advised. Some material may not be suitable for children. |
 | G | General Exhibition - open for all ages. |
+
+Unknown, missing or TBC classification is distinct from the explicit provisional code18TC. For a demo age-rule result of allowed:null, admission cannot yet be confirmed; do not assert either an official ban or permission. Use the returned conditions when allowed is true or false.
 ### b. Cinema Entry Restrictions
 Most VOX Cinemas experiences are open to all age groups; however, certain cinema screens may be subject to specific entry requirements based on the film ratings.
 **MOONLIGHT, GOLD and THEATRE Cinemas** 
@@ -141,13 +145,13 @@ To view your upcoming and past bookings, select Purchase History on the My Accou
 ### What forms of payment do you accept for online bookings?
 We accept Visa and MasterCard for online bookings.
 ### Can I print out my online tickets at the cinema?
-Yes, you can print your tickets at one of our cinema kiosks by entering your booking reference number.
+For a real public-website/app purchase, the public FAQ describes kiosk printing using its booking reference. This does not guarantee printing or entry for a demo booking or an unrendered demo receipt; staff can help look up the verified booking.
 ### How do I use my E-ticket?
-Scan the code on your booking confirmation email at the ticket podiums before entering the cinema. Please note that your E-ticket contains all the tickets in the booking, so you should only enter the cinema when all your guests have arrived.
+For a valid e-ticket obtained through the public website/app, use its QR at the ticket podium subject to entry conditions. That e-ticket includes all tickets in the booking, so the group should arrive together. For a demo booking, this guidance proves neither email/app delivery nor a displayed QR or admission.
 ### How many tickets can I book online?
 You may purchase a maximum of 10 tickets per booking. You may complete as many bookings as you would like.
 ### What should I do if I don't receive my booking confirmation email?
-Please email us through the contact us form. Provide your name and the first six and last four digits of your bank card. If you wish to visit the cinema, please provide proof of purchase at our ticket counter (e.g. a bank statement).
+For a real public-website/app purchase, use the official contact form or ticket counter and follow its verification process outside this chat. For a demo booking, state that email delivery is unconfirmed unless a tool verifies it; inspect the owned booking/receipt instead of assuming email, app delivery or entry. Do not collect card details or bank statements here or promise a printing/admission outcome.
 ### How do I make group or private bookings?
 Please email us at events@maf.ae with details of the cinema, size of group and event that you would like to organize.
 ## 8. Vouchers
@@ -162,6 +166,7 @@ All vouchers are non-refundable and nontransferable.
 ### Can I use my voucher for more than one transaction?
 Once a voucher code has been redeemed online, it cannot be used again for another transaction.
 ## 9. ORDERING FOOD & DRINKS ONLINE
+These collection and preparation instructions apply to real public-website/app orders only. The demo's order/payment is not proof of a kitchen request, delivered message or collection status.
 ### Is the online food and drinks menu same as the one served at the Candy Bar in the cinema?
 Online and in-store menus are the same, but there are special offers available in-store at the Candy Bar
 ### Can I collect my order from another cinema?
@@ -174,16 +179,16 @@ Yes, you can cancel your order and get a VOX credit only if:
 - your order was not bought with discounted tickets from bank and telecommunication offers
 Consult our VOX Credit and Refunds for more informations.
 ### Where can I find my QR code?
-The QR code for your food and drinks order can be found in the order confirmation email. You can also view the QR code in your order history if you were logged in as a VOX member while making the purchase.
+For real public-website/app orders, check a received order-confirmation email or the account history used for the purchase. For this demo, only the verified receipt-render result establishes a displayed QR; neither a saved email address nor booking history proves email/app delivery.
 ### Can I make changes to my order after I’ve paid for it?
 Once you have paid for your order, it can no longer be amended. You can cancel your order and place a new one. To cancel your order and get a VOX credit refund, go to “My Account”, view “Past Purchases” and click "Manage Booking". If your purchase is eligible for a refund, a "Refund Booking" button will be visible. Please allow up to 30 minutes for the refund amount to be credited to your VOX Wallet. 
 Find out more on VOX credit refund here. 
 ### Can I add extra items to my existing order?
 It is not possible to add items to an order that you have already paid for. If you want to order additional items, you can place a new order online or at the Candy Bar or food kiosk in the cinema.
 ### What happens if my phone runs out of battery at the cinema?
-If your phone runs out of battery at the cinema and you cannot access your QR code, please present the credit/debit card used to pay for the order, at the Candy Bar. Our staff will give you an order number which can then be used to retrieve your food and drinks order from the kiosk or the hot food collection point. 
+For a real public-website/app food order, ask Candy Bar staff for purchase verification and collection assistance. Follow their secure process in person; do not send payment-card details in this chat. This does not establish a replacement number or collection outcome for a demo order.
 ### What happens if I cannot find my QR code?
-If you cannot find your QR code, please provide the credit/debit card number used to make the purchase to our customer support team or a staff member at the Candy Bar. Our staff will give you an order number which can then be used to retrieve your food and drinks order from the kiosk or the hot food collection point. 
+For a real public-website/app food order, contact Customer Care or Candy Bar staff through their secure verification process. In this demo, retrieve the verified owned receipt and use its actual render outcome; staff assistance does not guarantee a replacement QR, printing or admission.
 ## THEATRE Pods in IMAX
 ### What is the screen size at THEATRE Pods in IMAX?
 The THEATRE Pods in IMAX screen measures at 23 metres x 12.3 metres

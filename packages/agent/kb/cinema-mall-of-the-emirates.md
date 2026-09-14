@@ -49,4 +49,4 @@ VOX Cinemas are fitted with the very latest immersive technology, including a la
 SHOWTIMES MAP
 
 ## Contact
-VOX Customer Care: 600 599 905 (UAE), customercare@voxcinemas.com. Ticket collection: scan the QR code from your email or app at the entrance; kiosks are available in the foyer.
+VOX Customer Care: 600 599 905 (UAE), customercare@voxcinemas.com.

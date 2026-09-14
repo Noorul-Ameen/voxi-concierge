@@ -127,6 +127,22 @@ describe("agent configuration contracts", () => {
       silence_end_call_timeout: 180,
     });
   });
+  it("uses the supported effort for a Gemini3.7 candidate without changing live-sync behavior", () => {
+    expect(
+      buildAgentConfig({ ...opts, llm: "gemini-3.7-flash" }).conversation_config.agent.prompt,
+    ).toMatchObject({
+      llm: "gemini-3.7-flash",
+      reasoning_effort: "low",
+      temperature: 0,
+    });
+    expect(
+      buildAgentConfig({ ...opts, llm: "gemini-3.7-flash", reasoningEffort: "medium" }).conversation_config
+        .agent.prompt.reasoning_effort,
+    ).toBe("medium");
+    expect(
+      buildAgentConfig({ ...opts, llm: "custom-model" }).conversation_config.agent.prompt,
+    ).not.toHaveProperty("reasoning_effort");
+  });
   it("existing-agent patches cannot overwrite voice, model, privacy or knowledge", () => {
     const patch = buildAgentBehaviorPatch(["fixture-tool"]);
     expect(Object.keys(patch.conversation_config).sort()).toEqual(["agent", "tts"]);

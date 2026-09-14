@@ -206,6 +206,52 @@ describe("eight approved journeys", () => {
       }
     }
   });
+  it("grounds an empty swap fixture in its original scope without granting a wider search", () => {
+    for (const language of ["en", "ar"]) {
+      const test = buildJourneySimulationSuite().tests.find((item) => item.id === `08-negative-${language}`)!;
+      const results = test.tool_mock_overrides.prepare_swap
+        .filter((entry) => !entry.is_error)
+        .map((entry) => JSON.parse(entry.mock_result));
+      expect(results).toHaveLength(2);
+      for (const result of results) {
+        expect(result.data).toMatchObject({
+          needs: "swap_session",
+          nextStep: "ask_before_widening",
+          alternatives: [],
+          requestedScope: {
+            hoCode: "FIX_FILM",
+            cinemaId: "0001",
+            date: "2030-06-04",
+            dateMatch: "requested_day",
+            time: "19:00",
+            timeMatch: "closest_to",
+            experience: "Premier",
+            experienceMatch: "original_preferred",
+          },
+          availabilityScope: "closest_matches_only",
+          canConcludeNoShowsAllDay: false,
+          originalBookingUnchanged: true,
+        });
+        expect(result.data).not.toHaveProperty("confirmationId");
+        expect(result.data).not.toHaveProperty("recommendedPreviewInput");
+        expect(result.ui).toMatchObject({
+          type: "showtimes",
+          items: [],
+          actions: [],
+          meta: { requestedScope: result.data.requestedScope, nextStep: "ask_before_widening" },
+        });
+        expect(result.speech).toContain(language === "en" ? "Would you like to change" : "هل ترغب في تغيير");
+      }
+      expect(test.success_conditions.join(" ")).toContain("Do not silently broaden cinema");
+      expect(
+        test.tool_mock_overrides.search_sessions.some(
+          (entry) =>
+            entry.is_error && entry.parameter_conditions.some((condition) => condition.path === "language"),
+        ),
+      ).toBe(true);
+    }
+  });
+
   it("allows a polite farewell and evaluates waiting only when the user explicitly asks to pause", () => {
     const tests = buildJourneySimulationSuite().tests;
     for (const language of ["en", "ar"]) {

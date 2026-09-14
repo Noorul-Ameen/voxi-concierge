@@ -2,7 +2,7 @@
  * Build the knowledge base (Markdown with frontmatter) from:
  *  - the captured VOX UAE web pages (FAQ, refunds, T&Cs, experiences, offers, app, contact…)
  *  - the seed dataset (cinema pages: hours, directions, parking, accessibility, experiences)
- *  - policy docs generated from packages/db catalog (age rules)
+ *  - reviewed policy documents retained verbatim (age, refunds, checkout and public-channel guidance)
  * Output: packages/agent/kb/*.md — reviewed before separate candidate KB upload and seeded into kb_documents.
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -106,6 +106,9 @@ async function main() {
     "terms-and-conditions",
     "faq",
     "offers-and-bank-offers",
+    "age-restrictions",
+    "vox-app",
+    "food-and-drinks-online",
   ]);
   let n = 0;
   for (const [route, meta] of Object.entries(PAGES)) {
@@ -160,7 +163,7 @@ ${extra.accessibility}
 ${c.description || `VOX Cinemas at ${c.mallName}.`}
 
 ## Contact
-VOX Customer Care: 600 599 905 (UAE), customercare@voxcinemas.com. Ticket collection: scan the QR code from your email or app at the entrance; kiosks are available in the foyer.
+VOX Customer Care: 600 599 905 (UAE), customercare@voxcinemas.com.
 `;
     await writeFile(
       path.join(OUT, `cinema-${c.slug}.md`),
@@ -168,28 +171,7 @@ VOX Customer Care: 600 599 905 (UAE), customercare@voxcinemas.com. Ticket collec
     );
     n++;
   }
-  // ---- age restrictions (from catalog) ----
-  const age = `# Age restrictions and movie ratings (UAE)
-
-Ratings are set by the UAE Media Regulatory Office. It is against the law for underage guests to enter restricted movies, even with their parents; staff may ask for ID.
-
-${catalog.AGE_RULES.map((r) => `- **${r.rating}** — ${r.text}`).join("\n")}
-
-## Experience-specific age rules
-${Object.entries(catalog.EXPERIENCE_AGE_RULES)
-  .map(([k, v]) => `- **${k}** — ${v}`)
-  .join("\n")}
-
-## Quick answers
-- Can a 10-year-old watch a PG13 movie? Yes, if accompanied by someone aged 13 or older; parents decide if the content is suitable.
-- Can a 16-year-old watch an 18+ movie with a parent? No. 18+ means nobody under 18 is admitted, even with parents.
-- Are babies allowed? Not in 15+, 18+ or 21+ movies. In G/PG/PG13/PG15 sessions, infants are welcome but need a ticket if they occupy a seat; KIDS screens have booster seats.
-- Is GOLD adults only? GOLD is 18+ except at Mall of the Emirates, City Centre Mirdif and Yas Mall, where children 8+ may attend with an adult. THEATRE is 18+ everywhere.
-`;
-  await writeFile(
-    path.join(OUT, "age-restrictions.md"),
-    `${fm({ title: "Age restrictions and movie ratings", language: "en", category: "age_restrictions", source: "https://uae.voxcinemas.com/faq" })}\n${age}`,
-  );
+  // age-restrictions.md is reviewed against the official policy; preserve it verbatim.
   // how-to-book-and-manage.md is a reviewed source, not a generated scrape/template.
   // ---- Arabic glossary ----
   const glossary = `# مصطلحات فوكس سينما — Arabic glossary for the VOX Cinemas Virtual Assistant

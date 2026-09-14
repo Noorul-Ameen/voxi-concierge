@@ -111,6 +111,7 @@ export type AgentBuildOptions = {
   voiceIdEn?: string;
   voiceIdAr?: string;
   llm?: string;
+  reasoningEffort?: "minimal" | "low" | "medium" | "high" | "none";
   agentName?: string;
   knowledgeBase?: { id: string; name: string; type: "text" | "file" | "url" }[];
   toolIds?: string[];
@@ -148,23 +149,23 @@ const AGENT_TOOL_USAGE: Partial<Record<ToolName, string>> = {
   get_film:
     "Use only the guest's actual title or a verified returned hoCode. An exact code needs no filmLanguage. Never infer film language from Arabic/English conversation or invent an alternative title after a failed search.",
   search_sessions:
-    "Keep the verified film, cinema, requested date/time and explicit film-language constraints on every retry. Empty/error results do not authorize dropping filters or moving to another cinema. Never send the reply language as filmLanguage or as an undeclared language parameter. For an existing booking's closest-match preview, prefer prepare_swap and its recommendedPreviewInput.",
+    "Copy the verified hoCode and cinemaId, retain the requested date/time and use filmLanguage only for an explicitly requested movie language. The guest's reply language adds no discovery filter. Follow prepare_swap recommendedPreviewInput for an existing booking. If its nextStep is ask_before_widening, complete the clarification turn before any wider search. An empty scoped result establishes only that scope; failed reads establish no availability fact.",
   prepare_swap:
-    "Read-only preview, not an exchange or payment. Start with the owned bookingId and requested date/time, keeping the original cinema/film. When recommendedPreviewInput is returned, call prepare_swap again with that exact input before speaking; it chooses the closest candidate for a seat-and-price preview without mutation. Do not ask the same time choice again. Only the later exact preview consent permits swap_booking.",
+    "Read-only preview, not an exchange or payment. Start with the owned bookingId and requested date/time, keeping the original cinema/film. When recommendedPreviewInput is returned, call prepare_swap again with that exact input before speaking; it chooses the closest candidate for a seat-and-price preview without mutation. When nextStep is ask_before_widening, explain the unmet requestedScope and ask which constraint the guest wants to change; wait for their answer before another search. Only the later exact preview consent permits swap_booking.",
   get_age_rules:
-    "First fetch the film's actual rating code; never pass its title as rating. Include a known childAge. Explain data.allowed:false as refusal, null as unconfirmed admission, and true using its exact conditions. For a family enquiry explain the rating and ask age once only if missing.",
+    "First fetch the film's actual rating code and include the known childAge and requested experience. Explain data.allowed:false using the returned reason, null as unconfirmed admission, and true with its exact accompanying-person and content-judgement conditions. Experience eligibility does not supply a missing film classification. For an admission enquiry, ask age once only if missing.",
   get_recommendations:
     "Use for discovery when no film is already chosen. There is no title or query parameter: for a named film use get_film/search_films, then propose_booking. Omit every optional cinema, time/window, experience, seat or film-language filter the guest did not specify. 'Usual' requests server-side profile inference. After recommendations, check any child's admission and obtain propose_booking before asking acceptance; a recommendation alone does not verify a complete seating/price proposal.",
   list_offers:
     "For 'my saved card', omit bank and cardBin: the authenticated backend resolves the card. bank means an actual named bank, never saved_card or another sentinel. Quote only the returned eligible saving; it remains potential until applied.",
   investigate_payment:
-    "For an initial missing-booking/debit report, omit unknown optional IDs and inspect authenticated context. userSessionId is an actual returned order ID, never the current conversation/test ID. A failed get_order does not validate its input for this tool. A known paid booking with a QR rendering error needs receipt assistance, not a new payment investigation.",
+    "For an initial missing-booking/debit report, omit unknown optional IDs and inspect authenticated context. userSessionId is an actual returned order ID. Copy transactionReference and cardLast4 only from genuine guest-provided values. When a suggested booking is rejected, retain that as handover context and obtain the actual missing transaction details before another investigation. A known paid booking with a QR rendering error needs receipt assistance.",
   propose_booking:
     "Carry known composition on every proposal/edit: tickets is ADULT count, childTickets is CHILD count. One parent with one child means tickets:1, childTickets:1, not tickets:2 or totalTickets. Before a child's proposal use get_age_rules with the actual returned rating and known childAge, including PG. Use only declared parameters and actual guest/returned film titles or IDs. A failed proposal supplies no price, seats or acceptance token: explain the unresolved preview; never invent a replacement film/price or ask to hold an unreturned proposal.",
   prepare_payment:
-    "This can open payment options. A booking request, saved-card mention, offer enquiry or current total is not a request to open payment. Call for an explicit review request or a requested balance-switch preview. A balance_split_confirmation is only a choice: after acceptance execute its exact redemptionInput including confirmationId/confirmed. That confirmed action reserves the chosen balance and opens the card review together. Its completed paymentReviewOpened:true and payment UI prove success; do not prepare again. Preserve VOX versus SHARE.",
+    "This can open payment options. A booking request, saved-card mention, offer enquiry or current total is not a request to open payment. Call for an explicit review request or a requested balance-switch preview. A new balance_split_confirmation is an unanswered amount choice: first tell the guest the exact returned balance amount and card remainder, then wait for acceptance of those amounts. An earlier generic yes to using credit or opening review is preview consent only. After amount acceptance execute its exact redemptionInput; completed paymentReviewOpened:true with payment UI proves the review is open, so do not prepare again. Preserve VOX versus SHARE.",
   redeem_points:
-    "After the guest accepts balance_split_confirmation, copy its complete redemptionInput including confirmationId and confirmed:true. Wait for this single action to reserve the balance and return the actual card-remainder review. paymentReviewOpened:true with payment UI means open; false means reserved but review failed, not paid. No confirmation means reserve-only, not an opened review. If the guest refuses the card remainder, do not execute the split.",
+    "Copy a balance_split_confirmation's complete redemptionInput only after its exact credit/points amount and card remainder were disclosed and then explicitly accepted. Confirmed split redemption is not permitted by an earlier generic request for a preview or by consent to clear a different balance. Wait for this single action to reserve the balance and return the actual card-remainder review. paymentReviewOpened:true with payment UI means open; false means reserved but review failed, not paid. No confirmation means reserve-only, not an opened review. If the guest refuses the card remainder, finish without executing the split.",
   get_order:
     "Requires a real unpaid order userSessionId copied from activeOrder or an earlier order result. A conversation ID, test-run ID, booking reference or placeholder is invalid. If no order ID is available, use get_session_context; for a member's existing paid booking use list_my_bookings instead.",
   resume_order:
@@ -324,7 +325,7 @@ export const SKIP_TURN = {
   type: "system",
   name: "skip_turn",
   description:
-    "Wait silently when the guest asks for a moment. After one brief acknowledgement, use this for subsequent silence or ellipsis until the guest resumes; do not ask if they are still there. This does not extend inactivity or seat-hold deadlines.",
+    "After one brief acknowledgement of a requested pause, wait silently using skip_turn for every subsequent silence or ellipsis. Resume only on a substantive new guest message. Existing inactivity and seat-hold deadlines remain unchanged.",
   params: { system_tool_type: "skip_turn" },
 } as const;
 
@@ -389,10 +390,15 @@ export const KEYWORDS = [
 export function buildAgentConfig(opts: AgentBuildOptions) {
   const webhookTools = buildWebhookTools(opts);
   const clientTools = buildClientTools();
+  const llm = opts.llm ?? "gemini-3.6-flash";
+  // Gemini3.7 rejects the older model's Minimal effort.
+  const reasoningEffort =
+    opts.reasoningEffort ??
+    (llm === "gemini-3.6-flash" ? "minimal" : llm === "gemini-3.7-flash" ? "low" : undefined);
   const promptCfg: Record<string, unknown> = {
     prompt: systemPrompt(),
-    llm: opts.llm ?? "gemini-3.6-flash",
-    reasoning_effort: "minimal",
+    llm,
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
     temperature: 0,
     enable_parallel_tool_calls: false,
     max_tokens: -1,

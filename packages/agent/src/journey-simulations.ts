@@ -837,11 +837,50 @@ export function buildJourneySimulationSuite(): SimulationSuite {
     swap.success_conditions.push(
       "When the closest-match response supplies recommendedPreviewInput, obtain its actual priced preview without asking the already-requested time again. This is read-only; exchange still requires later exact consent.",
     );
+    const noSwapScope = {
+      nextStep: "ask_before_widening",
+      requestedScope: {
+        hoCode: show.hoCode,
+        filmTitle: show.filmTitle,
+        cinemaId: show.cinemaId,
+        cinemaName: show.cinemaName,
+        date: show.date,
+        dateMatch: "requested_day",
+        time: booking.time,
+        timeMatch: "closest_to",
+        experience: booking.experience,
+        experienceMatch: "original_preferred",
+      },
+      availabilityScope: "closest_matches_only",
+      canConcludeNoShowsAllDay: false,
+      originalBookingUnchanged: true,
+    };
     noSwap.tool_mock_overrides.prepare_swap = ["tomorrow", show.date].flatMap((date) =>
       mock(
-        { needs: "swap_session", bookingId: "fixture_booking", sameCinemaRequired: true, alternatives: [] },
+        {
+          needs: "swap_session",
+          bookingId: "fixture_booking",
+          sameCinemaRequired: true,
+          alternatives: [],
+          ...noSwapScope,
+        },
         { bookingId: "fixture_booking", date },
-      ),
+        {
+          type: "showtimes",
+          items: [],
+          meta: { bookingId: "fixture_booking", journey: "swap", sameCinemaRequired: true, ...noSwapScope },
+          actions: [],
+        },
+      ).map((entry) => ({
+        ...entry,
+        mock_result: JSON.stringify({
+          ...JSON.parse(entry.mock_result),
+          speech:
+            language === "en"
+              ? "No suitable replacement matched these preferences. Your original booking is unchanged. Would you like to change the date, time, experience or cinema?"
+              : "لم أجد بديلاً مناسباً يطابق هذه التفضيلات. حجزك الأصلي لم يتغير. هل ترغب في تغيير اليوم أو الوقت أو التجربة أو السينما؟",
+        }),
+      })),
     );
     const age = structuredClone(suite.tests.find((test) => test.id === `02-negative-${language}`)!);
     age.id += "-age";
