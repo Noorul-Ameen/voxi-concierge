@@ -2261,8 +2261,9 @@ export const AGE_RULES = [
 ];
 
 export const EXPERIENCE_AGE_RULES: Record<string, string> = {
-  GOLD: "GOLD is an adults-first experience: guests must be 18+ except at Mall of the Emirates, City Centre Mirdif and Yas Mall where children 8+ are welcome with an adult.",
-  THEATRE: "THEATRE welcomes guests 18+ only.",
+  GOLD: "GOLD does not admit children under 5. Guests aged 5–18 must be accompanied by a parent or guardian, and the film's age restriction still applies.",
+  THEATRE:
+    "THEATRE does not admit children under 5. Guests aged 5–18 must be accompanied by a parent or guardian, and the film's age restriction still applies.",
   KIDS: "KIDS screens are designed for children; adults must be accompanied by a child (booster seats available).",
   "4DX":
     "4DX: minimum height 100 cm; not recommended for pregnant guests or guests with heart or back conditions.",

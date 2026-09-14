@@ -18,9 +18,10 @@ Ratings are set by the UAE Media Regulatory Office. It is against the law for un
 - **18TC** — Provisionally rated 18+ pending final classification. Tickets are non-refundable.
 - **21+** — No persons under 21 will be admitted. ID required.
 
+An unknown, missing or TBC classification is not an age rating and is distinct from the explicit provisional code 18TC. If the age-rule result is allowed:null, admission is unconfirmed: explain that it cannot yet be verified and offer a film with a known suitable classification. Do not turn uncertainty into either confirmed permission or an official admission ban. A returned allowed:false restriction remains a refusal; allowed:true uses its stated conditions.
+
 ## Experience-specific age rules
-- **GOLD** — GOLD is an adults-first experience: guests must be 18+ except at Mall of the Emirates, City Centre Mirdif and Yas Mall where children 8+ are welcome with an adult.
-- **THEATRE** — THEATRE welcomes guests 18+ only.
+- **GOLD, THEATRE and MOONLIGHT** — Guests aged 5–18 may enter with a parent or guardian, subject to the film's age restriction. Children under 5 are not permitted. This is the current UAE FAQ rule, also stated on the THEATRE experience page.
 - **KIDS** — KIDS screens are designed for children; adults must be accompanied by a child (booster seats available).
 - **4DX** — 4DX: minimum height 100 cm; not recommended for pregnant guests or guests with heart or back conditions.
 - **Private** — Private cinemas: booker must be 21+.
@@ -29,4 +30,4 @@ Ratings are set by the UAE Media Regulatory Office. It is against the law for un
 - Can a 10-year-old watch a PG13 movie? Yes, if accompanied by someone aged 13 or older; parents decide if the content is suitable.
 - Can a 16-year-old watch an 18+ movie with a parent? No. 18+ means nobody under 18 is admitted, even with parents.
 - Are babies allowed? Not in 15+, 18+ or 21+ movies. In G/PG/PG13/PG15 sessions, infants are welcome but need a ticket if they occupy a seat; KIDS screens have booster seats.
-- Is GOLD adults only? GOLD is 18+ except at Mall of the Emirates, City Centre Mirdif and Yas Mall, where children 8+ may attend with an adult. THEATRE is 18+ everywhere.
+- Is GOLD or THEATRE adults only? No. Ages 5–18 may attend with a parent or guardian if the film's classification allows them; under 5s are not admitted.

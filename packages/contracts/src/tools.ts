@@ -674,7 +674,7 @@ export const TOOL_REGISTRY = {
     input: GetAgeRulesInput,
     kind: "read",
     description:
-      "Age restriction rules by rating and experience (e.g. GOLD/THEATRE 18+ policies) and whether a child of a given age may attend.",
+      "Verified age rules for the selected film rating and cinema experience, including accompanying-person conditions and whether admission for the supplied child's age is permitted, refused or unconfirmed.",
   },
   list_offers: {
     input: ListOffersInput,

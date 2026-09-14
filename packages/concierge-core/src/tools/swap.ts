@@ -49,6 +49,26 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
         a.showtime.localeCompare(other.showtime),
     );
   const alternatives = sessions.slice(0, 3).map((s) => sessionCard(s, ctx.lang, ctx.nowLocal, cinemaName));
+  const emptyScope = !alternatives.length
+    ? {
+        nextStep: "ask_before_widening" as const,
+        requestedScope: {
+          hoCode: b.ScheduledFilmId,
+          filmTitle: b.FilmTitle,
+          cinemaId: b.CinemaId,
+          cinemaName,
+          date,
+          dateMatch: input.date ? "requested_day" : "original_day_preferred",
+          time: input.time ?? b.Showtime.slice(11, 16),
+          timeMatch: "closest_to",
+          experience: preferredExperience,
+          experienceMatch: input.experience ? "required" : "original_preferred",
+        },
+        availabilityScope: "closest_matches_only" as const,
+        canConcludeNoShowsAllDay: false,
+        originalBookingUnchanged: true,
+      }
+    : undefined;
   // Finding the best candidate is read-only. A separate priced preview still
   // supplies its own confirmation before any exchange or payment is possible.
   const recommendedPreviewInput =
@@ -68,23 +88,24 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
         bookingId: b.VistaBookingId,
         sameCinemaRequired: true,
         alternatives,
+        ...emptyScope,
         ...(recommendedPreviewInput ? { nextStep: "preview_recommended", recommendedPreviewInput } : {}),
       },
       t(
         ctx.lang,
-        target?.cinemaId && target.cinemaId !== b.CinemaId
-          ? `The swap must stay at ${cinemaName}. Here are the closest available showtimes for the same film.`
-          : alternatives.length
-            ? "The closest matching showtimes are available at the same cinema. Your original booking remains confirmed."
-            : "No matching showtimes were found at the same cinema. Your original booking remains confirmed.",
+        !alternatives.length
+          ? "No suitable replacement matched these preferences. Your original booking is unchanged. Would you like to change the date, time, experience or cinema?"
+          : target?.cinemaId && target.cinemaId !== b.CinemaId
+            ? `The swap must stay at ${cinemaName}. Here are the closest available showtimes for the same film.`
+            : "The closest matching showtimes are available at the same cinema. Your original booking remains confirmed.",
         alternatives.length
           ? "هذه أقرب المواعيد المتاحة للفيلم نفسه في السينما نفسها. يظل حجزك الأصلي مؤكداً."
-          : "لم أجد موعداً مطابقاً في السينما نفسها. يظل حجزك الأصلي مؤكداً.",
+          : "لم أجد بديلاً مناسباً يطابق هذه التفضيلات. حجزك الأصلي لم يتغير. هل ترغب في تغيير اليوم أو الوقت أو التجربة أو السينما؟",
       ),
       {
         type: "showtimes",
         items: alternatives,
-        meta: { bookingId: b.VistaBookingId, journey: "swap", sameCinemaRequired: true },
+        meta: { bookingId: b.VistaBookingId, journey: "swap", sameCinemaRequired: true, ...emptyScope },
         actions: alternatives.map((s) => ({
           label: `${s.dateLabel} ${s.time} · ${s.experience}`,
           value: `swap-choice:${b.VistaBookingId}:${s.sessionKey}`,

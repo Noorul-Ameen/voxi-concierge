@@ -588,8 +588,16 @@ export const movieTools: Pick<
     const doc = rows.find((r) => r.id === "age-restrictions-generated");
     const rules = RATINGS.map((r) => ({ rating: r, minAge: classification(r).minimumAge }));
     const expRule: Record<string, string> = {
-      GOLD: "GOLD is 18+ except at Mall of the Emirates, City Centre Mirdif and Yas Mall where children aged 8+ may attend with an adult.",
-      THEATRE: "THEATRE is for guests 18 and over.",
+      GOLD: t(
+        ctx.lang,
+        "GOLD does not admit children under 5. Guests aged 5–18 must be accompanied by a parent or guardian, and the film's age restriction still applies.",
+        "لا يُسمح للأطفال دون 5 سنوات بدخول GOLD. يجب أن يرافق الضيوف من عمر 5 إلى 18 سنة أحد الوالدين أو الوصي، مع الالتزام بتصنيف الفيلم العمري.",
+      ),
+      THEATRE: t(
+        ctx.lang,
+        "THEATRE does not admit children under 5. Guests aged 5–18 must be accompanied by a parent or guardian, and the film's age restriction still applies.",
+        "لا يُسمح للأطفال دون 5 سنوات بدخول THEATRE. يجب أن يرافق الضيوف من عمر 5 إلى 18 سنة أحد الوالدين أو الوصي، مع الالتزام بتصنيف الفيلم العمري.",
+      ),
       KIDS: "KIDS screens are for children with their families; booster seats are available.",
       "4DX":
         "4DX requires a minimum height of 100 cm and is not recommended for pregnant guests or those with heart or back conditions.",
@@ -597,19 +605,43 @@ export const movieTools: Pick<
     };
     let verdict: string | undefined;
     const rule = classification(input.rating);
-    const allowed =
+    const filmAllowed =
       input.childAge != null && rule.minimumAge != null ? input.childAge >= rule.minimumAge : null;
+    const restrictedExperience = input.experience === "GOLD" || input.experience === "THEATRE";
+    const experienceBlocked = restrictedExperience && input.childAge != null && input.childAge < 5;
+    const allowed = experienceBlocked ? false : filmAllowed;
+    const minimumAge =
+      rule.minimumAge != null
+        ? Math.max(rule.minimumAge, restrictedExperience ? 5 : 0)
+        : experienceBlocked
+          ? 5
+          : null;
+    const experienceAdmission = restrictedExperience
+      ? {
+          experience: input.experience,
+          minimumAge: 5,
+          meetsMinimumAge: input.childAge == null ? null : input.childAge >= 5,
+          parentOrGuardianRequired:
+            input.childAge == null ? null : input.childAge >= 5 && input.childAge <= 18,
+          accompanimentThroughAge: 18,
+          subjectToFilmRating: true,
+          source:
+            input.experience === "THEATRE"
+              ? "https://uae.voxcinemas.com/ways-to-watch/theatre"
+              : "https://uae.voxcinemas.com/faq",
+        }
+      : undefined;
     if (input.childAge != null && input.rating) {
       const min = rule.minimumAge;
       const pg = rule.guidanceAge != null && input.childAge <= rule.guidanceAge;
       verdict =
-        allowed == null
+        filmAllowed == null
           ? t(
               ctx.lang,
               `The ${input.rating} classification is not confirmed in the available rules, so I cannot confirm admission for a ${input.childAge}-year-old. Please choose a film with a confirmed suitable rating.`,
               `التصنيف ${input.rating} غير مؤكد في القواعد المتاحة، لذلك لا يمكنني تأكيد السماح لطفل بعمر ${input.childAge}. يرجى اختيار فيلم بتصنيف مناسب ومؤكد.`,
             )
-          : allowed
+          : filmAllowed
             ? pg
               ? t(
                   ctx.lang,
@@ -628,6 +660,24 @@ export const movieTools: Pick<
               );
     }
     const expText = input.experience && expRule[input.experience] ? expRule[input.experience] : undefined;
+    if (experienceBlocked) {
+      const screenVerdict = t(
+        ctx.lang,
+        `No — ${input.experience} does not admit children under 5, even with a parent or guardian.`,
+        `لا — لا يُسمح للأطفال دون 5 سنوات بدخول ${input.experience} حتى مع أحد الوالدين أو الوصي.`,
+      );
+      verdict = filmAllowed === false && verdict ? `${screenVerdict} ${verdict}` : screenVerdict;
+    } else if (restrictedExperience && input.childAge != null) {
+      if (filmAllowed == null) {
+        verdict ??= t(
+          ctx.lang,
+          "I cannot confirm film admission without a confirmed film rating.",
+          "لا يمكنني تأكيد السماح بمشاهدة الفيلم دون تصنيف عمري مؤكد.",
+        );
+      }
+      // A suitable film rating never removes the screen's parent/guardian condition.
+      if (filmAllowed !== false) verdict = `${verdict} ${expText}`;
+    }
     const speech =
       verdict ??
       expText ??
@@ -643,7 +693,10 @@ export const movieTools: Pick<
         experienceRule: expText,
         verdict,
         allowed,
-        minimumAge: rule.minimumAge,
+        filmAllowed,
+        minimumAge,
+        filmMinimumAge: rule.minimumAge,
+        experienceAdmission,
         classificationKnown: rule.known,
         provisional: rule.provisional,
         source: doc?.sourceUrl,
