@@ -81,11 +81,13 @@ export function mergeProposalEdit(base: ProposalInput, change: ProposalInput): P
   if (change.hoCode !== undefined && change.title === undefined) merged.title = undefined;
   if (change.cinemaName !== undefined && change.cinemaId === undefined) merged.cinemaId = undefined;
   if (change.cinemaId !== undefined && change.cinemaName === undefined) merged.cinemaName = undefined;
+  // Replace inherited timing mode without discarding constraints explicitly supplied together.
   if (change.time !== undefined) {
-    merged.timeFrom = undefined;
-    merged.timeTo = undefined;
+    if (change.timeFrom === undefined) merged.timeFrom = undefined;
+    if (change.timeTo === undefined) merged.timeTo = undefined;
   }
-  if (change.timeFrom !== undefined || change.timeTo !== undefined) merged.time = undefined;
+  if ((change.timeFrom !== undefined || change.timeTo !== undefined) && change.time === undefined)
+    merged.time = undefined;
   if (change.language !== undefined && change.filmLanguage === undefined) merged.filmLanguage = undefined;
   // A changed party requires fresh supplied ages; matching cardinality alone is not evidence.
   if (

@@ -365,6 +365,61 @@ it.each(["title", "cinemaName", "filmLanguage", "titleWithId", "cinemaNameWithId
     expect(currentProposal(ctx.conversation)?.ref).toBe(first.data!.proposalRef);
   },
 );
+it.each([
+  { time: "19:00", timeFrom: "18:00", timeTo: "20:00" },
+  { time: "18:30", timeFrom: "19:00", timeTo: "20:00" },
+  { time: "18:30", timeFrom: "17:00", timeTo: "18:00" },
+])("rejects an exact session conflicting with any jointly supplied time constraint: %j", async (times) => {
+  const { ctx } = await fixture();
+  const first = await quickTools.propose_booking(ctx, initial);
+  const previous = structuredClone(currentProposal(ctx.conversation));
+  const result = await quickTools.propose_booking(ctx, {
+    intent: "edit",
+    baseProposalRef: first.data!.proposalRef as string,
+    sessionKey: "0002-old",
+    ...times,
+  });
+  expect(result.ok).toBe(false);
+  expect(result.data?.needs).toBe("proposal_refresh");
+  expect(result.data?.proposalToken).toBeUndefined();
+  expect(currentProposal(ctx.conversation)).toEqual(previous);
+  expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+});
+it("retains compatible explicit target time and window in the saved exact-session draft", async () => {
+  const { ctx } = await fixture();
+  const first = await quickTools.propose_booking(ctx, initial);
+  const times = { time: "18:30", timeFrom: "18:00", timeTo: "20:00" };
+  const result = await quickTools.propose_booking(ctx, {
+    intent: "edit",
+    baseProposalRef: first.data!.proposalRef as string,
+    sessionKey: "0002-old",
+    ...times,
+  });
+  expect(result.ok).toBe(true);
+  expect(result.data?.proposal).toMatchObject({
+    sessionKey: "0002-old",
+    showtime: "2070-09-15T18:30:00",
+    held: false,
+  });
+  expect(currentProposal(ctx.conversation)?.choices).toMatchObject(times);
+  expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+});
+it("clears only inherited opposite time fields when an edit supplies a target or window", () => {
+  const target = mergeProposalEdit(
+    { ...initial, time: undefined, timeFrom: "22:00", timeTo: "23:59" },
+    { intent: "edit", baseProposalRef: "base", time: "18:30", timeFrom: "18:00" },
+  );
+  expect(target).toMatchObject({ time: "18:30", timeFrom: "18:00" });
+  expect(target.timeTo).toBeUndefined();
+  const window = mergeProposalEdit(initial, {
+    intent: "edit",
+    baseProposalRef: "base",
+    timeFrom: "22:00",
+    timeTo: "23:59",
+  });
+  expect(window.time).toBeUndefined();
+  expect(window).toMatchObject({ timeFrom: "22:00", timeTo: "23:59" });
+});
 it("rejects ages supplied for zero child tickets in both initial and edit requests", async () => {
   const { ctx } = await fixture();
   expect((await quickTools.propose_booking(ctx, { ...initial, childTickets: 0 })).data?.needs).toBe(

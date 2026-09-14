@@ -216,6 +216,78 @@ describe("named-film proposal fixture grounding", () => {
     }
   });
 
+  it("rejects cross-branch session keys and exact sessions conflicting with inherited or supplied time", () => {
+    for (const { body } of tests) {
+      const mocks = body.tool_mock_overrides.fixture_propose_booking;
+      const edit = {
+        intent: "edit",
+        baseProposalRef: "fixture_initial_ref",
+        experience: "Premier",
+      };
+      for (const invalid of [
+        {
+          intent: "initial",
+          title: common.filmTitle,
+          sessionKey: revised.sessionKey,
+          tickets: 1,
+          childTickets: 1,
+          childAges: [7],
+        },
+        { ...edit, sessionKey: revised.sessionKey },
+        { ...edit, sessionKey: initial.sessionKey, time: "19:00" },
+        { ...edit, sessionKey: revised.sessionKey, time: "19:00" },
+        { ...edit, sessionKey: initial.sessionKey, time: "18:30" },
+        { ...edit, sessionKey: initial.sessionKey, timeFrom: "18:00", timeTo: "20:00" },
+        { ...edit, sessionKey: revised.sessionKey, time: "19:00", timeFrom: "18:00", timeTo: "20:00" },
+      ]) {
+        const result = resolve(mocks, invalid);
+        expect(result.ok).toBe(false);
+        expect(result.data).toBeUndefined();
+      }
+    }
+  });
+
+  it("preserves valid exact keys and distinguishes exact or window matches from the around-seven alternative", () => {
+    for (const { body } of tests) {
+      const mocks = body.tool_mock_overrides.fixture_propose_booking;
+      const first = resolve(mocks, {
+        intent: "initial",
+        sessionKey: initial.sessionKey,
+        tickets: 1,
+        childTickets: 1,
+        childAges: [7],
+      });
+      expect(first.data.proposal).toMatchObject({ ...initial, held: false });
+      expect(first.ui.items).toEqual([first.data.proposal]);
+      const edit = {
+        intent: "edit",
+        baseProposalRef: "fixture_initial_ref",
+        experience: "Premier",
+      };
+      for (const changes of [
+        { sessionKey: revised.sessionKey, time: "18:30" },
+        { sessionKey: revised.sessionKey, timeFrom: "18:00", timeTo: "20:00" },
+        { timeFrom: "18:00", timeTo: "20:00" },
+      ]) {
+        const exact = resolve(mocks, { ...edit, ...changes });
+        expect(exact.data).toMatchObject({
+          proposalRef: "fixture_edited_ref",
+          proposal: { ...revised, isAlternative: false, held: false },
+        });
+        expect(exact.data.proposal.requested).toBeUndefined();
+        expect(exact.ui.items).toEqual([exact.data.proposal]);
+      }
+      const alternative = resolve(mocks, { ...edit, time: "19:00" });
+      expect(alternative.data.proposal).toMatchObject({
+        ...revised,
+        isAlternative: true,
+        requested: { time: "19:00" },
+        held: false,
+      });
+      expect(alternative.ui.items).toEqual([alternative.data.proposal]);
+    }
+  });
+
   it("requires the first complete proposal before acceptance while every financial action stays denied", () => {
     for (const { body } of tests) {
       expect(body.success_conditions[0]).toContain("Before the FIRST request to accept/book/hold");

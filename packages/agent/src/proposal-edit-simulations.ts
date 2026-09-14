@@ -80,6 +80,13 @@ export function buildProposalEditSuite(
   };
   const firstEvidence = proposalEvidence(first, "fixture_initial_ref", [7], "fixture_initial_proposal");
   const nextEvidence = proposalEvidence(next, "fixture_edited_ref", [7], "fixture_edited_proposal");
+  const revisedTime = revised.showtime.slice(11, 16);
+  const exactNextEvidence = proposalEvidence(
+    { ...next, isAlternative: false, requested: undefined },
+    "fixture_edited_ref",
+    [7],
+    "fixture_edited_proposal",
+  );
   return {
     format_version: 1,
     fixture,
@@ -212,6 +219,29 @@ export function buildProposalEditSuite(
         propose_booking: guardProposalAges(
           rejectUnexpectedFilters(
             [
+              // Exact keys must agree with this branch's captured session and anchored time.
+              ...(["initial", "edit"] as const).flatMap((intent) =>
+                rejectUnexpectedFilters([], {
+                  sessionKey: [intent === "initial" ? initial.sessionKey : revised.sessionKey],
+                }).map((mock) => ({
+                  ...mock,
+                  parameter_conditions: [
+                    { path: "intent", eval: { type: "exact" as const, expected_value: intent } },
+                    ...mock.parameter_conditions,
+                  ],
+                })),
+              ),
+              ...rejectUnexpectedFilters([], { time: [revisedTime] }).map((mock) => ({
+                ...mock,
+                parameter_conditions: [
+                  { path: "intent", eval: { type: "exact" as const, expected_value: "edit" } },
+                  {
+                    path: "sessionKey",
+                    eval: { type: "exact" as const, expected_value: revised.sessionKey },
+                  },
+                  ...mock.parameter_conditions,
+                ],
+              })),
               // These initial-result facts cannot satisfy the edited Premier/time constraints.
               // This checks mock data fidelity, not the intent of a natural-language request.
               ...["experience", "time", "timeTo"].map(
@@ -264,17 +294,18 @@ export function buildProposalEditSuite(
                 nextEvidence.ui,
               ),
               ok(
-                nextEvidence.data,
+                exactNextEvidence.data,
                 {
                   intent: "edit",
                   baseProposalRef: "fixture_initial_ref",
                   sessionKey: revised.sessionKey,
+                  time: revisedTime,
                   experience: "Premier",
                 },
-                nextEvidence.ui,
+                exactNextEvidence.ui,
               ),
               ok(
-                nextEvidence.data,
+                exactNextEvidence.data,
                 {
                   intent: "edit",
                   baseProposalRef: "fixture_initial_ref",
@@ -282,7 +313,7 @@ export function buildProposalEditSuite(
                   timeTo: "20:00",
                   experience: "Premier",
                 },
-                nextEvidence.ui,
+                exactNextEvidence.ui,
               ),
               ok(
                 firstEvidence.data,
@@ -320,7 +351,7 @@ export function buildProposalEditSuite(
               tickets: ["1"],
               childTickets: ["1"],
               date: ["tomorrow", initial.date],
-              time: ["19:00"],
+              time: ["19:00", revisedTime],
               timeFrom: ["18:00"],
               timeTo: ["20:00"],
               experience: ["KIDS", "Premier"],
