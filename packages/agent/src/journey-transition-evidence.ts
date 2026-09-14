@@ -48,7 +48,23 @@ export function auditJourneyTransitionEvidence(
     )
   )
     throw new Error("Unsupported transition evidence case");
-  const start = test.chat_history.length;
+  // Only these fixed-trigger cases seed the current user request. No authored
+  // agent/tool response is included as evidence of a generated transition.
+  const finalAuthored = object(test.chat_history.at(-1));
+  const fixedTrigger =
+    /transition-(enquiry-plan|swap-refund-choice)-(en|ar)$/.test(test.id) &&
+    finalAuthored?.role === "user" &&
+    typeof finalAuthored.message === "string" &&
+    finalAuthored.message.trim();
+  const configuredGreeting =
+    test.id.includes("rating-definition") &&
+    test.chat_history.length === 0 &&
+    transcript[0]?.role === "agent" &&
+    !!transcript[0].message?.trim() &&
+    !transcript[0].tool_calls?.length &&
+    !transcript[0].tool_results?.length &&
+    transcript[1]?.role === "user";
+  const start = test.chat_history.length - (fixedTrigger ? 1 : 0) + (configuredGreeting ? 1 : 0);
   const turns = transcript.slice(start);
   const findings: string[] = [];
   if (turns[0]?.role !== "user" || !turns[0]?.message?.trim())

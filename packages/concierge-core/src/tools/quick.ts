@@ -570,8 +570,9 @@ async function resolveSession(
 
   // ---- window ----
   const date = resolveSpokenDate(input.date, ctx.nowLocal);
-  const from = input.time ? clock(minutes(input.time) - 30) : input.timeFrom;
-  const to = input.time ? clock(minutes(input.time) + 30) : input.timeTo;
+  // The tolerance belongs to the requested calendar date, not the opposite end of that day.
+  const from = input.time ? clock(Math.max(0, minutes(input.time) - 30)) : input.timeFrom;
+  const to = input.time ? clock(Math.min(1439, minutes(input.time) + 30)) : input.timeTo;
   const usualWindow =
     !input.time && !input.timeFrom && !input.timeTo ? usualTimeWindow(customer, date) : null;
   const target = input.time ? minutes(input.time) : usualWindow ? minutes(usualWindow.around) : null;
@@ -947,10 +948,10 @@ const quickHandlers: Pick<
           ctx.lang,
           count == null
             ? `${proposal.filmTitle}, ${proposal.experience} at ${proposal.cinemaName}, ${fmtTime(s.showtime, ctx.lang)}. How many are going?`
-            : `${proposal.filmTitle}, ${proposal.experience} at ${proposal.cinemaName}, ${fmtTime(s.showtime, ctx.lang)}: ${count} seats ${seats!.map((s) => s.row + s.number).join(", ")}${totalCents != null ? `, ${money(totalCents, ctx.lang)}` : ""}. Shall I hold this, or would you like to change anything?`,
+            : "Here’s your suggested option.",
           count == null
             ? `${proposal.filmTitle} في ${proposal.cinemaName}، ${proposal.experience} الساعة ${fmtTime(s.showtime, ctx.lang)}. كم عدد التذاكر؟`
-            : `${proposal.filmTitle} في ${proposal.cinemaName}، ${proposal.experience} الساعة ${fmtTime(s.showtime, ctx.lang)}، ${count} مقاعد${totalCents != null ? `، ${money(totalCents, ctx.lang)}` : ""}. هل أحجزها مؤقتاً أم تريد تغيير شيء؟`,
+            : "هذا اقتراحي لك.",
         ),
       {
         type: "booking_proposal",

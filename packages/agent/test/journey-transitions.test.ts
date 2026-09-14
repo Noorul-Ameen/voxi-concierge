@@ -337,17 +337,11 @@ describe("journey transition regressions", () => {
       call("propose_booking", { hoCode: "FIX_SPIDER", tickets: 1, childTickets: 1, date: "tomorrow" }),
       result("propose_booking", proposal),
     ];
+    expect(audit("enquiry-plan", [...entered, ...prepared, speech("Here is the evening proposal.")])).toEqual(
+      [],
+    );
     expect(
       audit("enquiry-plan", [
-        user("I would like to watch a movie with my son tomorrow."),
-        ...entered,
-        ...prepared,
-        speech("Here is the evening proposal."),
-      ]),
-    ).toEqual([]);
-    expect(
-      audit("enquiry-plan", [
-        user("I would like to watch a movie with my son tomorrow."),
         call("search_sessions", { date: "tomorrow", title: "Spider-Man" }),
         speech("Which time?"),
         user("Show a proposal."),
@@ -356,13 +350,9 @@ describe("journey transition regressions", () => {
         speech("Here it is."),
       ]),
     ).toContainEqual(expect.stringContaining("Missing complete"));
-    expect(
-      audit("enquiry-plan", [
-        user("I would like to watch a movie with my son tomorrow."),
-        ...prepared,
-        speech("Here is the evening proposal."),
-      ]),
-    ).toContainEqual(expect.stringContaining("Procedure was not entered"));
+    expect(audit("enquiry-plan", [...prepared, speech("Here is the evening proposal.")])).toContainEqual(
+      expect.stringContaining("Procedure was not entered"),
+    );
   });
 
   it("does not use a future or missing user age to authorize the current admission call", () => {
@@ -530,6 +520,7 @@ describe("journey transition regressions", () => {
         { targetSessionKey: "OTHER" },
         { date: "today" },
         { time: "16:50" },
+        { language: "ar" },
         { refundMethodForDifference: "OTHER_CARD" },
         { keepSeatsIfPossible: false },
       ])
@@ -568,7 +559,7 @@ describe("journey transition regressions", () => {
       user("Do not confirm; leave my booking unchanged."),
       speech("Understood."),
     ];
-    expect(audit("swap-refund-choice", trace)).toEqual([]);
+    expect(audit("swap-refund-choice", trace.slice(1))).toEqual([]);
     const premature = [...trace];
     premature[3] = call("prepare_swap", { ...target, refundMethodForDifference: "ORIGINAL_PAYMENT" });
     premature[4] = result(
@@ -578,19 +569,98 @@ describe("journey transition regressions", () => {
         refundMethodForDifference: "ORIGINAL_PAYMENT",
       }).value,
     );
-    expect(audit("swap-refund-choice", premature)).toContainEqual(
+    expect(audit("swap-refund-choice", premature.slice(1))).toContainEqual(
       expect.stringContaining("preceding explicit wallet choice"),
     );
     const negated = [...trace];
     negated[6] = user("Not VOX Wallet credit; I have not chosen.");
-    expect(audit("swap-refund-choice", negated)).toContainEqual(
+    expect(audit("swap-refund-choice", negated.slice(1))).toContainEqual(
       expect.stringContaining("preceding explicit wallet choice"),
     );
     expect(
       audit("swap-refund-choice", [
-        ...trace,
+        ...trace.slice(1),
         call("swap_booking", { confirmed: true, confirmationId: "FIX_SWAP_CONFIRMATION" }),
       ]),
     ).toContainEqual(expect.stringContaining("swap_booking is not authorized"));
+  });
+
+  it.each(["en", "ar"])("%s: fixed current-user triggers cannot be skipped by the simulator", (language) => {
+    const plan = testFor("enquiry-plan", language);
+    const refund = testFor("swap-refund-choice", language);
+    for (const t of [plan, refund]) expect(t.chat_history.at(-1)).toMatchObject({ role: "user" });
+    expect(JSON.stringify(plan.chat_history.at(-1))).toMatch(/tomorrow|غداً/);
+    expect(JSON.stringify(refund.chat_history.at(-1))).toContain("2027-01-02");
+    expect(audit("enquiry-plan", [speech("Here it is.")], language)).toContainEqual(
+      expect.stringContaining("Missing complete"),
+    );
+    expect(audit("enquiry-plan", [user("Actually, stop."), speech("Understood.")], language)).toContainEqual(
+      expect.stringContaining("Missing complete"),
+    );
+  });
+
+  it("never counts an authored proposal result as a generated response to a fixed user trigger", () => {
+    const t = testFor("enquiry-plan");
+    const args = { hoCode: "FIX_SPIDER", tickets: 1, childTickets: 1, date: "tomorrow" };
+    const modified = {
+      ...t,
+      chat_history: [
+        ...t.chat_history.slice(0, -1),
+        call("propose_booking", args),
+        result("propose_booking", invoke("enquiry-plan", "propose_booking", args).value),
+        t.chat_history.at(-1),
+      ],
+    };
+    expect(
+      auditJourneyTransitionEvidence(modified, [
+        ...(modified.chat_history as Turns),
+        speech("Here is your proposal."),
+      ]),
+    ).toContainEqual(expect.stringContaining("Missing complete"));
+  });
+
+  it("accepts only the known no-history configured greeting before a definition question", () => {
+    expect(
+      audit("rating-definition", [
+        speech("Welcome back, Sara."),
+        user("What does PG13 mean?"),
+        speech("Guests13 and under must be accompanied by someone13 or older."),
+      ]),
+    ).toEqual([]);
+    expect(
+      audit("rating-definition", [
+        call("get_age_rules", { rating: "PG13" }),
+        user("What does PG13 mean?"),
+        speech("PG13."),
+      ]),
+    ).toContainEqual(expect.stringContaining("Missing generated first user"));
+  });
+
+  it("handles native boolean casing without weakening cheaper-swap scope rejection", () => {
+    const t = materialized.find((x) => x.id === "transition-swap-refund-choice-en")!;
+    const booleanGuard = t.body.tool_mock_overrides.prepare_swap!.find(
+      (m) => m.is_error && m.parameter_conditions[0]?.path === "keepSeatsIfPossible",
+    )!;
+    const condition = booleanGuard.parameter_conditions[0]!.eval;
+    expect(condition.type).toBe("regex");
+    if (condition.type !== "regex") throw Error("Expected boolean guard");
+    const guard = new RegExp(condition.pattern);
+    for (const value of ["true", "True"]) expect(guard.test(value)).toBe(false);
+    for (const value of ["false", "False", "0", "unknown"]) expect(guard.test(value)).toBe(true);
+    const exact = {
+      bookingId: "FIXRAH1",
+      date: "2027-01-02",
+      time: "20:00",
+      experience: "Standard",
+      keepSeatsIfPossible: true,
+    };
+    expect(invoke("swap-refund-choice", "prepare_swap", exact).error).toBe(false);
+    for (const change of [
+      { date: "2027-01-03" },
+      { time: "21:00" },
+      { experience: "IMAX" },
+      { keepSeatsIfPossible: false },
+    ])
+      expect(invoke("swap-refund-choice", "prepare_swap", { ...exact, ...change }).error).toBe(true);
   });
 });

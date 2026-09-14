@@ -21,3 +21,13 @@ Evidence files above are in `release-evidence/2026-09-14-flow-validation/` at th
 The suite contains 18 new cases (nine EN/AR pairs), including a separate single-owned-booking identity-confirmation sequence. It does not remove either live Rahul booking or alter the historical two-booking scenarios. All 58 external tools are mocked with a fail-closed fallback. The refund pair tests actual destination selection and a new preview, followed by refusal of the separate exchange; neither destination selection nor a preview is treated as an executed refund.
 
 Local validation on 14 September: all 179 agent tests in 12 files passed, including 25 transition regression tests; agent TypeScript checking passed. These counts cover source/fixture validation, not a native agent run or live conversation acceptance.
+
+## First native batch and bounded follow-up
+
+The original V14 batch1 retains its raw 5/14 grade and independent case-by-case review at `release-evidence/2026-09-14-journey-fixes/v14-transition-batch1-independent-review.md`. Actual English film-edit input lost the previous cinema/time/experience and never entered the booking Procedure; the single-booking reply skipped the identity-confirmation question. In contrast, the proactive offer→menu sequence succeeded. Correct UAE PG13 answers were sometimes rejected by the grader, while the Arabic general definition omitted exactly13 despite a passing grade.
+
+The local follow-up explicitly routes visible-proposal edits, separates single-booking identity from desired change, preserves exactly13 in the UAE rule, and stops explicit suggestion-only previews without an acceptance question. Enquiry and refund tests now end authored history with the exact triggering user request, not a generated assistant success. This pattern was observed in prior native fixed-email/ticket-location cases, but each new run still requires an actual boundary check. The auditor includes only that final user request; all earlier authored tool results remain excluded. The no-history definition greeting is handled separately.
+
+Valid boolean `true` refund-preview calls were rejected by the original native negative regex, while omitted fields succeeded. Allowing `true` and `True` fixes that scoped matcher without permitting false or changed date/time/experience/target. Python-style coercion is a plausible explanation, not a verified provider implementation detail. The actual missing refusal acknowledgement remains a minor conversation finding, not a credited pass.
+
+Follow-up local validation: **184/184 agent tests in 12 files**, including **30 transition tests**, and TypeScript checking pass. Native results for this corrected draft remain pending. Historical definitions and original V14 evidence remain unchanged.

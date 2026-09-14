@@ -220,15 +220,21 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
     suite.tests.push(
       define(
         "enquiry-plan",
-        verifiedHistory,
+        [
+          ...verifiedHistory,
+          say(
+            "user",
+            ar ? "أود مشاهدة فيلم مع ابني غداً." : "I would like to watch a movie with my son tomorrow.",
+          ),
+        ],
         [
           "The new family plan after the rating enquiry must enter the Discover and book Procedure before the next booking lookup. Reuse the already verified Spider-Man identity and age7; do not ask the age, cinema or count again.",
           "Before the FIRST spoken response to the new plan, obtain a successful full propose_booking for tomorrow with tickets:1 and childTickets:1. Keep the proposed film/MOE/evening/seats/AED108.50 grounded. Do not replace it with search_sessions, a list of times or a question about whether to start preparing. The history's admission invitation is not a prepared proposal.",
           "A fresh exact rating recheck or film read is allowed but unnecessary. No hold/payment/offer/food call is allowed: the customer declines the proposal. No claimed held/paid booking.",
         ],
         ar
-          ? "ابدئي بالنص: أود مشاهدة فيلم مع ابني غداً. بعد أول رد قولي: شكراً، سأقرر لاحقاً، لا تحجزي شيئاً. لا تطلبي الاقتراح أو تعيدي العمر إذا نسي المساعد الخطوة."
-          : "First say exactly: 'I would like to watch a movie with my son tomorrow.' After the first response say 'Thanks, I will decide later; do not hold anything.' Never request the missing proposal or repeat the age to rescue an incomplete response.",
+          ? "طلب مشاهدة الفيلم مع الابن غداً هو آخر رسالة مستخدم مثبتة في السجل. انتظري أول رد جديد من المساعد على هذا الطلب، ثم قولي فقط: شكراً، سأقرر لاحقاً، لا تحجزي شيئاً. لا تكرري الطلب أو تعطي العمر أو تطلبي الاقتراح لإصلاح خطوة ناقصة."
+          : "The exact family-plan request is already the final authored USER message. Wait for the first NEW assistant response to that request; only then say 'Thanks, I will decide later; do not hold anything.' Do not repeat the request or supply a missing proposal/age as a rescue.",
         {
           get_session_context: mock(context.data),
           ...filmReads,
@@ -416,7 +422,7 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
         "named-rating-age",
         read("get_session_context", {}, context, "rating_context"),
         [
-          "Resolve the named Spider-Man rating from get_film/search_films and explain PG13 accurately. In the FIRST response ask one CONDITIONAL age question (if this is for your child), without asserting that a child is attending or that admission is already allowed.",
+          "Resolve the named Spider-Man rating from get_film/search_films and explain the UAE VOX PG13 rule: guests aged13 AND UNDER need accompaniment by someone aged13 OR OLDER (https://uae.voxcinemas.com/faq). Exactly13 is included; do not grade against another country's generic PG13 policy. In the FIRST response ask one CONDITIONAL age question (if this is for your child), without asserting that a child is attending or that admission is already allowed.",
           "Only after the user actually supplies age7 call get_age_rules with the exact returned PG13 and childAge7. Explain its actual accompanied-admission conditions. Do not ask that known age again or prepare/hold/book anything; after the final thanks stop.",
         ],
         ar
@@ -435,7 +441,7 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
         "rating-definition",
         [],
         [
-          "Explain the general PG13 definition briefly from the returned rule. The guest explicitly wants information only; do not ask a child's age or infer a child is attending.",
+          "Explain the UAE VOX PG13 definition briefly: guests aged13 AND UNDER need accompaniment by someone aged13 OR OLDER (https://uae.voxcinemas.com/faq). Exactly13 is included; do not apply another country's generic PG13 definition. A correct answer from the attached policy is valid without a fresh tool call. The guest wants information only; do not ask a child's age or infer a child is attending. The initial configured greeting is not a response to that later question.",
           "No film discovery, proposal, hold, booking, transfer or payment is requested. Do not add a next-step question after the answer or thanks.",
         ],
         ar
@@ -506,7 +512,7 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
         get_session_context: original.tool_mock_overrides.get_session_context!,
         list_my_bookings: rejectUnexpectedFilters(
           [{ parameter_conditions: [], is_error: false, mock_result: JSON.stringify(singleLookup) }],
-          { customerId: ["fixture_rahul"], includePast: ["false"] },
+          { customerId: ["fixture_rahul"], includePast: ["false", "False"] },
         ),
       },
       3,
@@ -620,6 +626,12 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
           },
           "refund_booking",
         ),
+        say(
+          "user",
+          ar
+            ? `أريد نقل الحجز إلى ${targetDate} في نفس السينما والساعة 8 مساءً والتجربة والمقاعد إن أمكن. اعرضي المعاينة فقط.`
+            : `Move my booking to ${targetDate} at the same cinema, 8 pm, experience and seats if possible. Preview only.`,
+        ),
       ],
       [
         "The user already specifies the desired new date/time/same cinema and experience. Obtain discovery and the exact target's priced preview; the cheaper-preview result needs swap_refund_method and has NO confirmationId or selected refund method. Before the FIRST response ask a refund-method choice, giving the returned AED7.50 difference and permitted wallet90days/original-card5–10days options. Do not ask to confirm the exchange yet or invent a default destination.",
@@ -627,8 +639,8 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
         "Keep the returned same cinema/Standard/20:00/two tickets/G8G9 and only the AED7.50 refund difference grounded. This is a synthetic preview; no real booking or balance changes are certified.",
       ],
       ar
-        ? `قولي: أريد نقل الحجز إلى ${targetDate} في نفس السينما والساعة 8 مساءً والتجربة والمقاعد إن أمكن. اعرضي المعاينة فقط. فقط إذا سُئلت عن طريقة الاسترداد قولي: رصيد محفظة فوكس من فضلك. إذا لم يسأل، قولي: توقفي، لا تبدلي الحجز، ثم أنهي المحادثة. بعد معاينة الطريقة المختارة قولي: لا أريد تأكيد التبديل، اتركي الحجز الأصلي.`
-        : `Say 'Move my booking to ${targetDate} at the same cinema, 8 pm, experience and seats if possible. Preview only.' ONLY if asked for a refund method say 'VOX Wallet credit, please.' If not asked, say 'Stop; do not exchange the booking' and end. After the selected-method preview say 'Do not confirm the exchange; leave my original booking unchanged'.`,
+        ? "الطلب المحدد للتاريخ والوقت مثبت كآخر رسالة مستخدم في السجل. انتظري أول رد جديد. فقط إذا سُئلت عن طريقة الاسترداد قولي: رصيد محفظة فوكس من فضلك. إذا لم يسأل، قولي: توقفي، لا تبدلي الحجز، ثم أنهي المحادثة؛ لا تعيدي التاريخ أو تصلحي الخطوة. بعد معاينة الطريقة المختارة قولي: لا أريد تأكيد التبديل، اتركي الحجز الأصلي."
+        : "The exact dated request is already the final authored USER message. Wait for the first NEW assistant response. ONLY if asked for a refund method say 'VOX Wallet credit, please.' Otherwise say 'Stop; do not exchange the booking' and end; never repeat the date to rescue a missing step. After the selected-method preview say 'Do not confirm the exchange; leave my original booking unchanged'.",
       {
         get_session_context: original.tool_mock_overrides.get_session_context!,
         prepare_swap: rejectUnexpectedFilters(
@@ -716,7 +728,9 @@ export function buildJourneyTransitionSuite(clockLocal: string): SimulationSuite
             date: [targetDate],
             time: ["20:00"],
             experience: ["Standard"],
-            keepSeatsIfPossible: ["true"],
+            language: [],
+            // Native condition evaluation may stringify JSON booleans with Python casing.
+            keepSeatsIfPossible: ["true", "True"],
             refundMethodForDifference: ["VOX_CREDIT", "ORIGINAL_PAYMENT"],
           },
         ),

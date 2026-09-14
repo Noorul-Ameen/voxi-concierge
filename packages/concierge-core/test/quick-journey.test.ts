@@ -475,6 +475,55 @@ describe("read-only booking proposal", () => {
     expect(alternative.data?.proposal).toMatchObject({ isAlternative: true, requested: { time: "19:00" } });
     expect(alternative.speech).toMatch(/alternative to your requested time/);
   });
+  describe.each([
+    { requested: "23:45", opposite: "00:15" },
+    { requested: "00:15", opposite: "23:45" },
+  ])("explicit $requested on a Dubai calendar date", ({ requested, opposite }) => {
+    async function midnightContext(includeExact: boolean) {
+      const ctx = proposalContext();
+      const film = { ...(await ctx.catalog.film("film")), trailerUrl: "", synopsis: "Film", cast: [] };
+      ctx.catalog.film = vi.fn(async () => film as any);
+      ctx.catalog.films = vi.fn(async () => [film] as any);
+      ctx.catalog.sessions = vi.fn(
+        async () =>
+          [
+            { ...session, key: "opposite-end", showtime: `2026-09-11T${opposite}:00` },
+            { ...session, key: "other-date", showtime: `2026-09-12T${requested}:00` },
+            ...(includeExact
+              ? [{ ...session, key: "exact-request", showtime: `2026-09-11T${requested}:00` }]
+              : []),
+          ] as any,
+      );
+      return ctx;
+    }
+    const input = {
+      hoCode: "film",
+      cinemaId: cinema.id,
+      date: "2026-09-11",
+      time: requested,
+      tickets: 1,
+    };
+    it("proposes the exact available show without crossing the requested date", async () => {
+      const ctx = await midnightContext(true);
+      const result = await quickTools.propose_booking(ctx, input);
+      expect(result.data).toMatchObject({
+        needs: "proposal_acceptance",
+        proposal: { sessionKey: "exact-request", showtime: `2026-09-11T${requested}:00`, held: false },
+      });
+      expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+      expect(ctx.vista.setSeats).not.toHaveBeenCalled();
+    });
+    it("does not treat the opposite end of that date as within the requested window", async () => {
+      const ctx = await midnightContext(false);
+      const result = await quickTools.propose_booking(ctx, input);
+      expect(result.data).toMatchObject({ needs: "alternative" });
+      expect(result.data?.proposal).toBeUndefined();
+      expect(result.data?.proposalToken).toBeUndefined();
+      expect(ctx.vista.seatPlan).not.toHaveBeenCalled();
+      expect(ctx.vista.addTickets).not.toHaveBeenCalled();
+      expect(ctx.vista.setSeats).not.toHaveBeenCalled();
+    });
+  });
   it.each([
     {
       label: "usual evening before a late preferred experience",
