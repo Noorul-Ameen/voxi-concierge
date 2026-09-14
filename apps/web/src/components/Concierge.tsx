@@ -952,7 +952,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
               </div>
             </div>
           ) : it.kind === "cards" ? (
-            <div key={it.id}>{it.archived ? <button className="booking-summary" type="button" onClick={() => void ask(`${lang === "ar" ? "أود تعديل" : "I'd like to change"} ${decisionSummary(it.ui, lang)}`)}><span>{decisionSummary(it.ui, lang)}</span><small>{lang === "ar" ? "تعديل" : "Edit"}</small></button> : <Cards ui={it.ui} lang={lang} act={act} />}</div>
+            <div key={it.id}>{it.archived ? <button className="booking-summary" type="button" onClick={() => void ask(`${lang === "ar" ? "أود تعديل" : "I'd like to change"} ${decisionSummary(it.ui, lang)}`)}><span>{lang === "ar" ? "نتيجة سابقة: " : "Earlier result: "}{decisionSummary(it.ui, lang)}</span><small>{lang === "ar" ? "تعديل" : "Edit"}</small></button> : <Cards ui={it.ui} lang={lang} act={act} />}</div>
           ) : it.kind === "feedback" ? (
             <div key={it.id} className="cards">
               <Feedback lang={lang} act={act} />

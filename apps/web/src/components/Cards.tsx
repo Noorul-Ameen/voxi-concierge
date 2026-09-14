@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
 import type { CommandResult, Lang, UiHint } from "../lib/api";
-import { money, t } from "../lib/i18n";
+import { money, paymentMethodLabel, t } from "../lib/i18n";
 import { decisionSummary, uiActionLabel } from "../lib/widget-state";
 import { cinemaDate } from "../lib/cinema-time";
 import type { PreparedReceiptQr } from "../lib/receipt";
@@ -412,11 +412,6 @@ function PaymentInvestigation({ result, lang, act }: { result: any; lang: Lang; 
 }
 
 const hasAmount = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
-
-function paymentMethodLabel(method: unknown, lang: Lang): string {
-  const labels: Record<string, [string, string]> = { VOX_CREDIT: ["VOX Credit", "رصيد فوكس"], SHARE_POINTS: ["SHARE Points", "نقاط شير"], ORIGINAL_PAYMENT: ["Original payment method", "طريقة الدفع الأصلية"], CARD: ["Original card", "البطاقة الأصلية"], SAVED_CARD: ["Saved card", "البطاقة المحفوظة"] };
-  return labels[String(method)]?.[lang === "ar" ? 1 : 0] ?? (lang === "ar" ? "طريقة غير محددة" : "Method not specified");
-}
 
 function PaymentSwitch({ summary, lang }: { summary: any; lang: Lang }) {
   const ar = lang === "ar";
@@ -1165,7 +1160,9 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
           <span>Samsung Pay</span>
         </label>
       </div>
-      {meta.customer?.email ? <small className="muted">{ar ? `سيتم الحجز باسم ${meta.customer.name} (${meta.customer.email}${meta.customer.phone ? ` · ${meta.customer.phone}` : ""})` : `Your booking will be made as ${meta.customer.name} (${meta.customer.email}${meta.customer.phone ? ` · ${meta.customer.phone}` : ""})`}{guest ? (ar ? " — كضيف" : " — as a guest") : ""}</small> : null}
+      {meta.customer?.email ? <small className="muted">{guest
+        ? (ar ? `سيتم الحجز باسم ${meta.customer.name} (${meta.customer.email}${meta.customer.phone ? ` · ${meta.customer.phone}` : ""}) — كضيف` : `Your booking will be made as ${meta.customer.name} (${meta.customer.email}${meta.customer.phone ? ` · ${meta.customer.phone}` : ""}) — as a guest`)
+        : (ar ? "سيتم الحجز باستخدام حسابك المسجّل." : "Your booking will use your signed-in account.")}</small> : null}
       {err ? <div className="err" style={{ marginTop: 6 }}>{err}</div> : null}
       <div className="actionsrow">
         <button className={`btn ${method === "applepay" ? "apple" : method === "samsungpay" ? "samsung" : "cta"}`} disabled={busy || !method || (left === 0 && !meta.fnbOnly)} onClick={() => { void pay(); }}>

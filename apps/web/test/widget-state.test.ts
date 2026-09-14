@@ -109,6 +109,20 @@ describe("authoritative widget state", () => {
     expect(decisionSummary(booking, "en")).not.toContain("private-order");
   });
 
+  it("archives only a known matching film, never the first option because both IDs are missing", () => {
+    const options: TranscriptItem = { id: "movies", kind: "cards", ui: { type: "recommendation", items: [{ title: "Red Flag" }, { title: "Spider-Man" }] } };
+    const archive = (next: { type: string; items: Record<string, unknown>[] }) => {
+      const result = appendTranscript([options], { id: "next", kind: "cards", ui: next })[0];
+      if (result.kind !== "cards") throw new Error("Expected archived movie options");
+      return result.ui;
+    };
+    expect(archive({ type: "payment", items: [] }).meta?.selectedFilm).toBeUndefined();
+    expect(archive({ type: "booking_proposal", items: [{ filmTitle: "Spider-Man" }] }).meta?.selectedFilm?.title).toBe("Spider-Man");
+    options.ui.items = [{ hoCode: "first", title: "Same title" }, { hoCode: "second", title: "Same title" }];
+    expect(archive({ type: "booking_proposal", items: [{ hoCode: "second", filmTitle: "Same title" }] }).meta?.selectedFilm?.hoCode).toBe("second");
+    expect(archive({ type: "booking_proposal", items: [{ hoCode: "unknown", filmTitle: "Same title" }] }).meta?.selectedFilm).toBeUndefined();
+  });
+
   it("translates fixed controls after a language switch while preserving dynamic names", () => {
     expect(uiActionLabel("booking:restart", "Another show", "ar")).toBe("عرض آخر");
     expect(uiActionLabel("booking:restart", "عرض آخر", "en")).toBe("Another show");
