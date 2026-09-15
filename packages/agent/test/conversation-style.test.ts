@@ -19,7 +19,7 @@ describe("conversation style requirements", () => {
   it("forbids re-reading confirmed details across every journey", () => {
     expect(prompt).toMatch(/film, cinema, time, seats, price, card or reference/);
     expect(prompt).toMatch(/including cancellation, exchange and payment investigation/);
-    expect(prompt).toMatch(/go straight to the result rather than confirming each step in turn/);
+    expect(prompt).toMatch(/drop the confirmation questions and give them the result/);
   });
   it("states the guest and member rules in the shared prompt so every procedure inherits them", () => {
     expect(prompt).toMatch(/Based on what you usually watch/);
