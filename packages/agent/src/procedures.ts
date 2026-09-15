@@ -27,7 +27,7 @@ export const PROCEDURE_DEFINITIONS: readonly {
     type: "free_form",
     name: "VOX · Change a booked show",
     trigger:
-      "The guest wants to change an existing/current confirmed booking, including 'make changes to my current booking' without a reference or target date yet. Identify their booking first: for one returned record ask if it is the intended booking, wait for that answer, then ask the still-missing desired change. Selecting the existing booking does not select a replacement date/time. Excludes unpaid proposal/order edits, cancellation without a replacement show, and uncertain or missing payment confirmation.",
+      "The guest wants to change an existing/current confirmed booking, including 'make changes to my current booking' without a reference or target date yet. If neither a booking nor a desired change has been selected and one owned record is returned, confirm that booking first. Carry an already unique booking selection forward without reconfirming it; ask only the still-missing desired change. If booking and change are known, proceed with their read-only preview. Selecting the existing booking alone does not select a replacement date/time. Excludes unpaid proposal/order edits, cancellation without a replacement show, and uncertain or missing payment confirmation.",
   },
   {
     key: "payment-investigation",
