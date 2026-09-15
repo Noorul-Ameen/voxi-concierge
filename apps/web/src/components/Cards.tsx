@@ -30,6 +30,8 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
   const items = ui.items ?? [];
   const expired = ui.type === "order" && !!ui.meta?.expired;
   const actions = expired ? ui.actions?.filter((action) => action.value === "recover:confirm" || action.value === "booking:restart") : ui.actions;
+  // The card renders its own cancel/swap controls; suppress them when the same action is already in the row above.
+  const actionValues = new Set((actions ?? []).map((action) => action.value));
   const body = (() => {
     switch (ui.type) {
       case "movie":
@@ -54,7 +56,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
       case "menu":
         return <Menu items={items} lang={lang} act={act} hasSkip={!!ui.actions?.some((a) => a.value.startsWith("fnb_skip"))} />;
       case "booking":
-        return items.map((b, i) => <BookingCard key={i} b={b} lang={lang} act={act} confirmationId={ui.meta?.confirmationId} />);
+        return items.map((b, i) => <BookingCard key={i} b={b} lang={lang} act={act} confirmationId={ui.meta?.confirmationId} parentActions={actionValues} />);
       case "order":
         if (expired) return <div className="order expired-choices"><p className="muted">{lang === "ar" ? "احتفظنا باختياراتك. سنتحقق من التوفر قبل حجز المقاعد مجدداً." : "Your choices are kept. We'll check availability before holding seats again."}</p>{items[0] ? <><p>{decisionSummary(ui, lang)}</p>{items[0].concessions?.length ? <p>{items[0].concessions.map((food: any) => `${food.quantity}× ${lang === "ar" ? food.descriptionAlt || food.description : food.description}`).join(" · ")}</p> : null}{Number.isFinite(Number(items[0].totalCents)) ? <div className="line"><span>{lang === "ar" ? "الإجمالي السابق" : "Previous total"}</span><b>{money(Number(items[0].totalCents), lang)}</b></div> : null}</> : null}</div>;
         return items[0] && "tickets" in items[0] ? <OrderSummary o={items[0]} meta={ui.meta} lang={lang} act={act} hideActions={!!ui.actions?.length} /> : <TicketTypes items={items} lang={lang} act={act} sessionKey={ui.meta?.sessionKey} />;
@@ -565,8 +567,10 @@ function MenuItem({ m, lang, act }: { m: any; lang: Lang; act: CardActions }) {
   );
 }
 
-function BookingCard({ b, lang, act, confirmationId }: { b: any; lang: Lang; act: CardActions; confirmationId?: string }) {
+function BookingCard({ b, lang, act, confirmationId, parentActions }: { b: any; lang: Lang; act: CardActions; confirmationId?: string; parentActions?: Set<string> }) {
   const e = b.eligibility;
+  const showCancel = !parentActions?.has(`cancel:${b.bookingId}`);
+  const showSwap = !parentActions?.has(`swap:${b.bookingId}`);
   return (
     <div className="booking">
       <div className="head">
@@ -621,14 +625,18 @@ function BookingCard({ b, lang, act, confirmationId }: { b: any; lang: Lang; act
         ) : null}
       </div>
       {e ? <div style={{ marginTop: 8 }}>{e.eligible ? <span className="badge ok">{t(lang, "eligible")}</span> : <span className="badge danger" title={e.reasons?.[0]}>{t(lang, "notEligible")}</span>}{!e.eligible && e.reasons?.[0] ? <span style={{ fontSize: 11, color: "#6b6b76", marginInlineStart: 6 }}>{e.reasons[0]}</span> : null}</div> : null}
-      {!confirmationId && e?.eligible && b.status === "confirmed" ? (
+      {!confirmationId && e?.eligible && b.status === "confirmed" && (showCancel || showSwap) ? (
         <div className="actions">
-          <button className="btn danger" onClick={() => routeAction(`cancel:${b.bookingId}`, "", act, lang)}>
-            {lang === "ar" ? "إلغاء واسترداد" : "Cancel & refund"}
-          </button>
-          <button className="btn ghost" onClick={() => routeAction(`swap:${b.bookingId}`, "", act, lang)}>
-            {lang === "ar" ? "تبديل الموعد" : "Swap showtime"}
-          </button>
+          {showCancel ? (
+            <button className="btn danger" onClick={() => routeAction(`cancel:${b.bookingId}`, "", act, lang)}>
+              {lang === "ar" ? "إلغاء واسترداد" : "Cancel & refund"}
+            </button>
+          ) : null}
+          {showSwap ? (
+            <button className="btn ghost" onClick={() => routeAction(`swap:${b.bookingId}`, "", act, lang)}>
+              {lang === "ar" ? "تبديل الموعد" : "Swap showtime"}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>

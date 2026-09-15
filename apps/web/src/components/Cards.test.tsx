@@ -7,6 +7,17 @@ import { Cards, cardConfirmationId, chooseShowtime, confirmedQrPayload, createTi
 const act: CardActions = { say: () => undefined, command: async () => ({ ok: true }), openLink: () => undefined, playTrailer: () => undefined };
 
 describe("concierge decision cards", () => {
+  it("shows one set of cancel and swap controls when the eligibility card already supplies them", () => {
+    const booking = { bookingId: "W1ABCDE", status: "confirmed", filmTitle: "The Odyssey", eligibility: { eligible: true } };
+    const withActions = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "booking", items: [booking], actions: [{ value: "cancel:W1ABCDE", label: "Cancel & refund", style: "danger" }, { value: "swap:W1ABCDE", label: "Swap showtime" }] }} />);
+    expect(withActions.split("Cancel &amp; refund").length - 1).toBe(1);
+    expect(withActions.split("Swap showtime").length - 1).toBe(1);
+    // A booking list without supplied actions keeps the card's own controls.
+    const withoutActions = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "booking", items: [booking] }} />);
+    expect(withoutActions.split("Cancel &amp; refund").length - 1).toBe(1);
+    expect(withoutActions.split("Swap showtime").length - 1).toBe(1);
+  });
+
   it("keeps exchange refund selection separate from cancellation and final exchange consent", () => {
     const meta = { journey: "swap", bookingId: "BOOK", targetSessionKey: "cinema-new", keepSeatsIfPossible: true, refundChoiceProof: "scoped-proof",
       summary: { filmTitle: "The Journey", targetCinemaName: "Cinema", targetShowtimeLabel: "Tomorrow 7 pm", targetExperience: "Premier", selectedSeats: [{Row:"E",Number:"9"},{Row:"E",Number:"10"}], originalTotalCents:12000,newTotalCents:10000,refundCents:2000 } };

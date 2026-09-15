@@ -6,6 +6,7 @@ import { type DisconnectionDetails, useConversation } from "@elevenlabs/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { type BookingHistory, type CustomerProfile, type Customer, type Lang, type Session, type UiHint, type WidgetEvent, createSession, devTool, getCustomerProfile, getSignedUrl, getState, isAuthorizationError, linkConversation, sendCommand, sessionExpiryHandler, subscribe, widgetLogin, widgetLogout } from "../lib/api";
+import { stripDeliveryTags } from "../lib/delivery-tags";
 import { isRtl, t } from "../lib/i18n";
 import { type CardActions, Cards, createTicketQr, Feedback, seatRange } from "./Cards";
 import { type Loc, LocationBar } from "./LocationBar";
@@ -363,7 +364,8 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       if (!m.message || expiredConnectionRef.current) return;
       if (m.source === "user" && m.message.startsWith("[widget]")) return; // hidden widget → agent notes
       if (m.source === "user") activityRef.current.lastUserAt = Date.now();
-      push({ kind: "msg", role: m.source === "user" ? "user" : "agent", text: m.message });
+      // Delivery markers steer the voice only; they never belong in the visible transcript.
+      push({ kind: "msg", role: m.source === "user" ? "user" : "agent", text: m.source === "user" ? m.message : stripDeliveryTags(m.message) });
     },
   });
 
