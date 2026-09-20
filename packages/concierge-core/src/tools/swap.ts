@@ -182,6 +182,32 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
       Areas: (seatPlan.SeatLayoutData?.Areas ?? []).filter((a: any) => String(a.AreaCategoryCode) === area),
     };
     const previous = group.map((t) => ({ row: String(t.SeatRowId), number: String(t.SeatNumber) }));
+    // Brief §8: seats the guest picked on the map (or spoke) win over the original / profile preference.
+    const requested = input.seats?.length
+      ? input.seats.map((seat) => ({ row: String(seat.row).toUpperCase(), number: String(seat.number) }))
+      : null;
+    if (requested) {
+      if (requested.length !== originalTickets.length)
+        return err(
+          ErrorCodes.VALIDATION,
+          `Please choose ${originalTickets.length} seat${originalTickets.length === 1 ? "" : "s"} for this booking.`,
+          false,
+          { needs: "swap_seats", ticketCount: originalTickets.length },
+        );
+      const chosen = previewSeats(layout, group.length, "middle", requested.slice(0, group.length));
+      if (!chosen)
+        return err(
+          ErrorCodes.SEATS_UNAVAILABLE,
+          `Seats ${requested.map((seat) => seat.row + seat.number).join(", ")} aren't available for that show. Pick others on the map, or I can choose the closest free ones.`,
+          false,
+          { needs: "swap_seats", targetSessionKey: target.key, requested },
+        );
+      seatOptions.set(
+        area,
+        chosen.map(({ row, number }) => ({ row, number })),
+      );
+      continue;
+    }
     const same = keepSeatsIfPossible ? previewSeats(layout, group.length, "middle", previous) : null;
     // Exact original seats remain first. If unavailable, honour verified profile
     // preference; passing "near" here would override its target row.

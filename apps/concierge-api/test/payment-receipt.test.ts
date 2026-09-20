@@ -36,6 +36,7 @@ async function complete(member: boolean) {
   const prepared = await harness.tool("prepare_payment", guest.conversationId, {
     userSessionId: orderId,
     method: "CARD",
+    offerDeclined: true,
   });
   expect(prepared.ok).toBe(true);
   const command = {

@@ -358,7 +358,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     onError: (m: unknown, ctx?: unknown) => {
       if (expiredConnectionRef.current) return;
       const detail = typeof m === "string" ? m : (m as { message?: string })?.message ?? (ctx as { reason?: string })?.reason ?? "";
-      push({ kind: "note", text: `⚠️ ${detail || (langRef.current === "ar" ? "تعذّر الاتصال بالمساعد الافتراضي — حاول مجدداً" : "Could not connect to the Virtual Assistant — please try again")}` });
+      push({ kind: "note", text: `⚠️ ${detail || (langRef.current === "ar" ? "تعذّر الاتصال بالمساعد الافتراضي — حاول مجدداً" : "Couldn't connect just now — please try again")}` });
     },
     onMessage: (m: { source: string; message: string }) => {
       if (!m.message || expiredConnectionRef.current) return;

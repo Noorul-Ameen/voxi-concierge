@@ -132,7 +132,7 @@ export function evaluateCancellation(
   if (bankOffer)
     return fail(
       "BOOKING_NOT_ELIGIBLE",
-      "Tickets purchased with a bank or telco offer are non-refundable and non-transferable.",
+      "This booking used a bank offer, so it can't be cancelled through self-service — Customer Care can review it with you.",
     );
   if (b.concessions.some((c) => c.activated))
     return fail(

@@ -163,6 +163,8 @@ export function routeAction(value: string, label: string, act: CardActions, lang
     case "book":
       return act.say(ar ? `أريد حجز هذا العرض ${arg ? `(${arg})` : ""}` : `I'd like to book this showtime${arg ? ` (${arg})` : ""}`);
     case "offer":
+      if (arg === "skip") return act.say(ar ? "لا أريد العرض، ادفع بدونه" : "No offer, thanks — pay without it");
+      if (arg.startsWith("apply:")) return act.say(ar ? "نعم، طبّق العرض" : "Yes, apply the offer");
       return act.say(ar ? `طبّق العرض ${label}` : `Apply the offer ${label}`);
     case "add_item":
       return act.say(ar ? `أضف ${label.replace(/^أضف /, "")} إلى طلبي` : `Add ${label.replace(/^Add /, "")} to my order`);
@@ -751,6 +753,13 @@ function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, 
     setPicked((p) => (p.some((x) => x.row === row && x.number === id) ? p.filter((x) => !(x.row === row && x.number === id)) : p.length >= need ? [...p.slice(1), { row, number: id, area }] : [...p, { row, number: id, area }]));
   };
   const confirm = async () => {
+    // A seat map opened for a booked-show exchange has no order session yet: the picked seats go to the
+    // agent as the guest's choice and prepare_swap re-prices with them (brief §8).
+    if (!meta.userSessionId) {
+      const list = picked.map((p) => `${p.row}${p.number}`).join(", ");
+      act.say(lang === "ar" ? `استخدم المقاعد ${list} للتبديل` : `Use seats ${list} for the exchange`);
+      return;
+    }
     setBusy(true);
     try {
       const r = await act.command({ type: "seat.select", userSessionId: meta.userSessionId, seats: picked.map((p) => ({ row: p.row, number: p.number })) });

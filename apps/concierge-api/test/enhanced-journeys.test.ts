@@ -38,7 +38,11 @@ async function memberOrder() {
 }
 async function paidBooking() {
   const state = await memberOrder();
-  const prepared = await h.tool("prepare_payment", state.c, { userSessionId: state.orderId, method: "CARD" });
+  const prepared = await h.tool("prepare_payment", state.c, {
+    userSessionId: state.orderId,
+    method: "CARD",
+    offerDeclined: true,
+  });
   expect(prepared.ok, JSON.stringify(prepared)).toBe(true);
   const paid = await h.widget("command", state.session.token, {
     type: "payment.token",

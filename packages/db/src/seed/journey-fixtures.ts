@@ -45,8 +45,9 @@ const fixtures = [
     bank: false,
   },
 ];
-// WKGRP33 remains an active Rahul scenario alongside JYRAHL1; never archive it automatically.
-const obsolete = ["WXA7K2M", "WM3PQ9X", "WMB6GQ2", "WK4DXC9", "WJG8LD7", "WJMX42R"];
+// Brief (Sep 2026): Rahul's "change my booking" demo needs exactly one live booking (JYRAHL1), so the
+// pristine seed copy of WKGRP33 is archived too; a used/refunded WKGRP33 is left alone by the guards below.
+const obsolete = ["WXA7K2M", "WM3PQ9X", "WMB6GQ2", "WK4DXC9", "WJG8LD7", "WJMX42R", "WKGRP33"];
 export async function refreshDemoJourneyFixtures(db: Db, env = process.env, now = nowLocalDate()) {
   if (!demoScheduleEnabled(env)) return { enabled: false, inserted: 0, archived: 0 };
   return db.transaction(async (tx) => {

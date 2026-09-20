@@ -47,6 +47,18 @@ function parseFilters(q: (k: string) => string | undefined): Filters {
 }
 
 const isDemo = (id: string) => id.startsWith("demo_");
+// Automated/diagnostic runs are never guest traffic: hidden from every view, whatever the demo filter says.
+const TEST_PREFIXES = [
+  "diag_",
+  "audit_",
+  "validation-",
+  "hosted_qa_",
+  "qa_",
+  "handover_check",
+  "test_",
+  "smoke_",
+];
+export const isTestRun = (id: string) => TEST_PREFIXES.some((p) => id.startsWith(p));
 
 export function reportingRoutes(app: AppContext) {
   const r = new Hono();
@@ -54,6 +66,7 @@ export function reportingRoutes(app: AppContext) {
   async function filteredConversations(f: Filters) {
     const rows = await app.db.select().from(S.conversations).where(gte(S.conversations.startedAt, f.since));
     return rows.filter((x) => {
+      if (isTestRun(x.id)) return false;
       if (f.demo === "exclude" && isDemo(x.id)) return false;
       if (f.demo === "only" && !isDemo(x.id)) return false;
       if (f.language && x.language !== f.language) return false;
@@ -199,6 +212,7 @@ export function reportingRoutes(app: AppContext) {
     ).filter(
       (x) =>
         x.startedAt < f.since &&
+        !isTestRun(x.id) &&
         (f.demo !== "exclude" || !isDemo(x.id)) &&
         (f.demo !== "only" || isDemo(x.id)) &&
         (!f.language || x.language === f.language) &&
