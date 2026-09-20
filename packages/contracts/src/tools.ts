@@ -171,6 +171,16 @@ export const FindBookingInput = z
     "at least one identifier is required",
   );
 
+export const ResendTicketInput = z.object({
+  bookingId: z.string().describe("Exact booking reference from a verified lookup."),
+  channel: z
+    .enum(["email", "sms"])
+    .default("email")
+    .describe("Where to resend the ticket. Email by default; SMS only when the guest asks for it."),
+  verification: z
+    .object({ phoneLast4: z.string().length(4).optional(), email: z.string().optional() })
+    .optional(),
+});
 export const CheckCancellationEligibilityInput = z.object({
   bookingId: z.string(),
   ticketIds: z.array(z.string()).optional().describe("Subset for partial cancellation"),
@@ -213,6 +223,12 @@ export const PrepareSwapInput = z.object({
   time: timeStr.optional(),
   experience: Experience.optional(),
   keepSeatsIfPossible: z.boolean().default(true),
+  seats: z
+    .array(z.object({ row: z.string(), number: z.string() }))
+    .optional()
+    .describe(
+      "Exact seats the guest chose for the new show (from the seat map or spoken, e.g. A4, A5). Same count as the booking's tickets. Overrides keepSeatsIfPossible; unavailable seats return SEATS_UNAVAILABLE with the map still open.",
+    ),
   paymentMethodForDifference: PaymentMethod.optional(),
   refundMethodForDifference: RefundMethod.optional().describe(
     "For a cheaper replacement, only the guest-selected destination from returned refundMethods. Omit to show choices; never default a refund destination. Selection prepares a separate exchange confirmation, not execution.",
@@ -362,6 +378,12 @@ export const PreparePaymentInput = z.object({
     .optional()
     .describe(
       "Omit for signed-in members: checkout uses their verified profile. Guests enter contact details in the secure payment sheet; supply only details they explicitly provided, never guesses.",
+    ),
+  offerDeclined: z
+    .boolean()
+    .optional()
+    .describe(
+      "true only after the guest explicitly declined the saved-card offer this review returned as needs:offer_decision. Without it, an eligible unapplied offer must be offered first; apply_offer counts as the decision.",
     ),
 });
 export const PayOrderInput = z.object({
@@ -725,6 +747,12 @@ export const TOOL_REGISTRY = {
     kind: "read",
     description:
       "Find existing bookings by booking reference, email, phone or member id. Returns booking summary, tickets, seats, refund eligibility.",
+  },
+  resend_ticket: {
+    input: ResendTicketInput,
+    kind: "write",
+    description:
+      "Resend a paid booking's e-ticket (QR + receipt) to the guest's email on file, or by SMS on request, and report the delivery record: when it was last sent and to which masked address. Use for 'did my ticket arrive?', 'I didn't get the email', 'send it again'. Owner or verified guest only. Returns needs:verification when ownership is unproven.",
   },
   check_cancellation_eligibility: {
     input: CheckCancellationEligibilityInput,
