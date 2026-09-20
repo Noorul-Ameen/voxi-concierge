@@ -421,6 +421,13 @@
         "mock_result": "{\"ok\":false,\"error\":{\"code\":\"UNEXPECTED_SIMULATION_TOOL\",\"message\":\"This call is outside this fixture. No real tool was called.\",\"retryable\":false}}",
         "is_error": true
       }
+    ],
+    "resend_ticket": [
+      {
+        "parameter_conditions": [],
+        "mock_result": "{\"ok\":false,\"error\":{\"code\":\"UNEXPECTED_SIMULATION_TOOL\",\"message\":\"This call is outside this fixture. No real tool was called.\",\"retryable\":false}}",
+        "is_error": true
+      }
     ]
   },
   "tests": [
