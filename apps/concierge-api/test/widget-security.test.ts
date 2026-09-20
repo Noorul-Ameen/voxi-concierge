@@ -198,6 +198,7 @@ describe("authenticated widget boundaries", () => {
     const prepared = await harness.tool("prepare_payment", session.conversationId, {
       userSessionId: held.data.order.userSessionId,
       method: "CARD",
+      offerDeclined: true,
     });
     expect(prepared.ok).toBe(true);
     const linked = await request(

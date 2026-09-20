@@ -350,7 +350,11 @@ describe("Phase 2 — guided booking end to end", () => {
     }
     const order = await h.tool("get_order", c, { userSessionId: usid });
     expect(order.data.order.concessions).toHaveLength(1);
-    const prep = await h.tool("prepare_payment", c, { userSessionId: usid, method: "CARD" });
+    const prep = await h.tool("prepare_payment", c, {
+      userSessionId: usid,
+      method: "CARD",
+      offerDeclined: true,
+    });
     expect(prep.ok).toBe(true);
     expect(prep.ui.type).toBe("payment");
     // widget completes the (simulated) payment sheet → token
@@ -362,7 +366,11 @@ describe("Phase 2 — guided booking end to end", () => {
     });
     expect(declined.ok).toBe(false);
     expect(declined.action.error.code).toBe("PAYMENT_DECLINED");
-    const prep2 = await h.tool("prepare_payment", c, { userSessionId: usid, method: "CARD" });
+    const prep2 = await h.tool("prepare_payment", c, {
+      userSessionId: usid,
+      method: "CARD",
+      offerDeclined: true,
+    });
     const paid = await h.widget("command", session.token, {
       type: "payment.token",
       userSessionId: usid,
@@ -482,7 +490,7 @@ describe("Phase 2 — personalisation, feedback, complaints, transfer", () => {
   });
   it("exposes OpenAPI for all tools", async () => {
     const r = await h.api.request("/openapi.json").then((x) => x.json() as any);
-    expect(Object.keys(r.paths).length).toBe(46);
+    expect(Object.keys(r.paths).length).toBe(47);
     expect(r.components.schemas.quick_book_input.required).toContain("proposalToken");
   });
 });
@@ -537,6 +545,7 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     const checkout = await h.tool("prepare_payment", c, {
       userSessionId: r.data.order.userSessionId,
       method: "SAVED_CARD",
+      offerDeclined: true,
     });
     expect(checkout.ui.type).toBe("payment");
     expect(checkout.data.sheet.preferredToken).toBeTruthy();
@@ -560,6 +569,7 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     const checkout = await h.tool("prepare_payment", c, {
       userSessionId: r.data.order.userSessionId,
       method: "CARD",
+      offerDeclined: true,
     });
     expect(checkout.data.sheet.guest).toBe(true);
     expect(checkout.data.sheet.customerKnown).toBe(false);
@@ -709,9 +719,19 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
       return;
     }
     expect(hinted.data.offerHint.cardLabel).toMatch(/ending \d{4}/);
+    // Brief §3: payment never opens while an eligible offer is neither applied nor declined.
+    const gated = await h.tool("prepare_payment", c, {
+      userSessionId: hinted.data.order.userSessionId,
+      method: "SAVED_CARD",
+    });
+    expect(gated.ok).toBe(false);
+    expect(gated.data.needs).toBe("offer_decision");
+    expect(gated.error.message).toMatch(/Shall I apply it\?/);
+    expect(gated.ui.type).toBe("offer");
     const checkout = await h.tool("prepare_payment", c, {
       userSessionId: hinted.data.order.userSessionId,
       method: "SAVED_CARD",
+      offerDeclined: true,
     });
     expect(checkout.data.sheet.preferredToken).toBe(hinted.data.offerHint.cardToken);
     const applied = await h.tool("apply_offer", c, {

@@ -194,6 +194,7 @@ it("rejects a superseded reference without invalidating an existing payment revi
   const review = await h.tool("prepare_payment", s.conversationId, {
     userSessionId: orderId,
     method: "CARD",
+    offerDeclined: true,
   });
   expect(review.ok).toBe(true);
   const first = await quote(s);

@@ -56,6 +56,7 @@ async function existingBasket() {
   const payment = await h.tool("prepare_payment", state.conversationId, {
     userSessionId: orderId,
     method: "CARD",
+    offerDeclined: true,
   });
   expect(payment.ok).toBe(true);
   expect(payment.data.confirmationId).toEqual(expect.any(String));
