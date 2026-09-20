@@ -423,7 +423,7 @@ export function Dashboard() {
             ) : <div className="empty">No actions in this window.</div>}
           </div>
           <div className="panel c6">
-            <h3>Transfers <small>{s.transfers.total} · avg wait {s.transfers.avgWaitSeconds != null ? `${s.transfers.avgWaitSeconds}s` : "–"}</small></h3>
+            <h3>Transfers <small>{s.transfers.total} handover requests · {s.conversations.transferred ?? "–"} conversations · avg wait {s.transfers.avgWaitSeconds != null ? `${s.transfers.avgWaitSeconds}s` : "–"}</small></h3>
             <Bars rows={Object.entries(s.transfers.reasons).map(([k, v]) => ({ k, v: [v as number] }))} />
             <h3 style={{ marginTop: 14 }}>Voice success by language</h3>
             <Bars rows={Object.entries(s.voice.byLanguage as Record<string, { total: number; resolved: number; dropped: number }>).map(([k, v]) => ({ k: `language:${k}`, label: `${k === "ar" ? "Arabic" : "English"} ${v.resolved}/${v.total}`, v: [v.total ? Math.round((v.resolved / v.total) * 100) : 0] }))} total={100} onPick={(k) => toggle("language", k.split(":")[1]!)} />
