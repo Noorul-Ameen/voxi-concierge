@@ -798,6 +798,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       say(text);
     }
   };
+
   const act: CardActions = useMemo(
     () => ({
       say: (text, proposalRef) => { if (statusRef.current === "connected" || humanMode) {
