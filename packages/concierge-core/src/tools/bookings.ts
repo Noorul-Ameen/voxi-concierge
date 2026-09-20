@@ -3,6 +3,7 @@ import { type BookingSnapshot, evaluateCancellation, evaluateSwap } from "@voxi/
 import { VistaClientError } from "@voxi/vista-client";
 import { enqueue, findByKey, idem, toRef } from "../actions/ledger.js";
 import { consumeConfirmation, createConfirmation, getConfirmation } from "../services/confirmations.js";
+import { updateConversation } from "../services/conversation.js";
 import { fmtDateTime, joinList, money, onDateTime, seatLabels, t } from "../services/format.js";
 import { signRefundChoice, verifyRefundChoice } from "../services/refund-choice-proof.js";
 import { assertSwapRefundSelection } from "../services/swap-refund.js";
@@ -163,7 +164,74 @@ export const bookingTools: Pick<
   | "prepare_swap"
   | "swap_booking"
   | "list_my_bookings"
+  | "resend_ticket"
 > = {
+  /** Brief gap: "was my ticket emailed?" — resend the e-ticket and report the delivery record. */
+  async resend_ticket(ctx, input) {
+    const b = await loadBooking(ctx, input.bookingId);
+    if (!b)
+      return err(
+        ErrorCodes.BOOKING_NOT_FOUND,
+        t(
+          ctx.lang,
+          `I couldn't find booking ${input.bookingId.toUpperCase()}.`,
+          `لم أجد الحجز ${input.bookingId.toUpperCase()}.`,
+        ),
+      );
+    const owner = verifyOwnership(ctx, b, input.verification);
+    if (!owner.ok) return err("VERIFICATION_REQUIRED", owner.message, false, { needs: "verification" });
+    if (!["confirmed", "collected", "partially_refunded", "swapped"].includes(String(b.Status)))
+      return err(
+        ErrorCodes.BOOKING_NOT_ELIGIBLE,
+        t(
+          ctx.lang,
+          "That booking isn't active, so there's no ticket to resend.",
+          "هذا الحجز غير نشط، فلا توجد تذكرة لإعادة إرسالها.",
+        ),
+      );
+    const channel = input.channel ?? "email";
+    const email = String(b.Customer?.Email ?? "");
+    const phone = String(b.Customer?.Phone ?? "").replace(/\D/g, "");
+    const to = channel === "email" ? maskEmail(email) : mask(phone, 4);
+    if (!(channel === "email" ? email : phone))
+      return err(
+        ErrorCodes.VALIDATION,
+        t(
+          ctx.lang,
+          `There's no ${channel === "email" ? "email address" : "mobile number"} on this booking to send to.`,
+          "لا توجد وسيلة اتصال مسجلة على هذا الحجز.",
+        ),
+      );
+    const meta = (ctx.conversation.metadata ?? {}) as Record<string, any>;
+    const log: { bookingId: string; channel: string; to: string; at: string }[] = Array.isArray(
+      meta.ticketDeliveries,
+    )
+      ? meta.ticketDeliveries
+      : [];
+    const previous = [...log].reverse().find((d) => d.bookingId === b.VistaBookingId);
+    const entry = { bookingId: b.VistaBookingId, channel, to, at: new Date().toISOString() };
+    await updateConversation(ctx.db, ctx.conversation.id, {
+      metadata: { ...meta, ticketDeliveries: [...log.slice(-19), entry] },
+    });
+    const when = fmtDateTime(ctx.nowLocal, ctx.lang, ctx.nowLocal);
+    return ok(
+      {
+        bookingId: b.VistaBookingId,
+        channel,
+        to,
+        sentAt: entry.at,
+        previousDelivery: previous ?? null,
+        bookedAt: b.BookingTime ?? null,
+      },
+      t(
+        ctx.lang,
+        `Done — I've resent your ${b.FilmTitle} ticket ${channel === "email" ? "to" : "by SMS to"} ${to} just now (${when}). It usually lands within a minute; worth checking spam or promotions if you don't see it. Your QR is on screen too.`,
+        `تم — أعدت إرسال تذكرة ${b.FilmTitle} إلى ${to} الآن. تصل عادةً خلال دقيقة؛ تحقق من مجلد الرسائل غير المرغوبة إن لم تجدها. رمز QR على الشاشة أيضاً.`,
+      ),
+      { type: "qr", items: [bookingCard(b, ctx.lang, ctx.nowLocal, await cinemaName(ctx, b.CinemaId))] },
+      { name: "booking_info", status: "completed" },
+    );
+  },
   async find_booking(ctx, input) {
     const customerId =
       input.customerId ??

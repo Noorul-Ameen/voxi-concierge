@@ -530,8 +530,13 @@ export const movieTools: Pick<
     }
     if (remaining > 0)
       spoken += ar ? ` — و${arMore(remaining, "showtime")} على الشاشة` : ` — and ${remaining} more on screen`;
+    // Subject first so the sentence always reads "No showtimes at MOE on Monday…", never "No at MOE…".
     const asked = [
-      wantLang ? t(ctx.lang, `${wantLang} films`, `أفلام ${wantLang}`) : film ? film.title : "",
+      wantLang
+        ? t(ctx.lang, `${wantLang} films`, `أفلام ${wantLang}`)
+        : film
+          ? film.title
+          : t(ctx.lang, "showtimes", "عروض"),
       cinemaLabel ? t(ctx.lang, `at ${cinemaLabel}`, `في ${cinemaLabel}`) : "",
       input.date ? fmtDate(date, ctx.lang, ctx.nowLocal) : "",
     ]
