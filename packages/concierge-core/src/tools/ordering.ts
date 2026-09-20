@@ -160,7 +160,12 @@ export async function savedCardOfferHint(
 /** Review & Pay: the payment summary + confirmation + sheet. Shared by prepare_payment, quick_book, recovery and F&B orders. */
 export async function reviewAndPay(
   ctx: ToolCtx,
-  input: { userSessionId: string; method: string; customer?: { name: string; email: string; phone: string } },
+  input: {
+    userSessionId: string;
+    method: string;
+    customer?: { name: string; email: string; phone: string };
+    offerDeclined?: boolean;
+  },
   extra: { offerHint?: OfferHint; fnbOnly?: boolean },
 ) {
   const pending = await pendingBasketActions(
@@ -472,6 +477,46 @@ export async function reviewAndPay(
     (c && !fnbOnly && s.tickets.length
       ? await savedCardOfferHint(ctx, sessionKey, s.cinemaId, s.tickets.length, c)
       : null);
+  // Brief §3: an eligible saved-card offer is offered before payment — never silently skipped. The agent
+  // resolves it by apply_offer (applied) or prepare_payment with offerDeclined:true (declined).
+  const cardMethod = ["CARD", "SAVED_CARD", "APPLE_PAY", "SAMSUNG_PAY", "GOOGLE_PAY"].includes(method);
+  if (hint && cardMethod && !fnbOnly && !s.offers.length && !input.offerDeclined)
+    return {
+      ...err(
+        ErrorCodes.CONFIRMATION_REQUIRED,
+        t(
+          ctx.lang,
+          `Your saved ${hint.cardLabel} has ${hint.title} for this booking — ${hint.benefit}. Shall I apply it?`,
+          `بطاقتك المحفوظة ${hint.cardLabel} لديها عرض ${hint.title} لهذا الحجز — ${hint.benefit}. هل أطبّقه؟`,
+        ),
+        false,
+        {
+          needs: "offer_decision",
+          offer: hint,
+          userSessionId: input.userSessionId,
+          currentTotal: s.total,
+          currentTotalCents: s.totalCents,
+        },
+      ),
+      ui: {
+        type: "offer" as const,
+        title: t(ctx.lang, "Offer on your saved card", "عرض على بطاقتك المحفوظة"),
+        items: [
+          {
+            id: hint.offerId,
+            title: hint.title,
+            benefit: hint.benefit,
+            cardLabel: hint.cardLabel,
+            eligible: true,
+          },
+        ],
+        meta: { userSessionId: input.userSessionId, offerHint: hint, stage: "offer_decision" },
+        actions: [
+          { label: t(ctx.lang, "Apply offer", "طبّق العرض"), value: `offer:apply:${hint.offerId}` },
+          { label: t(ctx.lang, "Pay without it", "ادفع بدونه"), value: "offer:skip" },
+        ],
+      },
+    };
   const preferredToken = hint?.cardToken ?? savedCards.find((x) => x.default)?.token ?? savedCards[0]?.token;
   const summary = {
     userSessionId: input.userSessionId,
@@ -625,12 +670,12 @@ export const orderingTools: Pick<
       const norm = (s: string) =>
         String(s ?? "")
           .toLowerCase()
-          .replace(/[^a-z0-9\u0600-\u06ff]+/g, "");
+          .replace(/[^a-z0-9؀-ۿ]+/g, "");
       const hay = (i: Record<string, any>) =>
         norm(`${i.Description} ${i.DescriptionAlt} ${i.ExtendedDescription} ${i.Tab}`);
       const tokens = String(input.query)
         .toLowerCase()
-        .split(/[^a-z0-9\u0600-\u06ff]+/)
+        .split(/[^a-z0-9؀-ۿ]+/)
         .filter(Boolean);
       const q = norm(input.query);
       let hits = items.filter((i) => hay(i).includes(q));
