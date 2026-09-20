@@ -597,8 +597,18 @@ async function resolveSession(
     const pref = preferredExp ? rows.filter((s) => s.experience === preferredExp) : [];
     return pref.length ? pref : std.length ? std : rows;
   };
+  // With no requested time and no usual window, "closest" must not mean "earliest on the calendar":
+  // anchor on early evening so a 12:00 am or 9:00 am print is never the first pick (brief §2).
+  const withChildren = (input.childTickets ?? 0) > 0 || !!input.withChildren || !!input.childAges?.length;
+  const anchor = target ?? minutes(withChildren ? "17:30" : "19:00");
+  const unsociable = (s: Session) => {
+    const m = minutes(hm(s.showtime));
+    if (m < minutes("10:00")) return true; // late-night prints run past midnight
+    if (withChildren && m > minutes("21:30")) return true; // no family/KIDS show after 9:30 pm
+    return false;
+  };
   const closeness = (s: Session) =>
-    target == null ? minutes(hm(s.showtime)) : Math.abs(minutes(hm(s.showtime)) - target);
+    Math.abs(minutes(hm(s.showtime)) - anchor) + (unsociable(s) ? 24 * 60 : 0);
   const rank = (rows: Session[]) =>
     [...rows].sort(
       (a, b) => closeness(a) - closeness(b) || cinemaIds.indexOf(a.cinemaId) - cinemaIds.indexOf(b.cinemaId),
