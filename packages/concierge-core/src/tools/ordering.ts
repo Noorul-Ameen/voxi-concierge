@@ -670,12 +670,12 @@ export const orderingTools: Pick<
       const norm = (s: string) =>
         String(s ?? "")
           .toLowerCase()
-          .replace(/[^a-z0-9\\u0600-\\u06ff]+/g, "");
+          .replace(/[^a-z0-9\u0600-\u06ff]+/g, "");
       const hay = (i: Record<string, any>) =>
         norm(`${i.Description} ${i.DescriptionAlt} ${i.ExtendedDescription} ${i.Tab}`);
       const tokens = String(input.query)
         .toLowerCase()
-        .split(/[^a-z0-9\\u0600-\\u06ff]+/)
+        .split(/[^a-z0-9\u0600-\u06ff]+/)
         .filter(Boolean);
       const q = norm(input.query);
       let hits = items.filter((i) => hay(i).includes(q));
