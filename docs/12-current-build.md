@@ -29,7 +29,7 @@ Snapshot taken 9 Sep 2026, 16:55 Dubai. Everything below is what is deployed and
 | Concierge API | https://concierge-api-production-3d90.up.railway.app (every route also under `/api/*`) |
 | OpenAPI | `GET /openapi.json` on the API |
 | Health | `GET /healthz` and `GET /readyz` on the API |
-| Prototype site using the embed | https://vox.kris-pradip.workers.dev/ (navy theme matches it) |
+| Prototype site using the embed | https://vox.kris-pradip.workers.dev/ (the widget now follows the browser light/dark scheme with the uae.voxcinemas.com palette) |
 
 ## 3. Runtime architecture (as deployed)
 
@@ -59,7 +59,7 @@ Go-live swap point: only `packages/vista-client` changes to point at the real MA
 
 | Path | Contents |
 |---|---|
-| `apps/web` | React 18 + Vite widget site: `Concierge.tsx` (conversation, voice, timer, resume, mute), `Cards.tsx` (showtimes, seat map, menu, Review & Pay sheet, receipt/QR, booking cards), `Demo.tsx` landing, `Dashboard.tsx`, `embed.tsx` (IIFE build), `styles.css` (VOX theme + `navy` preset), `lib/i18n.ts` EN/AR |
+| `apps/web` | React 18 + Vite widget site: `Concierge.tsx` (conversation, voice, timer, resume, mute), `Cards.tsx` (showtimes, seat map, menu, Review & Pay sheet, receipt/QR, booking cards), `Demo.tsx` landing, `Dashboard.tsx`, `embed.tsx` (IIFE build), `styles.css` (VOX site tokens, light/dark via `prefers-color-scheme`), `fonts.css` (self-hosted Effra + Helvetica Neue LT Arabic), `lib/i18n.ts` EN/AR |
 | `apps/concierge-api` | Hono app: `/tools/*` (44), `/widget/session|login|logout|events`, `/commands`, `/reporting/*`, `/demo/films`, webhooks; 28 tests + `test/harness.ts` |
 | `apps/worker` | action executor + sagas (cancel, swap, pay, F&B order) |
 | `apps/vista-mock` | Vista-shaped API + seed (22 cinemas, 104 films, 3,654 sessions from the 7–13 Sep capture, City Centre Deira menu 126 items, bank offers, personas) |
@@ -100,7 +100,7 @@ Go-live swap point: only `packages/vista-client` changes to point at the real MA
 - Cards: film-hero showtimes with day tabs and per-film grouping; seat map with tiers and pre-selected held seats; F&B tiles with "Your usual"/popular tags; Review & Pay sheet (progress steps, bank-offer banner, saved cards with preferred/offer card pre-selected, new card, Apple/Samsung Pay, VOX credit, Share Points, guest name/email/mobile fields, hold countdown); boarding-pass receipt with QR; booking, refund, transfer and feedback cards.
 - Booking v2: one-sentence booking → seats held → Review & Pay; up to 3 alternatives when a time isn't available; "usual cinema" confirm; 6-minute hold bar with 2:00 / 0:45 warnings that also make the assistant speak; automatic re-hold on expiry; same-device resume for 30 minutes; 60-second inactivity nudge; tickets first, F&B as a separate quick order after the QR.
 - Location bar (GPS or area) drives "near me"; remembered per device.
-- Embeddable: `<script src="https://voxi-demo.up.railway.app/embed/voxi.js" charset="utf-8" defer></script>` — options `data-lang`, `data-open`, `data-api`, `data-theme` (`navy` default) or `window.VoxiConfig`; page API `Voxi.open/login/logout/unmount`.
+- Embeddable: `<script src="https://voxi-demo.up.railway.app/embed/voxi.js" charset="utf-8" defer></script>` — options `data-lang`, `data-open`, `data-api`, `data-theme` (accepted, no longer changes colours) or `window.VoxiConfig`; page API `Voxi.open/login/logout/unmount`.
 
 ## 7. Journeys covered (22 scope items)
 

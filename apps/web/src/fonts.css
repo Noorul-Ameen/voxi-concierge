@@ -1,0 +1,6 @@
+/* VOX brand fonts (self-hosted from /assets/fonts). Effra for Latin, Helvetica Neue LT Arabic for Arabic.
+   The embed injects the same rules into the host document with an absolute origin (see embed.tsx). */
+@font-face { font-family: "Effra"; font-style: normal; font-weight: 400; font-display: swap; src: url("/assets/fonts/Effra-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Effra"; font-style: normal; font-weight: 700; font-display: swap; src: url("/assets/fonts/Effra-Bold.woff2") format("woff2"); }
+@font-face { font-family: "Helvetica Neue LT Arabic"; font-style: normal; font-weight: 400; font-display: swap; src: url("/assets/fonts/HelveticaNeueLTArabic-Roman.woff") format("woff"); }
+@font-face { font-family: "Helvetica Neue LT Arabic"; font-style: normal; font-weight: 700; font-display: swap; src: url("/assets/fonts/HelveticaNeueLTArabic-Bold.woff") format("woff"); }
