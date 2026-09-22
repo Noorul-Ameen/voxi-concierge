@@ -43,7 +43,7 @@ configureApiBase(window.VoxiConfig.apiBase!);
 if (!document.getElementById("voxi-widget-fonts")) {
   const fontStyle = document.createElement("style");
   fontStyle.id = "voxi-widget-fonts";
-  fontStyle.textContent = fontsCss.replace(/url\((["']?)\/assets\//g, `url($1${scriptOrigin}/assets/`);
+  fontStyle.textContent = fontsCss.replace(/url\((["']?)\/(?=[\w-]+\.woff2?\b)/g, `url($1${scriptOrigin}/`);
   document.head.appendChild(fontStyle);
 }
 

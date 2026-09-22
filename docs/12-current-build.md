@@ -59,7 +59,7 @@ Go-live swap point: only `packages/vista-client` changes to point at the real MA
 
 | Path | Contents |
 |---|---|
-| `apps/web` | React 18 + Vite widget site: `Concierge.tsx` (conversation, voice, timer, resume, mute), `Cards.tsx` (showtimes, seat map, menu, Review & Pay sheet, receipt/QR, booking cards), `Demo.tsx` landing, `Dashboard.tsx`, `embed.tsx` (IIFE build), `styles.css` (VOX site tokens, light/dark via `prefers-color-scheme`), `fonts.css` (self-hosted Effra + Helvetica Neue LT Arabic), `lib/i18n.ts` EN/AR |
+| `apps/web` | React 18 + Vite widget site: `Concierge.tsx` (conversation, voice, timer, resume, mute), `Cards.tsx` (showtimes, seat map, menu, Review & Pay sheet, receipt/QR, booking cards), `Demo.tsx` landing, `Dashboard.tsx`, `embed.tsx` (IIFE build), `styles.css` (VOX site tokens, light/dark via `prefers-color-scheme`), `fonts.css` (self-hosted Effra + Helvetica Neue LT Arabic in `apps/web/public/`), `lib/i18n.ts` EN/AR |
 | `apps/concierge-api` | Hono app: `/tools/*` (44), `/widget/session|login|logout|events`, `/commands`, `/reporting/*`, `/demo/films`, webhooks; 28 tests + `test/harness.ts` |
 | `apps/worker` | action executor + sagas (cancel, swap, pay, F&B order) |
 | `apps/vista-mock` | Vista-shaped API + seed (22 cinemas, 104 films, 3,654 sessions from the 7–13 Sep capture, City Centre Deira menu 126 items, bank offers, personas) |
