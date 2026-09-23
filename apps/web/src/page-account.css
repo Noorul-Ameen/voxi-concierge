@@ -1,18 +1,18 @@
-.page-account-dialog { position: fixed; inset: 0; width: min(440px, calc(100vw - 32px)); max-height: min(86dvh, 760px); margin: auto; padding: 0; color: #273039; background: #fff; border: 1px solid #e3e7ea; border-radius: 22px; box-shadow: 0 30px 100px #10263440; overflow: auto; font-family: Inter, system-ui, sans-serif; }
-.page-account-dialog::backdrop { background: #15263285; backdrop-filter: blur(5px); }
-.page-account-dialog[dir="rtl"] { font-family: Cairo, system-ui, sans-serif; }
-.page-account-dialog .account-panel { min-height: 0; max-height: none; padding: 28px; background: #fff; }
+/* Page-level account dialog (its own DOM root; shares the styles.css tokens so it follows the browser scheme). */
+.page-account-dialog { position: fixed; inset: 0; width: min(440px, calc(100vw - 32px)); max-height: min(86dvh, 760px); margin: auto; padding: 0; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: var(--widget-radius); box-shadow: var(--shadow); overflow: auto; font-family: var(--font); }
+.page-account-dialog::backdrop { background: rgba(0, 0, 0, 0.55); backdrop-filter: blur(5px); }
+.page-account-dialog[dir="rtl"] { font-family: var(--font-ar); }
+.page-account-dialog .account-panel { min-height: 0; max-height: none; padding: 28px; background: var(--panel); border-bottom: 0; }
 .page-account-dialog button, .page-account-dialog input { font: inherit; }
-.page-account-dialog input { box-sizing: border-box; width: 100%; min-height: 44px; border: 1px solid #d1dce2; border-radius: 10px; padding: 10px 12px; background: #f8fafc; color: #273039; }
-.page-account-dialog input:focus { outline: 2px solid #009edc; outline-offset: 2px; }
+.page-account-dialog input { box-sizing: border-box; width: 100%; min-height: 44px; border: 1px solid var(--line-2); border-radius: var(--radius); padding: 10px 12px; background: var(--panel); color: var(--ink); }
+.page-account-dialog input:focus { outline: 2px solid var(--vox-blue); outline-offset: 2px; }
 .page-account-dialog .account-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .page-account-dialog .account-head h3 { margin: 6px 0 12px; font-size: 26px; }
-.page-account-dialog .eyebrow { color: #007cac; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; }
-.page-account-dialog .account-close { border: 0; border-radius: 50%; width: 36px; height: 36px; background: #eef3f6; cursor: pointer; }
+.page-account-dialog .eyebrow { color: var(--vox-blue); font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em; }
+.page-account-dialog .account-close { border: 0; border-radius: 50%; width: 36px; height: 36px; background: var(--panel-2); color: var(--ink); cursor: pointer; }
 .page-account-dialog .account-form { display: grid; gap: 10px; }
 .page-account-dialog .account-form p { font-size: 14px; line-height: 1.6; }
 .page-account-dialog .account-form label { font-size: 12px; margin-top: 8px; }
-.page-account-dialog .btn { min-height: 44px; padding: 10px 18px; border-radius: 11px; border: 1px solid #d1dce2; cursor: pointer; background: #fff; color: #273039; }
-.page-account-dialog .btn.cta { background: #009edc; border-color: #009edc; color: #fff; margin-top: 12px; font-weight: 600; }
-.page-account-dialog .btn:disabled { opacity: .55; cursor: wait; }
-.page-account-dialog .err { color: #b42318; }
+.page-account-dialog .btn.cta { margin-top: 12px; }
+.page-account-dialog .btn:disabled { opacity: 0.55; cursor: wait; }
+.page-account-dialog .err { color: var(--danger); }

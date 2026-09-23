@@ -5,6 +5,7 @@ import type { CommandResult, Lang, UiHint } from "../lib/api";
 import { money, paymentMethodLabel, t } from "../lib/i18n";
 import { decisionSummary, uiActionLabel } from "../lib/widget-state";
 import { cinemaDate } from "../lib/cinema-time";
+import { BrandLogo } from "./BrandLogo";
 import type { PreparedReceiptQr } from "../lib/receipt";
 
 export type CardActions = {
@@ -1243,7 +1244,7 @@ function QRTicket({ b, lang, qr, preparedQr }: { b: any; lang: Lang; qr?: string
   return (
     <div className="ticket">
       <div className="t-top">
-        <div className="t-brand">VOX <span>CINEMAS</span></div>
+        <div className="t-brand"><BrandLogo height={26} /></div>
         <div className="t-exp">{b.experience}</div>
       </div>
       <div className="receipt-status"><span aria-hidden="true">✓</span><div><b>{ar ? "تم تأكيد الحجز" : "Booking confirmed"}</b>{b.bookingId ? <small>{t(lang, "bookingRef")} <strong className="mono" dir="ltr">{b.bookingId}</strong></small> : null}</div></div>

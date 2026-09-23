@@ -4,7 +4,7 @@
  *   <script src="https://voxi-demo.up.railway.app/embed/voxi.js" charset="utf-8" defer></script>
  *
  * Optional attributes on the script tag: data-lang="en|ar", data-open="true" (start expanded instead of as the
- * launcher pill), data-theme="navy" (colour preset; see the theme blocks in styles.css), data-api="https://…/api"
+ * launcher pill), data-theme (reserved; the widget follows the browser's light/dark scheme and the VOX site palette), data-api="https://…/api"
  * (defaults to the origin the script was loaded from + /api). window.VoxiConfig.vars can override any CSS variable. Optional: window.VoxiConfig = { apiBase, lang } before the script.
  * The widget renders inside a Shadow DOM so the host page's CSS and the widget's CSS never interfere.
  * Exposes window.Voxi = { open(), login(), logout(), unmount() }.
@@ -17,6 +17,7 @@ import { API_BASE, configureApiBase, type Lang } from "./lib/api";
 import { notifyPageAccountActivity, pageSession } from "./lib/page-session";
 import { mountHostCatalogue } from "./lib/host-catalogue";
 import css from "./styles.css?inline";
+import fontsCss from "./fonts.css?inline";
 import stateCss from "./concierge-state.css?inline";
 import accountCss from "./page-account.css?inline";
 
@@ -32,18 +33,18 @@ window.VoxiConfig = {
   apiBase: window.VoxiConfig?.apiBase ?? script?.dataset.api ?? `${scriptOrigin}/api`,
   lang: (window.VoxiConfig?.lang ?? (script?.dataset.lang as Lang | undefined) ?? "en") as Lang,
   open: window.VoxiConfig?.open ?? script?.dataset.open === "true",
-  theme: window.VoxiConfig?.theme ?? script?.dataset.theme ?? "navy",
+  theme: window.VoxiConfig?.theme ?? script?.dataset.theme,
   vars: window.VoxiConfig?.vars,
   hostLoginSelector: window.VoxiConfig?.hostLoginSelector,
 };
 configureApiBase(window.VoxiConfig.apiBase!);
 
-const FONTS = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cairo:wght@400;600;700&display=swap";
-if (!document.querySelector(`link[href="${FONTS}"]`)) {
-  const l = document.createElement("link");
-  l.rel = "stylesheet";
-  l.href = FONTS;
-  document.head.appendChild(l);
+// @font-face must live in the document, not the shadow root: register the brand fonts once, served from the script's origin.
+if (!document.getElementById("voxi-widget-fonts")) {
+  const fontStyle = document.createElement("style");
+  fontStyle.id = "voxi-widget-fonts";
+  fontStyle.textContent = fontsCss.replace(/url\((["']?)\/(?=[\w-]+\.woff2?\b)/g, `url($1${scriptOrigin}/`);
+  document.head.appendChild(fontStyle);
 }
 
 function mount() {
@@ -60,7 +61,7 @@ function mount() {
   const root = document.createElement("div");
   root.className = "vox-assistant-root";
   root.dir = window.VoxiConfig?.lang === "ar" ? "rtl" : "ltr";
-  // Theme: a named preset from styles.css ("navy", …) and/or individual CSS variables (e.g. { "--accent": "#19c4d3" }).
+  // Theme: colours follow the browser scheme (styles.css tokens); data-theme is kept only as a data attribute for compatibility, and VoxiConfig.vars can still override individual CSS variables (e.g. { "--magenta": "#d40f7d" }).
   if (window.VoxiConfig?.theme) root.dataset.voxiTheme = window.VoxiConfig.theme;
   for (const [k, v] of Object.entries(window.VoxiConfig?.vars ?? {})) if (k.startsWith("--")) root.style.setProperty(k, v);
   shadow.appendChild(root);

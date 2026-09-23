@@ -9,6 +9,7 @@ import { type BookingHistory, type CustomerProfile, type Customer, type Lang, ty
 import { stripDeliveryTags } from "../lib/delivery-tags";
 import { isRtl, t } from "../lib/i18n";
 import { type CardActions, Cards, createTicketQr, Feedback, seatRange } from "./Cards";
+import { BrandLogo } from "./BrandLogo";
 import { type Loc, LocationBar } from "./LocationBar";
 import { ACCOUNT_ACTIVITY_EVENT, AUTH_CHANGE_SIGNAL, notifyPageAuthChange, pageSession, usePageSession, type PageSessionRuntime } from "../lib/page-session";
 import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, directSeatMapFeedback, holdSeconds, isCurrentHold, recordUserActivity, renderVerifiedSeatMap, verifyHoldNotice, type HoldNoticeSnapshot, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
@@ -898,7 +899,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           <i /><i /><i />
         </div>
         <div className="titles">
-          <b>{t(lang, "title")}</b>
+          <b><BrandLogo height={30} /><span className="sr-only">{t(lang, "title")}</span></b>
           <small>
             {statusText ? <span className={`dot ${voiceState}`} /> : null}
             {humanMode ? `${t(lang, "human")}${humanMode.agentName ? ` · ${humanMode.agentName}` : ""}` : statusText || t(lang, "subtitle")}

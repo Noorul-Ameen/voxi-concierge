@@ -33,7 +33,7 @@ The deployment targets are the [Railway demo](https://voxi-demo.up.railway.app) 
 <script src="https://voxi-demo.up.railway.app/embed/voxi.js" charset="utf-8" defer></script>
 ```
 
-The embed mounts the VOX Cinemas Virtual Assistant in a Shadow DOM. Supported settings include `data-lang="ar"`, `data-open="true"`, `data-theme="navy"`, `data-api`, and `window.VoxiConfig`. The host can call `Voxi.open()`, `Voxi.login()`, `Voxi.logout()`, `Voxi.profile()` and `Voxi.unmount()`. These global names, package scopes, URLs and asset filenames remain technical compatibility identifiers; they are not the displayed product name.
+The embed mounts the VOX Cinemas Virtual Assistant in a Shadow DOM. Supported settings include `data-lang="ar"`, `data-open="true"`, `data-api`, and `window.VoxiConfig`. The widget follows the browser's light/dark scheme and the uae.voxcinemas.com palette (magenta primary buttons, blue accents, Effra); `data-theme` is accepted for compatibility but no longer changes colours. The host can call `Voxi.open()`, `Voxi.login()`, `Voxi.logout()`, `Voxi.profile()` and `Voxi.unmount()`. These global names, package scopes, URLs and asset filenames remain technical compatibility identifiers; they are not the displayed product name.
 
 ## Local setup
 
