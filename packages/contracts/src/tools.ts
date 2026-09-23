@@ -171,6 +171,26 @@ export const FindBookingInput = z
     "at least one identifier is required",
   );
 
+export const LinkBookingInput = z.object({
+  bookingId: z
+    .string()
+    .describe("Exact booking reference of the guest booking to attach to the signed-in account."),
+  resume: z
+    .union([
+      z.object({ kind: z.literal("cancel"), ticketIds: z.array(z.string()).optional() }),
+      z.object({
+        kind: z.literal("swap"),
+        targetSessionKey: z.string(),
+        keepSeatsIfPossible: z.boolean().optional(),
+        seats: z.array(z.object({ row: z.string(), number: z.string() })).optional(),
+      }),
+    ])
+    .optional()
+    .describe(
+      "The refund step to reopen after linking: 'cancel' for a cancellation, 'swap' for a cheaper exchange. Omit when the guest only wants the booking on their account.",
+    ),
+});
+
 export const ResendTicketInput = z.object({
   bookingId: z.string().describe("Exact booking reference from a verified lookup."),
   channel: z
@@ -753,6 +773,12 @@ export const TOOL_REGISTRY = {
     kind: "write",
     description:
       "Resend a paid booking's e-ticket (QR + receipt) to the guest's email on file, or by SMS on request, and report the delivery record: when it was last sent and to which masked address. Use for 'did my ticket arrive?', 'I didn't get the email', 'send it again'. Owner or verified guest only. Returns needs:verification when ownership is unproven.",
+  },
+  link_booking: {
+    input: LinkBookingInput,
+    kind: "write",
+    description:
+      "Attach a guest booking to the signed-in customer's account so its refund can go to their VOX Wallet as VOX Credit. Only when the customer asks to link it or picks 'Sign in & link booking'. Requires sign-in; the booking's email or phone must match the account; at least 30 minutes before the show; not cancelled, bank-offer, third-party or already on another account. Returns needs:login when signed out. On mismatch the refund stays on the original payment method.",
   },
   check_cancellation_eligibility: {
     input: CheckCancellationEligibilityInput,

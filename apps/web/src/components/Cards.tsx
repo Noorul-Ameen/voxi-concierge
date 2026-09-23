@@ -6,6 +6,7 @@ import { money, paymentMethodLabel, t } from "../lib/i18n";
 import { decisionSummary, uiActionLabel } from "../lib/widget-state";
 import { cinemaDate } from "../lib/cinema-time";
 import { BrandLogo } from "./BrandLogo";
+import { Badge, Badges, type BadgeKind, FilmHeader, Icon, type IconName, SayHint } from "./V3";
 import type { PreparedReceiptQr } from "../lib/receipt";
 
 export type CardActions = {
@@ -15,6 +16,10 @@ export type CardActions = {
   playTrailer: (youtubeId: string, title?: string) => void;
   selection?: (selection: { kind: "payment_method" | "food_quantity" | "offer_selection"; label: string; cardLast4?: string }) => void;
   decision?: (decision: { confirmationId: string; confirmed: boolean; summary?: string }) => void;
+  /** Opens the sign-in dialog (guest → link booking). */
+  requestLogin?: () => void;
+  signedIn?: boolean;
+  accountEmail?: string;
 };
 
 /** "G10, G11" → "G10–G11" when the seats run together in one row. */
@@ -30,7 +35,8 @@ export function seatRange(seats?: string) {
 export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActions }) {
   const items = ui.items ?? [];
   const expired = ui.type === "order" && !!ui.meta?.expired;
-  const actions = expired ? ui.actions?.filter((action) => action.value === "recover:confirm" || action.value === "booking:restart") : ui.actions;
+  const inlineSnacks = ui.type === "order" && !expired && !!ui.items?.[0] && "tickets" in ui.items[0] && !(ui.items[0].concessions ?? []).length && !ui.items[0].fnbOnly;
+  const actions = expired ? ui.actions?.filter((action) => action.value === "recover:confirm" || action.value === "booking:restart") : inlineSnacks ? ui.actions?.filter((action) => !["menu:open", "fnb:suggest"].includes(action.value)) : ui.actions;
   // The card renders its own cancel/swap controls; suppress them when the same action is already in the row above.
   const actionValues = new Set((actions ?? []).map((action) => action.value));
   const body = (() => {
@@ -51,7 +57,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
       case "payment_switch":
         return <PaymentSwitch summary={items[0] ?? ui.meta?.summary ?? {}} lang={lang} />;
       case "cinema":
-        return items.map((c, i) => <CinemaCard key={i} c={c} lang={lang} act={act} />);
+        return <WhichCinema items={items} lang={lang} act={act} />;
       case "offer":
         return items.map((o, i) => <OfferCard key={i} o={o} lang={lang} act={act} />);
       case "menu":
@@ -95,7 +101,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
     <div className="cards" data-type={ui.type}>
       {expired ? <h4>{lang === "ar" ? "انتهى الحجز المؤقت" : "Seat hold expired"}</h4> : ui.title && ui.type !== "showtimes" && <h4>{ui.title}</h4>}
       {body}
-      {!["quantity", "booking_proposal", "refund_options"].includes(ui.type) && !(ui.type === "showtimes" && ui.meta?.journey === "swap") && actions?.length ? (
+      {!["quantity", "booking_proposal", "refund_options", "cinema"].includes(ui.type) && !(ui.type === "showtimes" && ui.meta?.journey === "swap") && actions?.length ? (
         <div className="actionsrow">
           {actions.map((a, i) => (
             <button key={i} className={`btn ${a.style === "primary" ? "primary" : a.style === "danger" ? "danger" : "ghost"}`} disabled={isSeatMapAction(a.value) && !seatPlanCommand(ui)} onClick={() => routeAction(a.value, a.label, act, lang, ui)}>
@@ -212,43 +218,72 @@ export function chooseShowtime(sessionKey: string, ui: UiHint, act: CardActions,
   return act.command({ type: "booking.select", sessionKey });
 }
 
+function filmMeta(m: any, lang: Lang) {
+  const run = Number(m.runTime) > 0 ? (lang === "ar" ? `${Math.floor(m.runTime / 60)}س ${m.runTime % 60}د` : `${Math.floor(m.runTime / 60)}h ${String(m.runTime % 60).padStart(2, "0")}m`) : null;
+  return [m.rating, m.genres?.[0], run, m.language].filter(Boolean).join(" · ");
+}
+function nextShow(m: any, lang: Lang) {
+  const s = m.suggestedSession;
+  if (!s?.time) return null;
+  return `${lang === "ar" ? "التالي" : "Next"}: ${[s.dateLabel, s.time, s.experience].filter(Boolean).join(" · ")}`;
+}
+const reasonText = (m: any) => (Array.isArray(m.why) ? m.why.find((w: string) => w && w !== "already watched") : typeof m.why === "string" ? m.why : "") || "";
+
+/** Discovery: one featured film on film art, then compact rows with a reason each. No filters — the customer just says what they want. */
 function MovieRow({ items, lang, act, recommended }: { items: any[]; lang: Lang; act: CardActions; recommended?: boolean }) {
+  const ar = lang === "ar";
   const [all, setAll] = useState(false);
   const films = items.filter((m) => m.hoCode);
-  const limit = recommended ? 1 : 3;
+  if (!films.length) return null;
+  const [first, ...rest] = films;
+  // A personal recommendation leads with one film; a search shows two more straight away.
+  const restShown = all ? rest : recommended ? [] : rest.slice(0, 2);
+  const hidden = rest.length - restShown.length;
+  const times = (m: any) => routeAction(`showtimes:${m.hoCode}`, m.titleEn ?? m.title, act, lang);
+  const reason = reasonText(first);
   return (
-    <div className="movie-list">
-      {films.slice(0, all ? films.length : limit)
-        .map((m) => (
-          <div className="movie" key={m.hoCode}>
-            {m.posterUrl ? <img className="p" src={m.posterUrl} alt="" loading="lazy" /> : <div className="p poster-placeholder" aria-hidden="true">VOX</div>}
-            <div className="t">
-              <b>{m.title}</b>
-              <small>
-                {m.rating} · {m.runTime ? `${m.runTime}m` : ""} · {m.language}
-              </small>
-              {m.why?.length ? <p className="movie-reason">{Array.isArray(m.why) ? m.why[0] : m.why}</p> : null}
-              {m.suggestedSession ? (
-                <div style={{ marginTop: 4, fontSize: 11 }}>
-                  {m.suggestedSession.dateLabel} {m.suggestedSession.time} · {m.suggestedSession.experience}
-                </div>
-              ) : null}
-              <div className="row">
-                <button className="btn primary" onClick={() => routeAction(`showtimes:${m.hoCode}`, m.titleEn ?? m.title, act, lang)}>
-                  {t(lang, "showtimes")}
-                </button>
-                {m.youtubeId ? (
-                  <button className="btn ghost" onClick={() => act.playTrailer(m.youtubeId, m.title)} aria-label={`${t(lang, "trailer")} — ${m.title}`}>
-                    ▶
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          </div>
-        ))}
-      {films.length > limit ? <button className="btn ghost more-options" type="button" aria-expanded={all} onClick={() => setAll(!all)}>{all ? lang === "ar" ? "عرض أقل" : "Show less" : lang === "ar" ? "خيارات أخرى" : "Other options"}</button> : null}
+    <div className="movie-list v3">
+      <div className="film-feature">
+        <FilmHeader title={first.title} meta={filmMeta(first, lang)} posterUrl={first.posterUrl}>
+          <Badges items={first.badges ?? []} />
+        </FilmHeader>
+        <div className="film-feature-foot">
+          <span>{nextShow(first, lang) ?? (reason ? <span className="movie-reason">{reason}</span> : null)}</span>
+          <span style={{ display: "inline-flex", gap: 8 }}>
+            {first.youtubeId ? <button className="btn ghost small" onClick={() => act.playTrailer(first.youtubeId, first.title)} aria-label={`${t(lang, "trailer")} — ${first.title}`}>▶</button> : null}
+            <button className="btn primary small" onClick={() => times(first)}>{ar ? "المواعيد" : "Times"}</button>
+          </span>
+        </div>
+        {nextShow(first, lang) && reason && !(first.badges ?? []).length ? <p className="movie-reason film-feature-why">{reason}</p> : null}
+      </div>
+      {restShown.map((m) => (
+        <button type="button" className="film-row" key={m.hoCode} onClick={() => times(m)}>
+          {m.posterUrl ? <img src={m.posterUrl} alt="" loading="lazy" /> : <span className="noposter" aria-hidden="true" />}
+          <span className="fr-main">
+            <b>{m.title}</b>
+            <Badges items={m.badges ?? []} />
+            <small>{nextShow(m, lang) ?? filmMeta(m, lang)}</small>
+          </span>
+          <svg className="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 6l6 6-6 6" /></svg>
+        </button>
+      ))}
+      {hidden > 0 || all ? <button className="btn ghost more-options" type="button" aria-expanded={all} onClick={() => setAll(!all)}>{all ? (ar ? "عرض أقل" : "Show less") : ar ? "خيارات أخرى" : "Other options"}</button> : null}
+      <div className="v3-cta">
+        <button className="btn primary" onClick={() => times(first)}>{ar ? `مواعيد ${first.title}` : `See ${first.title} times`}</button>
+        <button className="btn ghost" onClick={() => act.say(ar ? "اقترح شيئاً مختلفاً" : "Something different, please")}>{ar ? "شيء آخر" : "Something else"}</button>
+      </div>
+      <SayHint lang={lang} text={ar ? "الثاني" : rest.length ? "the second one" : "show me the times"} />
     </div>
   );
+}
+
+/** Up to three "smart picks": the recommended show first, then the soonest others that carry a real reason. */
+export function smartPicks(items: any[]) {
+  const open = items.filter((s) => !s.soldOut);
+  const rec = open.find((s) => (s.badges ?? []).some((b: any) => b.kind === "rec"));
+  const reasoned = open.filter((s) => s !== rec && (s.badges ?? []).length);
+  const rest = open.filter((s) => s !== rec && !reasoned.includes(s));
+  return [...(rec ? [rec] : []), ...reasoned, ...rest].slice(0, 3).sort((a, b) => String(a.showtime ?? a.time).localeCompare(String(b.showtime ?? b.time)));
 }
 
 function Showtimes({ items, lang, act, ui, film, groupBy }: { items: any[]; lang: Lang; act: CardActions; ui: UiHint; film?: any; groupBy?: string }) {
@@ -257,10 +292,18 @@ function Showtimes({ items, lang, act, ui, film, groupBy }: { items: any[]; lang
   const [error, setError] = useState<string | null>(null);
   const days = [...new Set(items.map((s) => s.date))].sort();
   const [day, setDay] = useState<string>(days[0] ?? "");
+  const [allTimes, setAllTimes] = useState(false);
   const activeDay = days.includes(day) ? day : (days[0] ?? "");
   const dayLabel = (d: string) => items.find((s) => s.date === d)?.dateLabel ?? d;
   const visible = items.filter((s) => s.date === activeDay);
   const byFilm = groupBy === "film" || !film;
+  const cinemas = [...new Set(visible.map((s) => s.cinemaName ?? s.cinemaId))];
+  const films = [...new Set(visible.map((s) => s.filmTitle))];
+  // Picks work when the choice is just "which time": one film at one cinema on one day.
+  const picksMode = films.length <= 1 && cinemas.length <= 1 && visible.length > 1;
+  const picks = picksMode ? smartPicks(visible) : [];
+  const [chosen, setChosen] = useState<string | undefined>(undefined);
+  const selected = picks.find((s) => s.sessionKey === chosen) ?? picks[0];
   const groups = new Map<string, any[]>();
   for (const s of visible) {
     const k = byFilm ? `${s.filmTitle} · ${s.cinemaName ?? s.cinemaId}` : (s.cinemaName ?? s.cinemaId);
@@ -275,19 +318,11 @@ function Showtimes({ items, lang, act, ui, film, groupBy }: { items: any[]; lang
     } catch { setError(ar ? "تعذر الاتصال. حاول مرة أخرى." : "Couldn't connect. Try again."); }
     finally { setBusy(null); }
   };
-  return (
-    <div className="showtimes">
-      {film?.title ? <h4 className="showtime-title">{film.title}</h4> : null}
-      {days.length === 1 ? <p className="showtime-date">{dayLabel(activeDay)}</p> : null}
-      {days.length > 1 ? (
-        <div className="daytabs" role="tablist">
-          {days.map((d) => (
-            <button key={d} type="button" role="tab" aria-selected={d === activeDay} className={d === activeDay ? "on" : ""} onClick={() => setDay(d)}>
-              {dayLabel(d)}
-            </button>
-          ))}
-        </div>
-      ) : null}
+  const swap = ui.meta?.journey === "swap";
+  const title = film?.title ?? visible[0]?.filmTitle;
+  const headerMeta = [dayLabel(activeDay), cinemas.length === 1 ? cinemas[0] : null, visible[0]?.distanceKm != null && cinemas.length === 1 ? `${visible[0].distanceKm} km` : null].filter(Boolean).join(" · ");
+  const grid = (
+    <>
       {[...groups.entries()].map(([k, ss]) => (
         <div className="showgroup" key={k}>
           {byFilm ? (
@@ -323,6 +358,43 @@ function Showtimes({ items, lang, act, ui, film, groupBy }: { items: any[]; lang
           </div>
         </div>
       ))}
+    </>
+  );
+  return (
+    <div className="showtimes v3">
+      <div className="v3card">
+        {title ? <FilmHeader title={title} meta={headerMeta} posterUrl={film?.posterUrl} tag={swap ? (ar ? "تبديل الحجز" : "Moving your booking") : undefined} /> : null}
+        <div className="v3card-body">
+          {days.length > 1 ? (
+            <div className="daytabs" role="tablist">
+              {days.map((d) => (
+                <button key={d} type="button" role="tab" aria-selected={d === activeDay} className={d === activeDay ? "on" : ""} onClick={() => setDay(d)}>
+                  {dayLabel(d)}
+                </button>
+              ))}
+            </div>
+          ) : !title ? <p className="showtime-date">{dayLabel(activeDay)}</p> : null}
+          {picksMode && !allTimes ? (
+            <div className="radio-list" role="radiogroup" aria-label={ar ? "أفضل المواعيد" : "Best times"}>
+              {picks.map((s) => (
+                <button key={s.sessionKey} type="button" role="radio" aria-checked={s === selected} className={`radio-opt slot ${s === selected ? "on" : ""}`} disabled={!!busy} onClick={() => setChosen(s.sessionKey)}>
+                  <span className="slot-time"><b>{s.time}</b><small>{s.experience}</small></span>
+                  <span className="slot-info"><Badges items={s.badges ?? []} /><span>{s.seatsAvailable > 0 ? (ar ? `${s.seatsAvailable} مقعد متاح` : `${s.seatsAvailable} seats free`) : ""}{s.screenName ? ` · ${s.screenName}` : ""}</span></span>
+                  <span className="radio-dot" aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          ) : grid}
+          {picksMode ? <button type="button" className="more-times" onClick={() => setAllTimes(!allTimes)}>{allTimes ? (ar ? "أفضل المواعيد" : "Best picks") : ar ? `كل المواعيد (${visible.length})` : `All ${visible.length} times ${dayLabel(activeDay)}`}</button> : null}
+        </div>
+      </div>
+      {picksMode && !allTimes && selected ? (
+        <div className="v3-cta">
+          <button className="btn primary" disabled={!!busy} onClick={() => void book(selected)}>{busy ? "…" : swap ? (ar ? `انقل إلى ${selected.time}` : `Move to ${selected.time}`) : ar ? `اختر ${selected.time}` : `Choose ${selected.time}`}</button>
+          <button className="btn ghost" onClick={() => act.say(swap ? (ar ? "احتفظ بحجزي كما هو" : "Keep my booking as it is") : ar ? "يوم آخر من فضلك" : "Another day, please")}>{swap ? (ar ? "احتفظ بالحجز" : "Keep booking") : ar ? "يوم آخر" : "Other day"}</button>
+        </div>
+      ) : null}
+      <SayHint lang={lang} text={ar ? "الأخير" : picks.length > 1 ? `the ${picks[picks.length - 1].time} one` : "a later time"} />
       {error ? <p className="err" role="alert">{error}</p> : null}
     </div>
   );
@@ -360,22 +432,21 @@ export function proposalQuantityInput(proposal: Record<string, any>, meta: Recor
 function BookingProposal({ proposal: p, meta, lang, act }: { proposal: any; meta: Record<string, any>; lang: Lang; act: CardActions }) {
   const ar = lang === "ar";
   const [busy, setBusy] = useState(false);
-  const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const quantity = Number(p.ticketQuantity);
   const canAccept = !!meta.proposalToken && quantity > 0 && p.totalCents != null && Number.isFinite(Number(p.totalCents));
   const seats = (p.selectedSeats ?? []).map((seat: any) => `${seat.row}${seat.number}`).join(", ");
-  return <div className="booking-proposal">
+  return <div className="booking-proposal v3card-lite">
+    <FilmHeader title={p.filmTitle} posterUrl={p.posterUrl} meta={[p.showtimeLabel, p.experience, p.cinemaName].filter(Boolean).join(" · ")}><Badges items={p.badges ?? []} /></FilmHeader>
     <div className="decision-status"><span className="status-dot" /><span>{ar ? "اقتراحك" : "Your proposed booking"}</span><small>{ar ? "لم تُحجز المقاعد بعد" : "No seats held yet"}</small></div>
-    <div className="proposal-film">{p.posterUrl ? <img src={p.posterUrl} alt="" /> : null}<div><h3>{p.filmTitle}</h3><p>{p.cinemaName}</p><p>{p.showtimeLabel}{p.experience ? ` · ${p.experience}` : ""}</p></div></div>
     {Array.isArray(p.preferenceTradeoffs) ? p.preferenceTradeoffs.filter((x: any) => typeof x.message === "string" && x.message.trim()).map((x: any, i: number) => <p className="decision-help" key={i}>{x.message}</p>) : null}
     <dl className="decision-facts"><div><dt>{ar ? "التذاكر" : "Tickets"}</dt><dd>{quantity > 0 ? quantity : ar ? "اختر العدد" : "Choose quantity"}{p.adultTickets != null && p.childTickets > 0 ? <small>{ar ? `${p.adultTickets} بالغ · ${p.childTickets} طفل` : `${p.adultTickets} adult · ${p.childTickets} child`}</small> : null}</dd></div><div><dt>{ar ? "المقاعد المقترحة" : "Suggested seats"}</dt><dd>{seats || (ar ? "سنبحث عن المقاعد المناسبة" : "To be selected")}</dd></div></dl>
     {!quantity && p.sessionKey ? <div className="proposal-quantity"><p>{p.childTickets > 0 ? ar ? "كم عدد البالغين؟" : "How many adults?" : ar ? "كم شخصاً سيحضر؟" : "How many are going?"}</p><div className="quantity-options" role="group" aria-label={ar ? "عدد التذاكر" : "Number of tickets"}>{[1, 2, 3, 4, 5, 6].map((tickets) => <button type="button" key={tickets} disabled={busy} onClick={async () => { setBusy(true); setError(null); try { const result = await act.command({ type: "proposal.preview", input: proposalQuantityInput(p, meta, tickets) }); if (!result.ok) setError(result.error ?? (ar ? "تعذر تحديث الاقتراح." : "Couldn't update the proposal.")); } catch { setError(ar ? "تعذر الاتصال. حاول مجدداً." : "Couldn't connect. Please try again."); } finally { setBusy(false); } }}>{tickets}</button>)}</div></div> : null}
     {p.totalCents != null && Number.isFinite(Number(p.totalCents)) ? <div className="proposal-total"><span>{ar ? "الإجمالي المقترح" : "Proposed total"}{p.priceIncludesFees ? <small>{ar ? "يشمل رسوم الحجز" : "Includes booking fees"}</small> : null}</span><b>{money(Number(p.totalCents), lang)}</b></div> : null}
     <p className="decision-help">{ar ? "سنراجع التوفر والسعر عند تأكيد اختيارك." : "Availability and price are checked when you accept."}</p>
     {error ? <p className="err" role="alert">{error}</p> : null}
-    <div className="actionsrow"><button className="btn cta" disabled={!canAccept || busy} onClick={async () => { setBusy(true); setError(null); try { const result = await act.command({ type: "proposal.accept", proposalToken: meta.proposalToken }); if (!result.ok) setError(result.error ?? (ar ? "تعذر تأكيد الاختيار. حاول مجدداً." : "Couldn't accept this choice. Please try again.")); } catch { setError(ar ? "تعذر الاتصال. حاول مجدداً." : "Couldn't connect. Please try again."); } finally { setBusy(false); } }}>{busy ? t(lang, "processing") : ar ? "احجز هذه المقاعد مؤقتاً" : "Hold these seats"}</button><button className="btn ghost" disabled={busy} aria-expanded={editing} onClick={() => setEditing(!editing)}>{ar ? "تعديل الاختيارات" : "Make changes"}</button></div>
-    {editing ? <div className="proposal-edits">{[{ en: "Movie", ar: "الفيلم", request: "the movie", requestAr: "الفيلم" }, { en: "Cinema", ar: "السينما", request: "the cinema", requestAr: "السينما" }, { en: "Date & time", ar: "التاريخ والوقت", request: "the date or time", requestAr: "التاريخ أو الوقت" }, { en: "Experience", ar: "التجربة", request: "the cinema experience", requestAr: "تجربة السينما" }, { en: "Tickets", ar: "التذاكر", request: "the ticket quantity", requestAr: "عدد التذاكر" }, { en: "Seats", ar: "المقاعد", request: "the proposed seats", requestAr: "المقاعد المقترحة" }].map((choice) => <button className="btn ghost" type="button" key={choice.en} onClick={() => act.say(ar ? `أود تغيير ${choice.requestAr} في اقتراح الحجز` : `I'd like to change ${choice.request} in this booking proposal`, meta.proposalRef)}>{ar ? choice.ar : choice.en}</button>)}</div> : null}
+    <div className="actionsrow"><button className="btn cta" disabled={!canAccept || busy} onClick={async () => { setBusy(true); setError(null); try { const result = await act.command({ type: "proposal.accept", proposalToken: meta.proposalToken }); if (!result.ok) setError(result.error ?? (ar ? "تعذر تأكيد الاختيار. حاول مجدداً." : "Couldn't accept this choice. Please try again.")); } catch { setError(ar ? "تعذر الاتصال. حاول مجدداً." : "Couldn't connect. Please try again."); } finally { setBusy(false); } }}>{busy ? t(lang, "processing") : ar ? "احجز هذه المقاعد مؤقتاً" : "Hold these seats"}</button><button className="btn ghost" disabled={busy} onClick={() => act.say(ar ? "أرني مواعيد أخرى" : "Show me other times", meta.proposalRef)}>{ar ? "مواعيد أخرى" : "Other times"}</button></div>
+    <SayHint lang={lang} text={ar ? "اجعلها ثلاث تذاكر" : "make it three tickets"} />
   </div>;
 }
 
@@ -396,12 +467,135 @@ function SwapRefundReview({ summary: s, lang }: { summary: any; lang: Lang }) {
   return <div className="decision-help"><b>{s.filmTitle}</b><p>{s.targetCinemaName} · {s.targetShowtimeLabel} · {s.targetExperience}</p>{seats ? <p>{t(lang, "seats")}: {seats}</p> : null}<dl className="decision-facts">{[[ar ? "الإجمالي الأصلي" : "Original total", s.originalTotalCents], [ar ? "الإجمالي الجديد" : "New total", s.newTotalCents], [ar ? "فرق السعر المسترد" : "Refund difference", s.refundCents]].map(([label, value]) => typeof value === "number" && Number.isFinite(value) ? <div key={label}><dt>{label}</dt><dd>{money(value, lang)}</dd></div> : null)}</dl><p>{ar ? "حجزك الأصلي لم يتغير." : "Your original booking is unchanged."}</p></div>;
 }
 
+/** Guest booking → signed-in account; the refund review reopens with VOX Credit (see link_booking). */
+export function linkBookingCommand(meta: Record<string, any>): Record<string, unknown> | undefined {
+  if (typeof meta.bookingId !== "string" || !meta.bookingId) return;
+  const proof = typeof meta.refundChoiceProof === "string" && meta.refundChoiceProof ? { refundChoiceProof: meta.refundChoiceProof } : {};
+  if (meta.journey === "swap") {
+    if (typeof meta.targetSessionKey !== "string" || !meta.targetSessionKey) return;
+    const seats = Array.isArray(meta.summary?.selectedSeats) ? meta.summary.selectedSeats.map((x: any) => ({ row: String(x.Row ?? x.row ?? ""), number: String(x.Number ?? x.number ?? "") })).filter((x: any) => x.row && x.number) : [];
+    return { type: "booking.link", bookingId: meta.bookingId, resume: { kind: "swap", targetSessionKey: meta.targetSessionKey, keepSeatsIfPossible: meta.keepSeatsIfPossible !== false, ...(seats.length ? { seats } : {}) }, ...proof };
+  }
+  const ticketIds = Array.isArray(meta.ticketIds) && meta.ticketIds.every((id: unknown) => typeof id === "string" && id) ? { ticketIds: [...meta.ticketIds] } : {};
+  return { type: "booking.link", bookingId: meta.bookingId, resume: { kind: "cancel", ...ticketIds }, ...proof };
+}
+
+const REFUND_ETA_AR: Record<string, string> = {
+  "within 30 minutes to your VOX Wallet (valid 90 days)": "خلال 30 دقيقة إلى محفظة VOX (صالح 90 يوماً)",
+  "5–10 days to the same original card": "خلال 5–10 أيام إلى البطاقة الأصلية نفسها",
+  "VOX credit valid for 90 days": "رصيد VOX صالح لمدة 90 يوماً",
+  "SHARE Points returned immediately": "تعود نقاط SHARE فوراً",
+  "instantly to your SHARE account": "فوراً إلى حساب SHARE",
+};
+
+export function refundBadges(option: any, lang: Lang): { kind: BadgeKind; label: string; icon?: IconName }[] {
+  const ar = lang === "ar";
+  const out: { kind: BadgeKind; label: string; icon?: IconName }[] = [];
+  for (const b of Array.isArray(option.badges) ? option.badges : []) {
+    if (b === "recommended") out.push({ kind: "rec", label: ar ? "موصى به" : "Recommended" });
+    if (b === "faster") out.push({ kind: "fast", label: ar ? "أسرع · خلال 30 دقيقة" : "Faster · within 30 min" });
+    if (b === "default") out.push({ kind: "pop", label: ar ? "الافتراضي لحجز الضيف" : "Default for guest bookings", icon: "card" });
+    if (b === "same_card") out.push({ kind: "pop", label: ar ? "البطاقة نفسها" : "Same card", icon: "card" });
+  }
+  return out;
+}
+
+function refundDestination(option: any, lang: Lang) {
+  const ar = lang === "ar";
+  if (option.method === "VOX_CREDIT") return ar ? "رصيد VOX" : "VOX Credit";
+  if (option.method === "SHARE_POINTS") return ar ? "نقاط SHARE" : "SHARE Points";
+  return option.cardLast4 ? (ar ? `البطاقة •••• ${option.cardLast4}` : `Back to card •••• ${option.cardLast4}`) : ar ? "طريقة الدفع الأصلية" : "Original payment method";
+}
+
 function RefundOptions({ items, meta, lang, act }: { items: any[]; meta: Record<string, any>; lang: Lang; act: CardActions }) {
   const ar = lang === "ar";
+  const swap = meta.journey === "swap";
+  const methods = items.filter((option) => ["VOX_CREDIT", "ORIGINAL_PAYMENT", "SHARE_POINTS"].includes(option?.method));
+  const preset = methods.find((option) => option.method === meta.recommendedMethod)?.method ?? (methods.length === 1 ? methods[0].method : undefined);
+  const [selected, setSelected] = useState<string | undefined>(preset);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const labels: Record<string, string> = { VOX_CREDIT: ar ? "رصيد فوكس" : "VOX Credit", ORIGINAL_PAYMENT: ar ? "طريقة الدفع الأصلية" : "Original payment method", SHARE_POINTS: ar ? "نقاط شير" : "SHARE Points" };
-  return <div className="refund-options">{meta.journey === "swap" && meta.summary ? <SwapRefundReview summary={meta.summary} lang={lang} /> : null}<p className="decision-help">{ar ? "اختر طريقة الاسترداد. ستراجع التفاصيل قبل التأكيد." : "Choose where your refund goes. You'll review it before confirming."}</p>{items.map((option, index) => <button type="button" className="refund-option" disabled={busy || !labels[option.method] || !refundChoiceCommand(meta, option.method)} key={option.method ?? index} onClick={async () => { const command = refundChoiceCommand(meta, option.method); if (!command) return; setBusy(true); setError(null); try { const result = await act.command(command); if (!result.ok) setError(result.error ?? (ar ? "تعذر مراجعة الاسترداد. حاول مجدداً." : "Couldn't review this refund. Please try again.")); } catch { setError(ar ? "تعذر الاتصال. حاول مجدداً." : "Couldn't connect. Please try again."); } finally { setBusy(false); } }}><span><b>{labels[option.method] ?? (ar ? "طريقة غير متاحة" : "Unavailable method")}</b>{option.cardLast4 ? <small dir="ltr">•••• {option.cardLast4}</small> : null}{option.eta ? <small>{option.eta}</small> : null}{option.validityDays ? <small>{ar ? `صالح لمدة ${option.validityDays} يوماً` : `Valid for ${option.validityDays} days`}</small> : null}{option.points != null ? <small>{option.points} {ar ? "نقطة" : "points"}</small> : null}</span><strong>{option.amountCents != null && Number.isFinite(Number(option.amountCents)) ? money(Number(option.amountCents), lang) : ""}</strong><span aria-hidden="true">›</span></button>)}{error ? <p className="err" role="alert">{error}</p> : null}</div>;
+  // Guest → VOX Credit: offer → (sign in) → confirm → linked. Signing in from this card continues straight to the confirm step.
+  const [linkStage, setLinkStage] = useState<"offer" | "login" | "confirm" | "done">("offer");
+  const [linkNote, setLinkNote] = useState<string | null>(null);
+  useEffect(() => { if (linkStage === "login" && act.signedIn) setLinkStage("confirm"); }, [linkStage, act.signedIn]);
+  const run = async (command: Record<string, unknown> | undefined) => {
+    if (!command) return;
+    setBusy(true); setError(null);
+    try {
+      const result = await act.command(command);
+      if (!result.ok) setError(result.error ?? (ar ? "تعذر مراجعة الاسترداد. حاول مجدداً." : "Couldn't review this refund. Please try again."));
+      return result;
+    } catch { setError(ar ? "تعذر الاتصال. حاول مجدداً." : "Couldn't connect. Please try again."); }
+    finally { setBusy(false); }
+  };
+  const choice = methods.find((option) => option.method === selected);
+  const total = methods[0]?.amountCents;
+  const film = meta.film;
+  const canLink = !!meta.canLinkForCredit && !methods.some((option) => option.method === "VOX_CREDIT");
+  const primary = choice ? (swap ? (ar ? `متابعة · ${refundDestination(choice, lang)}` : `Continue · refund to ${choice.method === "ORIGINAL_PAYMENT" ? (choice.cardLast4 ? "card" : "original payment") : refundDestination(choice, lang)}`) : ar ? `إلغاء واسترداد إلى ${choice.method === "ORIGINAL_PAYMENT" ? "البطاقة" : refundDestination(choice, lang)}` : `Cancel & refund to ${choice.method === "ORIGINAL_PAYMENT" ? (choice.cardLast4 ? "card" : "original payment") : refundDestination(choice, lang)}`) : ar ? "اختر طريقة الاسترداد" : "Choose a refund option";
+  return (
+    <div className="refund-options v3">
+      <div className="v3card">
+      {film?.filmTitle ? <FilmHeader title={film.filmTitle} posterUrl={film.posterUrl} meta={[film.showtimeLabel, film.experience, film.seats, film.guest ? (ar ? `حجز ضيف ${film.bookingId}` : `Guest booking ${film.bookingId}`) : film.bookingId].filter(Boolean).join(" · ")} /> : null}
+      {swap && meta.summary ? <SwapRefundReview summary={meta.summary} lang={lang} /> : null}
+      <div className="v3card-body">
+        <p className="v3-q">{canLink ? (ar ? "الاسترداد" : "Your refund") : ar ? "كيف تفضّل استرداد المبلغ؟" : "How would you like your refund?"}{total != null && Number.isFinite(Number(total)) ? <span className="v3-q-amt">{money(Number(total), lang)}</span> : null}</p>
+        <div className="radio-list" role="radiogroup" aria-label={ar ? "طريقة الاسترداد" : "Refund destination"}>
+          {methods.map((option) => {
+            const on = option.method === selected;
+            // VOX Credit's standard terms read as one friendly line; anything else shows the server's exact terms.
+            const standardCredit = option.method === "VOX_CREDIT" && option.eta === "within 30 minutes to your VOX Wallet (valid 90 days)" && option.validityDays === 90;
+            const eta = standardCredit ? (ar ? "في محفظة VOX خلال 30 دقيقة. صالح 90 يوماً للتذاكر أو الوجبات." : "In your VOX Wallet within 30 minutes. Valid 90 days, for tickets or snacks.") : option.eta ? (ar ? (REFUND_ETA_AR[option.eta] ?? option.eta) : option.eta) : null;
+            return (
+              <button type="button" role="radio" aria-checked={on} className={`refund-option radio-opt ${on ? "on" : ""}`} disabled={busy || !refundChoiceCommand(meta, option.method)} key={option.method} onClick={() => setSelected(option.method)}>
+                <span className="radio-dot" aria-hidden="true" />
+                <span className="radio-main">
+                  <span className="radio-top"><b>{refundDestination(option, lang)}</b><strong>{option.amountCents != null && Number.isFinite(Number(option.amountCents)) ? money(Number(option.amountCents), lang) : ""}</strong></span>
+                  <Badges items={refundBadges(option, lang)} />
+                  {eta ? <small>{eta}</small> : null}
+                  {option.validityDays && !standardCredit ? <small>{ar ? `صالح لمدة ${option.validityDays} يوماً، للتذاكر أو الوجبات` : `Valid for ${option.validityDays} days, for tickets or snacks`}</small> : null}
+                  {option.points != null ? <small>{option.points} {ar ? "نقطة" : "points"}</small> : null}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        {canLink && linkStage !== "done" ? (
+          linkStage === "confirm" ? (
+            <div className="link-box confirm" role="group" aria-label={ar ? "ربط الحجز" : "Link booking"}>
+              <p className="link-title"><Icon name="link" size={14} />{ar ? "ربط هذا الحجز بحسابك؟" : "Link this booking to your account?"}</p>
+              <dl className="link-facts">
+                <div><dt>{ar ? "الحجز" : "Booking"}</dt><dd>{meta.bookingId}{film?.filmTitle ? ` · ${film.filmTitle}` : ""}</dd></div>
+                {act.accountEmail ? <div><dt>{ar ? "حسابك" : "Your account"}</dt><dd dir="ltr">{act.accountEmail}</dd></div> : null}
+              </dl>
+              <p className="link-note">{ar ? "يجب أن يطابق البريد أو الهاتف على الحجز حسابك. لا يمكن التراجع عن الربط، ويجب أن يتم قبل العرض بـ 30 دقيقة على الأقل." : "The booking's email or phone must match your account. Linking can't be undone and must be done at least 30 minutes before the show."}</p>
+              <div className="actionsrow">
+                <button type="button" className="btn primary" disabled={busy} onClick={async () => { const r = await run(linkBookingCommand(meta)); if (r?.ok) { setLinkStage("done"); if (r.data && (r.data as any).linked === false) setLinkNote(ar ? "تعذر ربط الحجز، فيبقى الاسترداد على وسيلة الدفع الأصلية." : "This booking couldn't be linked, so the refund stays on the original payment method."); } }}>{ar ? "اربط الحجز" : "Link booking"}</button>
+                <button type="button" className="btn ghost" disabled={busy} onClick={() => setLinkStage("offer")}>{ar ? "ليس الآن" : "Not now"}</button>
+              </div>
+            </div>
+          ) : (
+            <div className="link-box">
+              <p className="link-title"><Icon name="link" size={14} />{ar ? "تريده أسرع؟" : "Want it faster instead?"}</p>
+              <Badges items={[{ kind: "fast", label: ar ? "أسرع كرصيد VOX · خلال 30 دقيقة" : "Faster as VOX Credit · within 30 min" }]} />
+              <p className="link-note">{ar ? "سجّل الدخول إلى حساب VOX واربط هذا الحجز. يصل رصيد VOX خلال 30 دقيقة ويبقى صالحاً 90 يوماً." : "Sign in to your VOX account and link this booking. VOX Credit lands in your wallet within 30 minutes and lasts 90 days."}</p>
+              {linkStage === "login" ? <p className="link-note">{ar ? "أكمل تسجيل الدخول ثم نتابع هنا." : "Finish signing in and we'll carry on here."}</p> : null}
+              <button type="button" className="btn ghost" disabled={busy} onClick={() => { if (act.signedIn) setLinkStage("confirm"); else { setLinkStage("login"); act.requestLogin?.(); } }}>{act.signedIn ? (ar ? "اربطه بحسابي" : "Link to my account") : ar ? "سجّل الدخول واربط الحجز" : "Sign in & link booking"}</button>
+            </div>
+          )
+        ) : null}
+        {linkNote ? <p className="link-note" role="status">{linkNote}</p> : null}
+      </div>
+      </div>
+      <div className="actionsrow v3-cta">
+        <button type="button" className="btn primary" disabled={busy || !choice || !refundChoiceCommand(meta, choice.method)} onClick={() => { if (choice) void run(refundChoiceCommand(meta, choice.method)); }}>{primary}</button>
+        <button type="button" className="btn ghost" disabled={busy} onClick={() => act.say(ar ? "احتفظ بحجزي، لا تلغه" : "Keep my booking, don't change it")}>{ar ? "احتفظ بالحجز" : "Keep booking"}</button>
+      </div>
+      <SayHint lang={lang} text={canLink ? (ar ? "اربطه بحسابي" : "link it to my account") : methods.length > 1 ? (ar ? "إلى بطاقتي بدلاً من ذلك" : "to my card instead") : ar ? "نعم، تابع" : "yes, go ahead"} />
+      {error ? <p className="err" role="alert">{error}</p> : null}
+    </div>
+  );
 }
 
 function PaymentInvestigation({ result, lang, act }: { result: any; lang: Lang; act: CardActions }) {
@@ -449,39 +643,28 @@ function PaymentSwitch({ summary, lang }: { summary: any; lang: Lang }) {
   </div>;
 }
 
-function CinemaCard({ c, lang, act }: { c: any; lang: Lang; act: CardActions }) {
+/** "Which cinema?" — compact choice rows; details stay one tap away in Maps. */
+function WhichCinema({ items, lang, act }: { items: any[]; lang: Lang; act: CardActions }) {
+  const ar = lang === "ar";
   return (
-    <div className="cinema">
-      <b>{c.name}</b> {c.distanceKm != null ? <span className="badge soft">{c.distanceKm} {t(lang, "km")}</span> : null}
-      <div className="meta">{c.address}</div>
-      {c.hoursToday ? <div className="meta">⏰ {c.hoursToday}</div> : null}
-      <div className="exps">
-        {(c.experiences ?? []).map((e: string) => (
-          <span key={e} className="badge soft">
-            {e}
-          </span>
+    <div className="which v3">
+      <div className="which-list">
+        {items.map((c) => (
+          <div className="which-row" key={c.cinemaId}>
+            <Icon name="pin" size={18} />
+            <button type="button" className="wr-main" style={{ border: 0, background: "none", padding: 0, color: "inherit", font: "inherit", textAlign: "start", cursor: "pointer" }} onClick={() => routeAction(`sessions:${c.cinemaId}`, c.name, act, lang)}>
+              <b>{c.name}</b>
+              <Badges items={c.badges ?? []} />
+              {c.hoursToday ? <small className="muted">{ar ? "اليوم" : "Today"} {c.hoursToday}{(c.experiences ?? []).length ? ` · ${(c.experiences ?? []).slice(0, 3).join(", ")}` : ""}</small> : null}
+            </button>
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+              {c.distanceKm != null ? <span className="dist">{c.distanceKm} {t(lang, "km")}</span> : null}
+              {c.mapUrl ? <button type="button" className="maplink" style={{ border: 0, background: "none", padding: 0, color: "var(--vox-blue)", fontSize: 11, fontWeight: 700 }} onClick={() => act.openLink(c.mapUrl)}>{ar ? "الخريطة" : "Map"}</button> : null}
+            </span>
+          </div>
         ))}
       </div>
-      {c.directions ? (
-        <div className="meta">
-          🧭 {t(lang, "directions")}: {c.directions}
-        </div>
-      ) : null}
-      {c.parking ? (
-        <div className="meta">
-          🅿️ {t(lang, "parking")}: {c.parking}
-        </div>
-      ) : null}
-      <div className="row">
-        <button className="btn primary" onClick={() => routeAction(`sessions:${c.cinemaId}`, c.name, act, lang)}>
-          {t(lang, "showtimes")}
-        </button>
-        {c.mapUrl ? (
-          <button className="btn ghost" onClick={() => act.openLink(c.mapUrl)}>
-            {t(lang, "openMaps")}
-          </button>
-        ) : null}
-      </div>
+      {items[0] ? <SayHint lang={lang} text={items[0].name} /> : null}
     </div>
   );
 }
@@ -508,23 +691,18 @@ function OfferCard({ o, lang, act }: { o: any; lang: Lang; act: CardActions }) {
 
 /** Food & drinks — sticky category tabs and square image tiles, as on the real "Food & Drinks" step. */
 function Menu({ items, lang, act, hasSkip }: { items: any[]; lang: Lang; act: CardActions; hasSkip?: boolean }) {
-  const tabs = [...new Set(items.map((m) => String(m.tab ?? "")))].filter(Boolean);
-  const [tab, setTab] = useState<string>("ALL");
+  const ar = lang === "ar";
   const [browse, setBrowse] = useState(false);
-  const ranked = [...items].sort((a, b) => Number(!!b.tag || !!b.isBestSeller) - Number(!!a.tag || !!a.isBestSeller));
-  const shown = browse ? tab === "ALL" ? items : items.filter((m) => m.tab === tab) : ranked.slice(0, 4);
+  const isUsual = (m: any) => !!m.tag || m.why === "your usual" || m.why === "طلبك المعتاد";
+  const ranked = [...items].sort((a, b) => Number(isUsual(b)) * 2 + Number(!!b.isBestSeller) - (Number(isUsual(a)) * 2 + Number(!!a.isBestSeller)));
+  const shown = browse ? ranked : ranked.slice(0, 4);
+  const usual = items.filter(isUsual);
   return (
     <div className="fnb">
-      {browse && tabs.length > 1 ? (
-        <div className="cattabs">
-          <button className={tab === "ALL" ? "on" : ""} onClick={() => setTab("ALL")}>
-            {lang === "ar" ? "الكل" : "ALL"}
-          </button>
-          {tabs.map((x) => (
-            <button key={x} className={tab === x ? "on" : ""} onClick={() => setTab(x)}>
-              {x}
-            </button>
-          ))}
+      {usual.length ? (
+        <div className="snack-usual">
+          <span><b>{ar ? "طلبك المعتاد" : "Your usual"}</b><small>{usual.map((m) => m.name).join(" · ")}</small></span>
+          <button type="button" className="btn primary small" onClick={() => routeAction("fnb_usual", "", act, lang)}>{ar ? "أضف المعتاد" : "Add my usual"}</button>
         </div>
       ) : null}
       <div className="fnbgrid">
@@ -547,7 +725,7 @@ function MenuItem({ m, lang, act }: { m: any; lang: Lang; act: CardActions }) {
   return (
     <div className="fnbcard">
       <div className="img" style={{ backgroundImage: m.imageUrl ? `url(${m.imageUrl})` : undefined }}>
-        {m.tag ? <span className="best usual">{m.tag}</span> : m.isBestSeller ? <span className="best">{lang === "ar" ? "الأكثر مبيعاً" : "BEST SELLER"}</span> : null}
+        <Badges items={[...(m.tag || m.why === "your usual" || m.why === "طلبك المعتاد" ? [{ kind: "usual" as const, label: lang === "ar" ? "طلبك المعتاد" : "Your usual" }] : []), ...(m.isBestSeller ? [{ kind: "pop" as const, label: lang === "ar" ? "الأكثر طلباً" : "Popular" }] : []), ...(m.badges ?? [])]} />
       </div>
       <div className="b">
         <b title={m.description}>{m.name}</b>
@@ -576,6 +754,7 @@ function BookingCard({ b, lang, act, confirmationId, parentActions }: { b: any; 
   const showSwap = !parentActions?.has(`swap:${b.bookingId}`);
   return (
     <div className="booking">
+      {b.filmTitle ? <FilmHeader title={b.filmTitle} posterUrl={b.posterUrl} meta={[b.showtimeLabel, b.experience, b.seats].filter(Boolean).join(" · ")}><Badges items={b.badges ?? []} /></FilmHeader> : null}
       <div className="head">
         <span className="ref">{b.bookingId}</span>
         <span className={`badge ${b.status === "confirmed" ? "ok" : b.status === "collected" ? "soft" : "danger"}`}>{b.status}</span>
@@ -685,8 +864,9 @@ export function OrderSummary({ o, meta, lang, act, hideActions }: { o: any; meta
   const seats = seatRange(tickets.map((ticket: any) => ticket.seat).filter(Boolean).join(", "));
   const ticketTotal = tickets.reduce((sum: number, ticket: any) => sum + Number(ticket.finalCents ?? ticket.priceCents ?? 0), 0);
   return (
-    <div className="order">
-      <div className="order-heading"><b>{o.filmTitle}</b><span>{[o.showtimeLabel, o.cinemaName, o.experience].filter(Boolean).join(" · ")}</span></div>
+    <div className="order v3order">
+      {o.filmTitle ? <FilmHeader title={o.filmTitle} posterUrl={o.posterUrl} meta={[o.showtimeLabel, o.experience, seats || null].filter(Boolean).join(" · ")} /> : null}
+      <div className="order-heading sr-only"><b>{o.filmTitle}</b><span>{[o.showtimeLabel, o.cinemaName, o.experience].filter(Boolean).join(" · ")}</span></div>
       {tickets.length ? <div className="line"><span>{lang === "ar" ? `${tickets.length} تذاكر` : `${tickets.length} ticket${tickets.length === 1 ? "" : "s"}`}{seats ? <span className="badge soft">{seats}</span> : null}</span><span>{money(ticketTotal, lang)}</span></div> : null}
       {(o.concessions ?? []).map((c: any) => (
         <div className="line" key={`c${c.id}`}>
@@ -698,7 +878,7 @@ export function OrderSummary({ o, meta, lang, act, hideActions }: { o: any; meta
       ))}
       {(o.offers ?? []).map((of: any) => (
         <div className="line" key={of.id} style={{ color: "#1f8a4c" }}>
-          <span>🎁 {of.title}</span>
+          <span><Badge kind="save">{of.title}</Badge></span>
           <span>−{money(of.discountCents, lang)}</span>
         </div>
       ))}
@@ -706,6 +886,12 @@ export function OrderSummary({ o, meta, lang, act, hideActions }: { o: any; meta
         <div className="line">
           <span>{lang === "ar" ? "رسوم الحجز" : "Booking fee"}</span>
           <span>{money(o.bookingFeeCents, lang)}</span>
+        </div>
+      ) : null}
+      {!(o.concessions ?? []).length && !o.fnbOnly ? (
+        <div className="inline-snacks">
+          <span><b>{lang === "ar" ? "وجبات للفيلم؟" : "Snacks for the film?"}</b><small>{lang === "ar" ? "أضفها الآن واستلمها من الكاونتر." : "Add them now and collect at the counter."}</small></span>
+          <button type="button" className="btn ghost small" onClick={() => routeAction("fnb", "", act, lang)}>{lang === "ar" ? "أضف وجبات" : "Add snacks"}</button>
         </div>
       ) : null}
       <div className="line total">
@@ -730,6 +916,29 @@ export function OrderSummary({ o, meta, lang, act, hideActions }: { o: any; meta
 }
 
 /** Seat plan mirroring the real booking step: curved screen, tiered colours, "Your Selected Seats" price list. */
+/**
+ * "Best view": the free run of `need` adjacent seats closest to the centre of the row, about two-thirds of the
+ * way back from the screen (row A is the front). Pure geometry on the live map, so it is always a real, free pair.
+ */
+export function bestViewSeats(rows: any[], need: number): { row: string; number: string; area: string }[] {
+  if (need < 1) return [];
+  const ordered = [...rows].sort((a, b) => String(a.row).localeCompare(String(b.row), undefined, { numeric: true }));
+  const cols = Math.max(1, ...rows.flatMap((r) => r.seats.map((x: any) => Number(x.col) + 1)));
+  let best: { score: number; seats: { row: string; number: string; area: string }[] } | null = null;
+  ordered.forEach((r, i) => {
+    const depth = ordered.length > 1 ? i / (ordered.length - 1) : 0.5;
+    const free = [...r.seats].filter((x: any) => x.status === 0).sort((a: any, b: any) => a.col - b.col);
+    for (let k = 0; k + need <= free.length; k++) {
+      const run = free.slice(k, k + need);
+      if (run.some((x: any, j: number) => j > 0 && x.col !== run[j - 1].col + 1)) continue;
+      const centre = (run[0].col + run[need - 1].col) / 2;
+      const score = Math.abs(centre - (cols - 1) / 2) / cols + Math.abs(depth - 0.65) * 1.5;
+      if (!best || score < best.score) best = { score, seats: run.map((x: any) => ({ row: r.row, number: String(x.id), area: r.areaCategoryCode })) };
+    }
+  });
+  return (best as { seats: { row: string; number: string; area: string }[] } | null)?.seats ?? [];
+}
+
 function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, any>; lang: Lang; act: CardActions }) {
   // seats already held for this order start out selected, as on the site after auto-allocation
   const [picked, setPicked] = useState<{ row: string; number: string; area: string }[]>(() =>
@@ -768,6 +977,11 @@ function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, 
     } catch { setErr(lang === "ar" ? "تعذر الاتصال. حاول مرة أخرى." : "Couldn't connect. Try again."); }
     finally { setBusy(false); }
   };
+  const heldSeats = rows.flatMap((r) => r.seats.filter((x: any) => x.status === 2).map((x: any) => ({ row: r.row, number: String(x.id), area: r.areaCategoryCode })));
+  const best = bestViewSeats(rows, need);
+  const key = (list: { row: string; number: string }[]) => list.map((x) => `${x.row}${x.number}`).join(",");
+  const showPicks = best.length === need && need > 0 && key(best) !== key(heldSeats);
+  const pickLabel = (list: { row: string; number: string }[]) => seatRange(list.map((x) => `${x.row}${x.number}`).join(", "));
   const groups = picked.reduce<Record<string, number>>((m, p) => ({ ...m, [p.area]: (m[p.area] ?? 0) + 1 }), {});
   const subtotal = picked.reduce((n, p) => n + (priceOf(p.area) ?? 0), 0);
   return (
@@ -779,6 +993,22 @@ function SeatMap({ rows, meta, lang, act }: { rows: any[]; meta: Record<string, 
             {meta.experience ? <em>{meta.experience}</em> : null}
             {meta.screenName ? ` · ${meta.screenName}` : ""}
           </span>
+        </div>
+      ) : null}
+      {showPicks ? (
+        <div className="seat-picks" role="radiogroup" aria-label={lang === "ar" ? "اقتراحات المقاعد" : "Seat suggestions"}>
+          {heldSeats.length === need ? (
+            <button type="button" role="radio" aria-checked={key(picked) === key(heldSeats)} className={`seat-pick ${key(picked) === key(heldSeats) ? "on" : ""}`} onClick={() => setPicked(heldSeats)}>
+              <Badge kind="usual" icon="heart">{lang === "ar" ? "محجوزة لك" : "Held for you"}</Badge>
+              <b>{pickLabel(heldSeats)}</b>
+              <small>{tierName(heldSeats[0]!.area)}</small>
+            </button>
+          ) : null}
+          <button type="button" role="radio" aria-checked={key(picked) === key(best)} className={`seat-pick ${key(picked) === key(best) ? "on" : ""}`} onClick={() => setPicked(best)}>
+            <Badge kind="rec">{lang === "ar" ? "أفضل رؤية" : "Best view"}</Badge>
+            <b>{pickLabel(best)}</b>
+            <small>{lang === "ar" ? "في الوسط، ثلثا المسافة من الشاشة" : "Centred, about two-thirds back"} · {tierName(best[0]!.area)}</small>
+          </button>
         </div>
       ) : null}
       <div className="screen">{t(lang, "screen")}</div>
@@ -961,12 +1191,14 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
   const chosenOffer = bankOffers.find((b) => b.offerId === offerId);
   return (
     <div className="sheet reviewpay">
+      {!meta.fnbOnly && o.filmTitle ? <FilmHeader title={o.filmTitle} posterUrl={o.posterUrl} meta={[o.showtimeLabel, o.experience, o.seats ? seatRange(o.seats) : null].filter(Boolean).join(" · ")} /> : null}
       {!meta.fnbOnly ? (
         <div className="bookline">
-          <b>{o.filmTitle}</b>
+          <b className="sr-only">{o.filmTitle}</b>
           <span>{o.showtimeLabel} · {o.cinemaName}</span>
           <span>{(o.tickets ?? []).length} {ar ? "تذاكر" : (o.tickets ?? []).length === 1 ? "ticket" : "tickets"}{o.seats ? ` · ${seatRange(o.seats)}` : ""}</span>
           {(o.concessions ?? []).length ? <span>{o.concessions.map((c: any) => `${c.quantity}× ${c.description}`).join(" · ")}</span> : null}
+          {!(o.concessions ?? []).length ? <span className="inline-snacks"><span><b>{ar ? "وجبات للفيلم؟" : "Snacks for the film?"}</b><small>{ar ? "أضفها قبل الدفع." : "Add them before you pay."}</small></span><button type="button" className="btn ghost small" onClick={() => routeAction("fnb", "", act, lang)}>{ar ? "أضف وجبات" : "Add snacks"}</button></span> : null}
           {left != null ? <em className={`hold ${left <= 45 ? "urgent" : left <= 120 ? "warn" : ""}`}>{ar ? "محجوزة" : "Held"} {`${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`}</em> : null}
         </div>
       ) : null}

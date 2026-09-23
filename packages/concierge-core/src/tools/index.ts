@@ -1,4 +1,5 @@
 import { TOOL_REGISTRY, type ToolName } from "@voxi/contracts";
+import { decorateBadges } from "../services/badges.js";
 import { bookingTools } from "./bookings.js";
 import { cinemaTools } from "./cinemas.js";
 import { customerTools } from "./customer.js";
@@ -33,7 +34,7 @@ export async function runTool(name: ToolName, ctx: ToolCtx, rawInput: unknown): 
       },
     };
   const handler = toolHandlers[name] as (ctx: ToolCtx, input: unknown) => Promise<ToolResult>;
-  return handler(ctx, parsed.data);
+  return decorateBadges(ctx, await handler(ctx, parsed.data));
 }
 
 export * from "./types.js";

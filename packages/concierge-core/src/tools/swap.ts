@@ -4,7 +4,7 @@ import { createConfirmation } from "../services/confirmations.js";
 import { fmtDateTime, money, t } from "../services/format.js";
 import { signRefundChoice, verifyRefundChoice } from "../services/refund-choice-proof.js";
 import { previewSeats } from "../services/seat-preview.js";
-import { bookingCard, toSnapshot, verifyOwnership } from "./bookings.js";
+import { bookingCard, refundHeader, toSnapshot, verifyOwnership } from "./bookings.js";
 import { loadCustomer } from "./customer.js";
 import { sessionCard } from "./movies.js";
 import { type ToolCtx, err, ok } from "./types.js";
@@ -320,6 +320,7 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
                     amountCents: -differenceCents,
                     eta: "5–10 days to the same original card",
                     cardLast4,
+                    badges: b.Customer?.MemberId ? ["same_card"] : ["default"],
                   },
                 ]
               : [];
@@ -332,7 +333,9 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
                 method === "VOX_CREDIT"
                   ? "VOX credit valid for 90 days"
                   : "SHARE Points returned immediately",
-              ...(method === "VOX_CREDIT" ? { validityDays: 90 } : {}),
+              ...(method === "VOX_CREDIT"
+                ? { validityDays: 90, badges: ["recommended", "faster"] as ("recommended" | "faster")[] }
+                : {}),
             },
           ];
         })
@@ -424,6 +427,12 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
         meta: {
           journey: "swap",
           bookingId: b.VistaBookingId,
+          recommendedMethod: refundMethods.some((m) => m.method === "VOX_CREDIT")
+            ? "VOX_CREDIT"
+            : refundMethods[0]?.method,
+          canLinkForCredit: !b.Customer?.MemberId,
+          signedIn: !!ctx.conversation.customerId,
+          film: await refundHeader(ctx, b),
           targetSessionKey: target.key,
           keepSeatsIfPossible,
           summary,

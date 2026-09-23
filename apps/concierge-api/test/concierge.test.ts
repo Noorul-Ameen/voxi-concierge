@@ -490,7 +490,7 @@ describe("Phase 2 — personalisation, feedback, complaints, transfer", () => {
   });
   it("exposes OpenAPI for all tools", async () => {
     const r = await h.api.request("/openapi.json").then((x) => x.json() as any);
-    expect(Object.keys(r.paths).length).toBe(47);
+    expect(Object.keys(r.paths).length).toBe(48);
     expect(r.components.schemas.quick_book_input.required).toContain("proposalToken");
   });
 });

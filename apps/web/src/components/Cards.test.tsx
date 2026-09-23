@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { Customer } from "../lib/api";
 import { AccountPanel } from "./AccountPanel";
-import { Cards, cardConfirmationId, chooseShowtime, confirmedQrPayload, createTicketQr, refundChoiceCommand, routeAction, seatPlanCommand, type CardActions } from "./Cards";
+import { bestViewSeats, Cards, cardConfirmationId, chooseShowtime, confirmedQrPayload, createTicketQr, linkBookingCommand, refundChoiceCommand, routeAction, seatPlanCommand, type CardActions } from "./Cards";
 
 const act: CardActions = { say: () => undefined, command: async () => ({ ok: true }), openLink: () => undefined, playTrailer: () => undefined };
 
@@ -216,12 +216,39 @@ describe("concierge decision cards", () => {
 
   it("shows refund destinations and returned processing terms without claiming refund completion", () => {
     const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "refund_options", items: [{ method: "ORIGINAL_PAYMENT", amountCents: 9000, eta: "5–7 working days", cardLast4: "1234" }, { method: "VOX_CREDIT", amountCents: 9000, eta: "Immediately after confirmation", validityDays: 365 }] }} />);
-    expect(html).toContain("Original payment method");
+    expect(html).toContain("Back to card •••• 1234");
     expect(html).toContain("VOX Credit");
     expect(html).toContain("5–7 working days");
     expect(html).toContain("1234");
     expect(html).toContain("Valid for 365 days");
     expect(html).not.toContain("Refund completed");
+  });
+
+  it("pre-selects the recommended refund with its reasons and names the destination on the button", () => {
+    const items = [{ method: "VOX_CREDIT", amountCents: 9000, eta: "within 30 minutes to your VOX Wallet (valid 90 days)", validityDays: 90, badges: ["recommended", "faster"] }, { method: "ORIGINAL_PAYMENT", amountCents: 9000, cardLast4: "4242", eta: "5–10 days to the same original card", badges: ["same_card"] }];
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "refund_options", items, meta: { bookingId: "W4PU9V6", recommendedMethod: "VOX_CREDIT", film: { filmTitle: "Resident Evil", showtimeLabel: "Today 7:15 PM", bookingId: "W4PU9V6" } } }} />);
+    expect(html).toContain("Recommended");
+    expect(html).toContain("Faster · within 30 min");
+    expect(html).toContain("Cancel &amp; refund to VOX Credit");
+    expect(html).toContain("Resident Evil");
+    expect(html).toMatch(/aria-checked="true"[^>]*>.*?VOX Credit/);
+    expect(html).not.toContain("Sign in &amp; link booking");
+  });
+
+  it("defaults a guest refund to the original payment and offers sign-in to link for VOX Credit", () => {
+    const items = [{ method: "ORIGINAL_PAYMENT", amountCents: 12000, cardLast4: "4242", eta: "5–10 days to the same original card", badges: ["default", "same_card"] }];
+    for (const lang of ["en", "ar"] as const) {
+      const html = renderToStaticMarkup(<Cards lang={lang} act={act} ui={{ type: "refund_options", items, meta: { bookingId: "W7KQ2LM", recommendedMethod: "ORIGINAL_PAYMENT", canLinkForCredit: true } }} />);
+      expect(html).toContain(lang === "en" ? "Sign in &amp; link booking" : "سجّل الدخول واربط الحجز");
+      expect(html).toContain(lang === "en" ? "Cancel &amp; refund to card" : "4242");
+      expect(html).toContain('aria-checked="true"');
+    }
+  });
+
+  it("builds a link command that reopens the same refund review", () => {
+    expect(linkBookingCommand({ bookingId: "W7KQ2LM", ticketIds: ["t1"], refundChoiceProof: "p.q" })).toEqual({ type: "booking.link", bookingId: "W7KQ2LM", resume: { kind: "cancel", ticketIds: ["t1"] }, refundChoiceProof: "p.q" });
+    expect(linkBookingCommand({ journey: "swap", bookingId: "B", targetSessionKey: "c-s", keepSeatsIfPossible: true, summary: { selectedSeats: [{ Row: "F", Number: "7" }] } })).toEqual({ type: "booking.link", bookingId: "B", resume: { kind: "swap", targetSessionKey: "c-s", keepSeatsIfPossible: true, seats: [{ row: "F", number: "7" }] } });
+    expect(linkBookingCommand({})).toBeUndefined();
   });
 
   it("preserves the exact refund booking and selected tickets in a direct review command", () => {
@@ -281,12 +308,12 @@ describe("concierge decision cards", () => {
     expect(html).toContain("An English thriller for your evening.");
   });
 
-  it("shows showtimes without repeating a movie poster or synopsis", () => {
+  it("shows showtimes on the film-art header without the hero image, rating or synopsis", () => {
     const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "showtimes", title: "Showtimes", meta: { film: { title: "The Journey", posterUrl: "https://example.com/poster.jpg", heroUrl: "https://example.com/hero.jpg", rating: "PG13" } }, items: [{ sessionKey: "one", date: "2026-09-11", dateLabel: "Tomorrow", time: "7:15 PM", cinemaName: "Mall of the Emirates", experience: "MAX", seatsAvailable: 40 }] }} />);
     expect(html).toContain("The Journey");
     expect(html).toContain("7:15 PM");
     expect(html).toContain("Tomorrow");
-    expect(html).not.toContain("poster.jpg");
+    expect(html).toContain("poster.jpg");
     expect(html).not.toContain("hero.jpg");
     expect(html).not.toContain("PG13");
   });
@@ -320,6 +347,17 @@ describe("concierge decision cards", () => {
     expect(html).toContain('aria-label="G1');
     expect(html).toContain('aria-pressed="true"');
     expect(html).toMatch(/disabled=""[^>]*>Confirm seats/);
+  });
+
+  it("picks the best free run of seats near the centre, two-thirds back", () => {
+    const row = (r: string, taken: number[] = []) => ({ row: r, areaCategoryCode: "regular", seats: Array.from({ length: 8 }, (_, c) => ({ col: c, id: String(c + 1), status: taken.includes(c) ? 1 : 0 })) });
+    const rows = ["A", "B", "C", "D", "E", "F", "G"].map((r) => row(r, r === "E" ? [3, 4] : []));
+    // E's centre pair is taken, so the centred pair one row forward wins.
+    expect(bestViewSeats(rows, 2).map((s) => `${s.row}${s.number}`)).toEqual(["D4", "D5"]);
+    const seats = bestViewSeats(rows, 2);
+    expect(seats).toHaveLength(2);
+    expect(rows.find((r) => r.row === seats[0]!.row)!.seats.filter((x) => seats.some((s) => s.number === x.id)).every((x) => x.status === 0)).toBe(true);
+    expect(bestViewSeats([row("A", [0, 1, 2, 3, 4, 5, 6, 7])], 2)).toEqual([]);
   });
 
   it("starts the food decision with a small selection and deeper browsing", () => {

@@ -1023,6 +1023,14 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
             cmd.refundChoiceProof,
           ),
         );
+      case "booking.link":
+        return c.json(
+          await widgetTool(
+            "link_booking",
+            { bookingId: cmd.bookingId, resume: cmd.resume },
+            cmd.refundChoiceProof,
+          ),
+        );
       case "refund.choose":
         return c.json(
           await widgetTool(

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ActionRef, RefundMethod, UiHint } from "./common.js";
-import { ProposeBookingInput } from "./tools.js";
+import { LinkBookingInput, ProposeBookingInput } from "./tools.js";
 
 /** Server-sent events pushed to the widget over /events/{conversationId}. */
 const identity = { eventId: z.string().optional() };
@@ -69,6 +69,12 @@ export const WidgetCommand = z.discriminatedUnion("type", [
     bookingId: z.string(),
     refundMethod: RefundMethod,
     ticketIds: z.array(z.string()).optional(),
+    refundChoiceProof: z.string().min(1).max(4000).optional(),
+  }),
+  z.object({
+    type: z.literal("booking.link"),
+    bookingId: z.string().min(1).max(32),
+    resume: LinkBookingInput.shape.resume,
     refundChoiceProof: z.string().min(1).max(4000).optional(),
   }),
   z.object({ type: z.literal("language"), language: z.enum(["en", "ar"]) }),

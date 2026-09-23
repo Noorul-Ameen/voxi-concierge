@@ -4,6 +4,7 @@ import { App } from "./App";
 import "./fonts.css";
 import "./styles.css";
 import "./concierge-state.css";
+import "./v3.css";
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <App />
