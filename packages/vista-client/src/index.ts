@@ -486,6 +486,14 @@ export class VistaClient {
       ToBookingId: toBookingId,
     });
   }
+  /** Attach a guest booking to a registered member (VOX IT to confirm the production endpoint). */
+  linkBookingToMember(req: { BookingId: string; CustomerId: string; ExpectedVersion?: number }) {
+    return this.request<{ Booking: Record<string, any>; Idempotent: boolean } & V1Envelope>(
+      "POST",
+      "/RESTBooking.svc/booking/member-link",
+      req,
+    );
+  }
   markCollected(bookingId: string) {
     return this.request<{ Booking: Record<string, any> } & V1Envelope>(
       "POST",

@@ -78,10 +78,19 @@ export type EligibilityResult = {
     eta: string;
     validityDays?: number;
     cardLast4?: string;
+    /** Why a customer might pick this route; shown as badges, only when true for this booking. */
+    badges?: RefundBadge[];
   }[];
+  /** The option the widget pre-selects. The customer still confirms it explicitly (never a silent default). */
+  recommendedMethod?: "VOX_CREDIT" | "SHARE_POINTS" | "ORIGINAL_PAYMENT";
+  /** Guest booking that could get VOX Credit once the customer signs in and links it to their account. */
+  canLinkForCredit?: boolean;
   swapAllowed: boolean;
   notes: string[];
 };
+
+/** recommended = the pre-selected route; faster = VOX Credit lands within 30 minutes; same_card = back to the card used. */
+export type RefundBadge = "recommended" | "faster" | "same_card" | "default";
 
 export function evaluateCancellation(
   b: BookingSnapshot,
@@ -183,6 +192,7 @@ export function evaluateCancellation(
         amountCents: totalCents,
         eta: "within 30 minutes to your VOX Wallet (valid 90 days)",
         validityDays: 90,
+        badges: ["recommended", "faster"],
       });
     if (m === "SHARE_POINTS")
       methods.push({
@@ -200,12 +210,16 @@ export function evaluateCancellation(
           String(b.payments?.[0]?.CardNumber ?? b.payments?.[0]?.CardNumberMasked ?? "")
             .replace(/\D/g, "")
             .slice(-4) || undefined,
+        badges: b.hasMember ? ["same_card"] : ["default"],
       });
   }
   if (!b.hasMember)
     notes.push(
-      "This booking is not linked to a registered account, so VOX wallet credit is unavailable. Only the supported original payment route can be offered.",
+      "This booking is not linked to a registered account, so VOX wallet credit is unavailable and the refund goes to the original payment method by default. Signing in and linking the booking (same email or phone as the account, at least 30 minutes before the show) makes VOX Credit available.",
     );
+  const recommendedMethod = methods.some((m) => m.method === "VOX_CREDIT")
+    ? "VOX_CREDIT"
+    : methods[0]?.method;
   if (!methods.length)
     return fail(
       "BOOKING_NOT_ELIGIBLE",
@@ -219,6 +233,8 @@ export function evaluateCancellation(
     refundableTicketIds: selected.map((t) => t.Id),
     amounts: { ticketsCents, concessionsCents, bookingFeeCents, totalCents },
     refundMethods: methods,
+    recommendedMethod,
+    canLinkForCredit: !b.hasMember,
     swapAllowed: true,
     notes,
   };

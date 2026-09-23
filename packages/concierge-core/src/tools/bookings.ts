@@ -126,6 +126,25 @@ async function loadBooking(ctx: ToolCtx, bookingId: string): Promise<VistaBookin
   }
 }
 
+/** Compact header for refund/swap cards: film art, show, seats and whether it is a guest booking. */
+export async function refundHeader(ctx: ToolCtx, b: VistaBooking) {
+  // Artwork is decoration: a missing film or catalogue must never block the refund step.
+  const film = b.ScheduledFilmId
+    ? await Promise.resolve()
+        .then(() => ctx.catalog.film(b.ScheduledFilmId))
+        .catch(() => null)
+    : null;
+  return {
+    bookingId: b.VistaBookingId,
+    filmTitle: ctx.lang === "ar" && b.AltFilmTitle ? b.AltFilmTitle : b.FilmTitle,
+    showtimeLabel: fmtDateTime(b.Showtime, ctx.lang, ctx.nowLocal),
+    experience: b.Experience,
+    seats: seatLabels(b.Tickets ?? []),
+    posterUrl: film?.posterUrl || undefined,
+    guest: !b.Customer?.MemberId,
+  };
+}
+
 async function cinemaName(ctx: ToolCtx, id: string) {
   const c = await ctx.catalog.cinema(id);
   return c ? (ctx.lang === "ar" ? c.nameAlt || c.name : c.name) : id;
@@ -165,7 +184,178 @@ export const bookingTools: Pick<
   | "swap_booking"
   | "list_my_bookings"
   | "resend_ticket"
+  | "link_booking"
 > = {
+  /**
+   * Guest booking → signed-in account, so the refund can go to VOX Credit. Ownership is proven by the sign-in plus
+   * the booking's email or phone matching the account; the same 30-minute cut-off as refunds applies.
+   * On a mismatch nothing changes and the refund stays on the original payment method.
+   */
+  async link_booking(ctx, input) {
+    const bookingRef = input.bookingId.toUpperCase();
+    if (!ctx.conversation.isLoggedIn || !ctx.conversation.customerId)
+      return err(
+        ErrorCodes.LOGIN_REQUIRED,
+        t(
+          ctx.lang,
+          `Please sign in first, then I can link booking ${bookingRef} to your account.`,
+          `يرجى تسجيل الدخول أولاً، ثم أربط الحجز ${bookingRef} بحسابك.`,
+        ),
+        false,
+        { needs: "login", bookingId: input.bookingId },
+      );
+    const b = await loadBooking(ctx, input.bookingId);
+    if (!b)
+      return err(
+        ErrorCodes.BOOKING_NOT_FOUND,
+        t(ctx.lang, `I couldn't find booking ${bookingRef}.`, `لم أجد الحجز ${bookingRef}.`),
+      );
+    let account: Record<string, any>;
+    try {
+      account = await ctx.vista.customer(ctx.conversation.customerId);
+    } catch (e) {
+      if (e instanceof VistaClientError && e.status === 404)
+        return err(
+          ErrorCodes.LOGIN_REQUIRED,
+          t(ctx.lang, "Please sign in again.", "يرجى تسجيل الدخول مجدداً."),
+          false,
+          {
+            needs: "login",
+          },
+        );
+      throw e;
+    }
+    const memberId = String(account.memberId ?? "");
+    const resumeRefund = async (proofCtx: ToolCtx) => {
+      const r = input.resume;
+      if (!r) return null;
+      return r.kind === "swap"
+        ? bookingTools.prepare_swap(proofCtx, {
+            bookingId: b.VistaBookingId,
+            targetSessionKey: r.targetSessionKey,
+            keepSeatsIfPossible: r.keepSeatsIfPossible ?? true,
+            ...(r.seats?.length ? { seats: r.seats } : {}),
+          })
+        : bookingTools.prepare_cancellation(proofCtx, {
+            bookingId: b.VistaBookingId,
+            ticketIds: r.ticketIds,
+          });
+    };
+    const refuse = async (reason: string, speech: string) => {
+      // Nothing changed: reopen the guest refund (original payment) when the widget proved ownership of this review.
+      const next = ctx.refundChoiceProof ? await resumeRefund(ctx) : null;
+      return ok(
+        { linked: false, reason, bookingId: b.VistaBookingId, next: next?.data ?? null },
+        next?.speech ? `${speech} ${next.speech}` : speech,
+        next?.ui,
+        { name: "link_booking", status: "failed" },
+      );
+    };
+    if (b.Customer?.MemberId && memberId && b.Customer.MemberId === memberId) {
+      const next = await resumeRefund({ ...ctx, refundChoiceProof: undefined });
+      const already = t(
+        ctx.lang,
+        `Booking ${bookingRef} is already on your account.`,
+        `الحجز ${bookingRef} مرتبط بحسابك بالفعل.`,
+      );
+      return ok(
+        { linked: true, alreadyLinked: true, bookingId: b.VistaBookingId, next: next?.data ?? null },
+        next?.speech ? `${already} ${next.speech}` : already,
+        next?.ui,
+        { name: "link_booking", status: "completed" },
+      );
+    }
+    if (b.Customer?.MemberId)
+      return refuse(
+        "linked_elsewhere",
+        t(
+          ctx.lang,
+          `Booking ${bookingRef} is already on another VOX account, so I can't move it.`,
+          `الحجز ${bookingRef} مرتبط بحساب VOX آخر، فلا يمكنني نقله.`,
+        ),
+      );
+    if (!memberId)
+      return refuse(
+        "no_wallet",
+        t(
+          ctx.lang,
+          "Your account doesn't have a VOX Wallet yet, so the refund stays on the original payment method.",
+          "حسابك لا يملك محفظة VOX بعد، لذا يبقى الاسترداد على وسيلة الدفع الأصلية.",
+        ),
+      );
+    const digits = (v: unknown) =>
+      String(v ?? "")
+        .replace(/\D/g, "")
+        .slice(-9);
+    const emailMatch =
+      !!account.email &&
+      String(account.email).toLowerCase() === String(b.Customer?.Email ?? "").toLowerCase();
+    const phoneMatch =
+      digits(account.phone).length >= 7 && digits(account.phone) === digits(b.Customer?.Phone);
+    if (!emailMatch && !phoneMatch)
+      return refuse(
+        "contact_mismatch",
+        t(
+          ctx.lang,
+          `The email and phone on booking ${bookingRef} don't match your account, so I can't link it. The refund goes back to the original payment method.`,
+          `البريد الإلكتروني والهاتف على الحجز ${bookingRef} لا يطابقان حسابك، فلا يمكنني ربطه. يعود الاسترداد إلى وسيلة الدفع الأصلية.`,
+        ),
+      );
+    // Judge the booking as it would be once linked, so the cut-off / bank-offer / third-party rules decide, not the payment mix.
+    const e = evaluateCancellation(
+      { ...toSnapshot(b), hasMember: true },
+      ctx.nowLocal,
+      undefined,
+      ctx.cfg.policy,
+    );
+    if (!e.eligible)
+      return refuse(
+        e.code === "CUTOFF_PASSED" ? "cutoff" : "not_eligible",
+        t(ctx.lang, `I can't link it now: ${e.reasons[0]}`, `لا يمكنني ربطه الآن: ${e.reasons[0]}`),
+      );
+    try {
+      await ctx.vista.linkBookingToMember({
+        BookingId: b.VistaBookingId,
+        CustomerId: ctx.conversation.customerId,
+        ExpectedVersion: b.Version,
+      });
+    } catch (error) {
+      if (error instanceof VistaClientError && error.kind === "result")
+        return err(
+          ErrorCodes.CONFLICT,
+          t(
+            ctx.lang,
+            "That booking changed while I was linking it. Nothing was moved; please try again.",
+            "تغيّر الحجز أثناء الربط. لم يتغير شيء؛ يرجى المحاولة مجدداً.",
+          ),
+          true,
+        );
+      throw error;
+    }
+    // The account now owns the booking, so the refund review reopens without the (now stale) widget proof.
+    const next = await resumeRefund({ ...ctx, refundChoiceProof: undefined });
+    const done = t(
+      ctx.lang,
+      `Done — booking ${bookingRef} is now on your account, so VOX Credit is available.`,
+      `تم — الحجز ${bookingRef} أصبح على حسابك، فأصبح رصيد VOX متاحاً.`,
+    );
+    return ok(
+      { linked: true, bookingId: b.VistaBookingId, next: next?.data ?? null },
+      next?.speech ? `${done} ${next.speech}` : done,
+      next?.ui ?? {
+        type: "booking",
+        items: [
+          bookingCard(
+            (await loadBooking(ctx, b.VistaBookingId)) ?? b,
+            ctx.lang,
+            ctx.nowLocal,
+            await cinemaName(ctx, b.CinemaId),
+          ),
+        ],
+      },
+      { name: "link_booking", status: "completed" },
+    );
+  },
   /** Brief gap: "was my ticket emailed?" — resend the e-ticket and report the delivery record. */
   async resend_ticket(ctx, input) {
     const b = await loadBooking(ctx, input.bookingId);
@@ -422,8 +612,23 @@ export const bookingTools: Pick<
         },
         t(
           ctx.lang,
-          `${input.refundMethod ? "That refund destination is not available for this payment. " : ""}Your refund is ${money(e.amounts.totalCents, ctx.lang)}. Choose ${e.refundMethods.map((m) => (m.method === "VOX_CREDIT" ? "VOX wallet credit, valid for 90 days" : m.method === "ORIGINAL_PAYMENT" ? `the same original card${m.cardLast4 ? ` ending ${m.cardLast4}` : ""}, in 5–10 days` : "SHARE Points")).join(" or ")}.`,
-          `مبلغ الاسترداد ${money(e.amounts.totalCents, "ar")}. اختر طريقة الاسترداد المتاحة على الشاشة؛ رصيد فوكس صالح90يوماً والاسترداد إلى البطاقة الأصلية خلال5–10أيام.`,
+          e.canLinkForCredit
+            ? `${input.refundMethod ? "That refund destination is not available for this payment. " : ""}Your refund is ${money(e.amounts.totalCents, ctx.lang)}. As a guest booking it goes back to the original card${e.refundMethods[0]?.cardLast4 ? ` ending ${e.refundMethods[0].cardLast4}` : ""} in 5–10 days. If you sign in and link the booking to your VOX account, you can take VOX Credit instead, in your wallet within 30 minutes.`
+            : e.recommendedMethod !== "VOX_CREDIT"
+              ? `${input.refundMethod ? "That refund destination is not available for this payment. " : ""}Your refund is ${money(e.amounts.totalCents, ctx.lang)}. Choose ${e.refundMethods.map((m) => (m.method === "ORIGINAL_PAYMENT" ? `the same original card${m.cardLast4 ? ` ending ${m.cardLast4}` : ""}, in 5–10 days` : "SHARE Points")).join(" or ")}.`
+              : `${input.refundMethod ? "That refund destination is not available for this payment. " : ""}Your refund is ${money(e.amounts.totalCents, ctx.lang)}. I'd suggest VOX Credit: it's faster, in your wallet within 30 minutes and valid for 90 days. Or ${
+                  e.refundMethods
+                    .filter((m) => m.method !== "VOX_CREDIT")
+                    .map((m) =>
+                      m.method === "ORIGINAL_PAYMENT"
+                        ? `the same original card${m.cardLast4 ? ` ending ${m.cardLast4}` : ""}, in 5–10 days`
+                        : "SHARE Points",
+                    )
+                    .join(" or ") || "another destination"
+                }. Which would you like?`,
+          e.canLinkForCredit
+            ? `مبلغ الاسترداد ${money(e.amounts.totalCents, "ar")}. لأنه حجز ضيف يعود إلى البطاقة الأصلية خلال 5–10 أيام. إذا سجلت الدخول وربطت الحجز بحسابك يمكنك اختيار رصيد VOX خلال 30 دقيقة.`
+            : `مبلغ الاسترداد ${money(e.amounts.totalCents, "ar")}. أقترح رصيد VOX: أسرع، يصل إلى محفظتك خلال 30 دقيقة وصالح 90 يوماً، أو البطاقة الأصلية خلال 5–10 أيام. ماذا تفضّل؟`,
         ),
         {
           type: "refund_options",
@@ -431,6 +636,10 @@ export const bookingTools: Pick<
           meta: {
             bookingId: b.VistaBookingId,
             ticketIds: input.ticketIds,
+            recommendedMethod: e.recommendedMethod,
+            canLinkForCredit: !!e.canLinkForCredit,
+            signedIn: !!ctx.conversation.customerId,
+            film: await refundHeader(ctx, b),
             refundChoiceProof: signRefundChoice(ctx, {
               bookingId: b.VistaBookingId,
               bookingVersion: b.Version,

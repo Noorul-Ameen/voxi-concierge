@@ -10,6 +10,7 @@ import { stripDeliveryTags } from "../lib/delivery-tags";
 import { isRtl, t } from "../lib/i18n";
 import { type CardActions, Cards, createTicketQr, Feedback, seatRange } from "./Cards";
 import { BrandLogo } from "./BrandLogo";
+import { ArchMark, Icon } from "./V3";
 import { type Loc, LocationBar } from "./LocationBar";
 import { ACCOUNT_ACTIVITY_EVENT, AUTH_CHANGE_SIGNAL, notifyPageAuthChange, pageSession, usePageSession, type PageSessionRuntime } from "../lib/page-session";
 import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, directSeatMapFeedback, holdSeconds, isCurrentHold, recordUserActivity, renderVerifiedSeatMap, verifyHoldNotice, type HoldNoticeSnapshot, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
@@ -821,7 +822,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           push({ kind: "note", text: mapFeedback.text, polite: true });
           if (mapFeedback.context) acknowledge(mapFeedback.context);
         }
-        const meaningful = ["seat.select", "payment.token", "booking.select", "proposal.preview", "proposal.accept", "refund.choose", "swap.refund.choose", "order.recover"].includes(String(cmd.type));
+        const meaningful = ["seat.select", "payment.token", "booking.select", "proposal.preview", "proposal.accept", "refund.choose", "swap.refund.choose", "booking.link", "order.recover"].includes(String(cmd.type));
         if (meaningful && result.action && ["queued", "running"].includes(result.action.status)) {
           const completed = completedActionsRef.current.get(result.action.actionId);
           if (completed) acknowledge(actionContext(completed.type, { ok: completed.status === "succeeded", action: completed, error: completed.error?.message }));
@@ -850,14 +851,18 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       },
       openLink: (url) => window.open(url, "_blank", "noopener"),
       playTrailer: (id) => window.open(`https://www.youtube.com/watch?v=${id}`, "_blank", "noopener"),
+      requestLogin: () => setAuthOpen(true),
+      signedIn: !!customer,
+      accountEmail: customer?.email,
     }),
-    [say, ask, session],
+    [say, ask, session, customer],
   );
 
   const connected = conversation.status === "connected";
   const dir = isRtl(lang) ? "rtl" : "ltr";
   // ---------- presentation-only state (launcher, unread badge, typing indicator, suggestions) ----------
   const [open, setOpen] = useState(initialOpen);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const lastItem = items[items.length - 1];
   useEffect(() => {
@@ -868,8 +873,8 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   }, [open]);
   const thinking = connected && !humanMode && lastItem?.kind === "msg" && lastItem.role === "user" && !conversation.isSpeaking;
   const suggestions = lang === "ar"
-    ? ["اقترح لي فيلماً", "ما الذي يُعرض بين الرابعة والسادسة؟", "ساعدني في حجز سابق", "ما عروض بطاقتي؟"]
-    : ["Suggest me a movie", "Anything good between 4 and 6?", "Help with an existing booking", "Does my card have an offer?"];
+    ? ["اقترح لي فيلماً الليلة", "ماذا يُعرض بعد التاسعة قربي؟", "ساعدني في حجز سابق", "هل لبطاقتي عرض؟"]
+    : ["Suggest a movie for tonight", "What's on after 9 PM near me?", "Help with an existing booking", "Does my card have an offer?"];
   const statusText = connected
     ? conversation.isSpeaking
       ? t(lang, "speaking")
@@ -886,7 +891,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   if (!open)
     return (
       <button className="cinema-launcher" dir={dir} onClick={() => setOpen(true)} aria-label={t(lang, "askVoxi")}>
-        <span className={`orb ${voiceState}`} />
+        <ArchMark size={32} state={voiceState} />
         <span className="launcher-copy">{t(lang, "askVoxi")}</span>
         {unread ? <span className="unread">{unread}</span> : null}
       </button>
@@ -894,36 +899,36 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
 
   return (
     <div className={`widget ${expanded ? "expanded" : ""} state-${voiceState}`} dir={dir} onPointerDownCapture={handleUserActivity} onKeyDownCapture={handleUserActivity} onWheelCapture={handleUserActivity} onInputCapture={handleUserActivity}>
-      <div className="widget-head">
-        <div className={`orb ${voiceState}`} aria-hidden="true">
-          <i /><i /><i />
-        </div>
+      <div className="widget-head v3">
         <div className="titles">
-          <b><BrandLogo height={30} /><span className="sr-only">{t(lang, "title")}</span></b>
+          <b><BrandLogo height={28} /><span className="sr-only">{t(lang, "title")}</span></b>
+        </div>
+        <div className="va">
+          <b>{lang === "ar" ? "المساعد الافتراضي" : "Virtual Assistant"}</b>
           <small>
-            {statusText ? <span className={`dot ${voiceState}`} /> : null}
-            {humanMode ? `${t(lang, "human")}${humanMode.agentName ? ` · ${humanMode.agentName}` : ""}` : statusText || t(lang, "subtitle")}
+            <span className={`dot ${statusText ? voiceState : "ready"}`} />
+            {humanMode ? `${t(lang, "human")}${humanMode.agentName ? ` · ${humanMode.agentName}` : ""}` : statusText || (lang === "ar" ? "متصل" : "Online")}
           </small>
         </div>
-        {customer ? <span className="signed-in-status" role="status">{lang === "ar" ? "تم الدخول" : "Signed in"}</span> : <button className="iconbtn auth" onClick={() => setAuthOpen(true)} title={lang === "ar" ? "تسجيل الدخول على الصفحة" : "Sign in on this page"}>
-          {lang === "ar" ? "تسجيل الدخول" : "Sign in"}
-        </button>}
-        <div className="langtoggle" role="group" aria-label="language" title={`events: ${sseStatus}`}>
-          <button className={lang === "en" ? "on" : ""} onClick={() => void changeLanguage("en", true)}>
-            EN
-          </button>
-          <button className={lang === "ar" ? "on" : ""} onClick={() => void changeLanguage("ar", true)}>
-            ع
-          </button>
-        </div>
-        <button className="iconbtn" onClick={() => setExpanded((x) => !x)} title="expand" aria-label="expand">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">{expanded ? <path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5" /> : <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />}</svg>
+        <button type="button" className="langbtn" onClick={() => void changeLanguage(lang === "ar" ? "en" : "ar", true)} aria-label={lang === "ar" ? "English" : "العربية"} title={`events: ${sseStatus}`}>
+          {lang === "ar" ? "EN" : "ع"}
         </button>
-        {connected || humanMode ? (
-          <button className="iconbtn end" disabled={endingChat} onClick={() => void endChat()} title={t(lang, "end")}>
-            {t(lang, "end")}
+        <button type="button" className={`iconbtn account ${customer ? "on" : ""}`} onClick={() => setAuthOpen(true)} aria-label={customer ? (lang === "ar" ? "حسابك" : "Your account") : lang === "ar" ? "تسجيل الدخول" : "Sign in"} title={customer ? `${customer.firstName}` : lang === "ar" ? "تسجيل الدخول" : "Sign in"}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="8" r="4" /><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" /></svg>
+          {customer ? <span className="sr-only">{lang === "ar" ? "تم الدخول" : "Signed in"}</span> : null}
+        </button>
+        <div className="headmenu">
+          <button type="button" className="iconbtn" aria-haspopup="menu" aria-expanded={menuOpen} aria-label={lang === "ar" ? "المزيد" : "More"} onClick={() => setMenuOpen((x) => !x)}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
           </button>
-        ) : null}
+          {menuOpen ? (
+            <div className="headmenu-list" role="menu" onClick={() => setMenuOpen(false)}>
+              <button type="button" role="menuitem" onClick={() => setExpanded((x) => !x)}>{expanded ? (lang === "ar" ? "تصغير النافذة" : "Smaller window") : lang === "ar" ? "توسيع النافذة" : "Bigger window"}</button>
+              {customer ? <button type="button" role="menuitem" onClick={() => void doLogout()}>{lang === "ar" ? "تسجيل الخروج" : "Sign out"}</button> : <button type="button" role="menuitem" onClick={() => setAuthOpen(true)}>{lang === "ar" ? "تسجيل الدخول" : "Sign in"}</button>}
+              {connected || humanMode ? <button type="button" role="menuitem" className="danger" disabled={endingChat} onClick={() => void endChat()}>{t(lang, "end")}</button> : null}
+            </div>
+          ) : null}
+        </div>
         <button className="iconbtn" onClick={() => setOpen(false)} title={t(lang, "minimise")} aria-label={t(lang, "minimise")}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round"><path d="M5 12h14" /></svg>
         </button>
@@ -941,32 +946,31 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         </div> : null}
         {mode !== "idle" && !items.length && !connected ? (
           <div className="start">
-            <div className="hero-orb listening"><i /><i /><i /></div>
+            <ArchMark size={50} state="listening" />
             <p>{t(lang, "connecting")}</p>
           </div>
         ) : null}
         {!sessionExpired && mode === "idle" && !connected && items.every((i) => i.kind === "note") ? (
-          <div className="start">
-            <div className="hero-orb"><i /><i /><i /></div>
-            <h3>{lang === "ar" ? "فيلمك القادم يبدأ هنا" : "Your next great movie starts here"}</h3>
-            <p>{lang === "ar" ? "ما نوع الفيلم الذي ودك تشوفه؟" : "What are you in the mood to watch?"}</p>
-            <div className="startbtns">
-              <button className="btn primary big" onClick={() => start("voice")}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
-                {t(lang, "startVoice")}
+          <div className="start v3">
+            <ArchMark size={50} />
+            <span className="eyebrow">{greeting(lang)}</span>
+            <h3>{lang === "ar" ? "فيلمك القادم يبدأ هنا." : "Your next great movie starts here."}</h3>
+            <p>{lang === "ar" ? "اسأل بصوتك أو اكتب — أجد لك فيلماً وأحجز المقاعد وأضيف الوجبات." : "Ask by voice or type — I'll find a film, hold the seats and add snacks."}</p>
+            <button className="btn primary talk" onClick={() => start("voice")}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></svg>
+                {lang === "ar" ? "اضغط وتحدّث" : "Tap to talk"}
+              </span>
+              <span className="wave" aria-hidden="true"><i /><i /><i /><i /><i /></span>
+            </button>
+            <p className="tryhead">{lang === "ar" ? "جرّب أن تسأل" : "Try asking"}</p>
+            {suggestions.map((s, i) => (
+              <button key={s} type="button" className="tryrow" onClick={() => ask(s)}>
+                <Icon name={(["star", "clock", "link", "card"] as const)[i] ?? "star"} size={17} />
+                <span>{s}</span>
+                <svg className="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M9 6l6 6-6 6" /></svg>
               </button>
-              <button className="btn ghost big" onClick={() => start("text")}>
-                {t(lang, "startText")}
-              </button>
-            </div>
-            <div className="suggest">
-              <small>{t(lang, "tryAsking")}</small>
-              {suggestions.map((s) => (
-                <button key={s} type="button" className="chip" onClick={() => ask(s)}>
-                  {s}
-                </button>
-              ))}
-            </div>
+            ))}
           </div>
         ) : null}
         {items.map((it, idx) => {
@@ -974,14 +978,14 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           const first = !(prev && prev.kind === "msg" && it.kind === "msg" && prev.role === it.role);
           return it.kind === "msg" ? (
             <div key={it.id} className={`msgrow ${it.role} ${first ? "first" : ""}`}>
-              {it.role !== "user" ? <span className={`avatar ${it.role}`}>{it.role === "human" ? (it.who?.[0] ?? "☺") : ""}</span> : null}
+              {it.role === "agent" ? <ArchMark size={30} state={idx === items.length - 1 ? voiceState : undefined} /> : it.role !== "user" ? <span className={`avatar ${it.role}`}>{it.who?.[0] ?? "☺"}</span> : null}
               <div className={`msg ${it.role}`}>
                 {it.role !== "user" && first ? <span className="who">{it.role === "human" ? (it.who ?? t(lang, "human")) : t(lang, "agent")}</span> : null}
                 {it.text}
               </div>
             </div>
           ) : it.kind === "cards" ? (
-            <div key={it.id}>{it.archived ? <button className="booking-summary" type="button" onClick={() => void ask(`${lang === "ar" ? "أود تعديل" : "I'd like to change"} ${decisionSummary(it.ui, lang)}`)}><span>{lang === "ar" ? "نتيجة سابقة: " : "Earlier result: "}{decisionSummary(it.ui, lang)}</span><small>{lang === "ar" ? "تعديل" : "Edit"}</small></button> : <Cards ui={it.ui} lang={lang} act={act} />}</div>
+            <div key={it.id}>{it.archived ? <div className="replaced" role="note"><span>{decisionSummary(it.ui, lang)}</span><small>{lang === "ar" ? "تم الاستبدال" : "replaced"}</small></div> : <Cards ui={it.ui} lang={lang} act={act} />}</div>
           ) : it.kind === "feedback" ? (
             <div key={it.id} className="cards">
               <Feedback lang={lang} act={act} />
@@ -1068,12 +1072,19 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           </button>
         ) : null}
         <div className="composer">
-          <input value={input} placeholder={mode === "idle" && !humanMode ? t(lang, "tapToTalk") : t(lang, "placeholder")} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { say(input); setInput(""); } }} onFocus={handleUserActivity} disabled={mode === "idle" && !humanMode} />
-          <button className="sendbtn" disabled={(!connected && !humanMode) || !input.trim()} onClick={() => { say(input); setInput(""); }} aria-label={t(lang, "send")} title={t(lang, "send")}>
+          <input value={input} placeholder={mode === "idle" && !humanMode ? (lang === "ar" ? "…أو اكتب سؤالك" : "…or type your question") : lang === "ar" ? "اسأل عن الأفلام أو المواعيد أو حجزك" : "Ask about movies, times or your booking"} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { if (connected || humanMode) say(input); else void ask(input); setInput(""); } }} onFocus={handleUserActivity} />
+          <button className="sendbtn" disabled={!input.trim()} onClick={() => { if (connected || humanMode) say(input); else void ask(input); setInput(""); }} aria-label={t(lang, "send")} title={t(lang, "send")}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
           </button>
         </div>
       </div>
     </div>
   );
+}
+
+/** Welcome eyebrow in cinema-local time. */
+function greeting(lang: Lang) {
+  const h = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hour12: false, timeZone: "Asia/Dubai" }).format(new Date()));
+  if (lang === "ar") return h < 12 ? "صباح الخير" : "مساء الخير";
+  return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
 }

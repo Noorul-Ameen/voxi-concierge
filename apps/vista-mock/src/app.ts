@@ -16,7 +16,13 @@ import { type AuthConfig, oauthHandler, requireAuth } from "./auth.js";
 import { applyQuery, readQuery } from "./odata.js";
 import { bookingJson, orderJson, seatPlanJson } from "./serialize-order.js";
 import { cinemaJson, concessionJson, filmJson, sessionJson, ticketTypeJson } from "./serialize.js";
-import { getBooking, markCollected, refundBooking, searchBookings } from "./services/bookings.js";
+import {
+  getBooking,
+  linkBookingToMember,
+  markCollected,
+  refundBooking,
+  searchBookings,
+} from "./services/bookings.js";
 import { exchangeBooking } from "./services/exchange.js";
 import { previewOfferRemoval, removeOffers } from "./services/offer-removal.js";
 import {
@@ -800,6 +806,11 @@ export function createApp(db: Db, cfg: MockConfig) {
   api.post("/RESTBooking.svc/booking/collect", async (c) => {
     const body = await c.req.json();
     return c.json(v1ok({ Booking: bookingJson(await markCollected(db, body.BookingId)) }));
+  });
+  api.post("/RESTBooking.svc/booking/member-link", async (c) => {
+    const body = await c.req.json();
+    const r = await linkBookingToMember(db, body);
+    return c.json(v1ok({ Booking: bookingJson(r.booking), Idempotent: r.idempotent }));
   });
   api.post("/RESTBooking.svc/booking/link", async (c) => {
     // record swap relationship between bookings

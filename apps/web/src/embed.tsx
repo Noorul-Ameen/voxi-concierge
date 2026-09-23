@@ -19,6 +19,7 @@ import { mountHostCatalogue } from "./lib/host-catalogue";
 import css from "./styles.css?inline";
 import fontsCss from "./fonts.css?inline";
 import stateCss from "./concierge-state.css?inline";
+import v3Css from "./v3.css?inline";
 import accountCss from "./page-account.css?inline";
 
 const script = document.currentScript as HTMLScriptElement | null;
@@ -56,7 +57,7 @@ function mount() {
   const style = document.createElement("style");
   // Keep fixed widget controls above the host page's header without covering the page with an overlay.
   // Relative positioning creates a stacking context but preserves viewport positioning for fixed children.
-  style.textContent = `${css.replace(/:root/g, ":host")}\n${stateCss}\n:host { all: initial; position: relative; z-index: 1000; font-family: var(--font); color: var(--ink); }`;
+  style.textContent = `${css.replace(/:root/g, ":host")}\n${stateCss}\n${v3Css.replace(/:root/g, ":host")}\n:host { all: initial; position: relative; z-index: 1000; font-family: var(--font); color: var(--ink); }`;
   shadow.appendChild(style);
   const root = document.createElement("div");
   root.className = "vox-assistant-root";

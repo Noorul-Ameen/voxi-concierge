@@ -285,3 +285,34 @@ export async function markCollected(db: Db, bookingId: string) {
     .returning();
   return u!;
 }
+
+export type LinkMemberReq = { BookingId: string; CustomerId: string; ExpectedVersion?: number };
+
+/**
+ * Attach a guest booking to a registered account so refunds can go to that member's VOX Wallet.
+ * The concierge checks contact match and the cut-off first; this re-checks state so a stale call can't relink.
+ */
+export async function linkBookingToMember(db: Db, req: LinkMemberReq) {
+  const b = await getBooking(db, req.BookingId);
+  const cust = (await db.select().from(S.customers).where(eq(S.customers.id, req.CustomerId)))[0];
+  if (!cust?.memberId)
+    throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "The account has no loyalty membership");
+  if (b.customer.MemberId && b.customer.MemberId !== cust.memberId)
+    throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Booking is already linked to another account");
+  if (b.customer.MemberId === cust.memberId) return { booking: b, idempotent: true };
+  if (!["confirmed", "partially_refunded"].includes(b.status))
+    throw new VistaError(RC.GENERAL, RC.BOOKING_NOT_REFUNDABLE, `Booking is ${b.status}`);
+  if (req.ExpectedVersion !== undefined && req.ExpectedVersion !== b.version)
+    throw new VistaError(RC.GENERAL, RC.INVALID_STATE, "Booking changed; reload and try again");
+  const [u] = await db
+    .update(S.bookings)
+    .set({
+      customerId: cust.id,
+      customer: { ...b.customer, MemberId: cust.memberId },
+      version: b.version + 1,
+      updatedAt: new Date(),
+    })
+    .where(eq(S.bookings.vistaBookingId, b.vistaBookingId))
+    .returning();
+  return { booking: u!, idempotent: false };
+}
