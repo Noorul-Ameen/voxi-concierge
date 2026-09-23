@@ -21,7 +21,7 @@ export async function loadFoodSuggestions(
   const available: MenuItem[] = menu.ConcessionTabs.flatMap((tab) =>
     tab.Items.map((item) => ({ ...item, Tab: tab.Name })),
   );
-  const card = (item: MenuItem, tag: string) => ({
+  const card = (item: MenuItem, tag: string, usual = false) => ({
     itemId: item.Id as string,
     name: lang === "ar" && item.DescriptionAlt ? item.DescriptionAlt : item.Description,
     nameEn: item.Description,
@@ -33,6 +33,8 @@ export async function loadFoodSuggestions(
     isCombo: item.IsCombo,
     isBestSeller: item.IsBestSeller,
     tag,
+    // Only a signed-in member's own past order is "usual"; popular items carry a tag but are never usual.
+    usual,
     modifiers: (item.ModifierGroups ?? []).map((group: any) => ({
       name: group.Name,
       required: group.IsRequired,
@@ -50,7 +52,7 @@ export async function loadFoodSuggestions(
   // History alone never makes a removed item available at this cinema.
   const usual = [...counts].map(([itemId, quantity]) => ({ itemId, quantity }));
   const usualCards = usual.map(({ itemId }) =>
-    card(available.find((item) => item.Id === itemId)!, t(lang, "Your usual", "طلبك المعتاد")),
+    card(available.find((item) => item.Id === itemId)!, t(lang, "Your usual", "طلبك المعتاد"), true),
   );
   const popular = available
     .filter((item) => item.IsBestSeller && !counts.has(item.Id))

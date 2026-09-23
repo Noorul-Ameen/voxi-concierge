@@ -1512,7 +1512,8 @@ const quickHandlers: Pick<
     const suggestions = await loadFoodSuggestions(
       ctx.vista,
       String(cinemaId),
-      ctx.conversation.customerId,
+      // Guests are free-flowing: no order history, so no "usual" suggestions.
+      ctx.conversation.isLoggedIn ? ctx.conversation.customerId : null,
       lang,
     );
     const usualIds = suggestions.usual;
