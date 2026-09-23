@@ -682,7 +682,12 @@ const handlers: Record<string, (ctx: ExecCtx, a: ActionRow, steps: ActionRow["st
         s.tickets.length > 0 &&
         s.concessions.length === 0 &&
         !["paid", "cancelled"].includes(r.Order.State)
-          ? await offerFoodSuggestions(ctx.vista, r.Order.CinemaId, ctx.conversation.customerId, ctx.lang)
+          ? await offerFoodSuggestions(
+              ctx.vista,
+              r.Order.CinemaId,
+              ctx.conversation.isLoggedIn ? ctx.conversation.customerId : null,
+              ctx.lang,
+            )
           : undefined;
       if (snackSuggestions) {
         try {

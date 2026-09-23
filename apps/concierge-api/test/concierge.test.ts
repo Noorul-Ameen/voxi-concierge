@@ -589,6 +589,11 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     expect(sug.ok).toBe(true);
     expect(sug.ui.type).toBe("menu");
     expect(sug.data.items.length).toBeGreaterThan(0);
+    // A guest is free-flowing: no order history, so nothing is "usual" and there is no "same as last time".
+    expect(sug.data.usual).toEqual([]);
+    expect(sug.data.items.some((i: any) => i.usual)).toBe(false);
+    expect((sug.ui.actions ?? []).map((a: any) => a.value)).not.toContain("fnb_usual");
+    expect(sug.speech).not.toMatch(/last time|usual/i);
     const item = sug.data.items[0];
     const fnb = await h.tool("order_fnb", c, { items: [{ itemId: item.itemId, quantity: 1 }] });
     expect(fnb.error, JSON.stringify(fnb).slice(0, 600)).toBeUndefined();
@@ -606,6 +611,19 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     expect(fnbPaid.ok, JSON.stringify(fnbPaid).slice(0, 400)).toBe(true);
     expect(fnbPaid.action.result.bookingId).not.toBe(bookingId);
     expect(fnbPaid.action.result.speech).toMatch(/food order/i);
+  });
+
+  it("suggest_fnb marks only a signed-in member's own past order as usual", async () => {
+    const c = conv("fnb-member");
+    expect((await h.login(c, "SARA")).ok).toBe(true);
+    const sug = await h.tool("suggest_fnb", c, { cinemaId: "0002" });
+    expect(sug.ok, JSON.stringify(sug).slice(0, 400)).toBe(true);
+    const usualIds = sug.data.usual.map((u: any) => u.itemId);
+    for (const item of sug.data.items) expect(!!item.usual).toBe(usualIds.includes(item.itemId));
+    // The same menu for a guest carries no usual items at all.
+    const guest = await h.tool("suggest_fnb", conv("fnb-guest"), { cinemaId: "0002" });
+    expect(guest.data.usual).toEqual([]);
+    expect(guest.data.items.some((i: any) => i.usual)).toBe(false);
   });
 
   it("quick_book: an unavailable time returns up to three alternatives instead of 'no showtimes'", async () => {

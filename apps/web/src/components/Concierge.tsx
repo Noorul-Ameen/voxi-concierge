@@ -217,7 +217,9 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const [sseStatus, setSseStatus] = useState<"open" | "closed">("closed");
   const [loc, setLoc] = useState<Loc | null>(() => {
     try {
-      const raw = localStorage.getItem("voxi.loc");
+      // A shared location lasts for this visit only; a later visit starts fresh (no remembered preferences).
+      localStorage.removeItem("voxi.loc");
+      const raw = sessionStorage.getItem("voxi.loc");
       return raw ? (JSON.parse(raw) as Loc) : null;
     } catch {
       return null;
@@ -228,8 +230,8 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const changeLoc = (l: Loc | null) => {
     setLoc(l);
     try {
-      if (l) localStorage.setItem("voxi.loc", JSON.stringify(l));
-      else localStorage.removeItem("voxi.loc");
+      if (l) sessionStorage.setItem("voxi.loc", JSON.stringify(l));
+      else sessionStorage.removeItem("voxi.loc");
     } catch {}
     const s = sessionRef.current;
     if (s) void sendCommand(s, l ? { type: "location", lat: l.lat, lng: l.lng, accuracyM: l.accuracyM, label: l.label, source: l.source } : { type: "location.clear" });

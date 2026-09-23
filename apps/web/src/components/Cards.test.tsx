@@ -368,6 +368,20 @@ describe("concierge decision cards", () => {
     expect(html).toContain("Continue to checkout");
   });
 
+  it("never calls popular snacks 'your usual' — only items the server marks usual", () => {
+    const popular = [
+      { itemId: "1", name: "Salted popcorn", price: "AED 30", tag: "Popular", isBestSeller: true },
+      { itemId: "2", name: "Nachos", price: "AED 28", tag: "Popular", isBestSeller: true },
+    ];
+    const guest = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "menu", items: popular }} />);
+    expect(guest).not.toContain("Your usual");
+    expect(guest).not.toContain("Add my usual");
+    expect(guest).toContain("Popular");
+    const member = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "menu", items: [{ ...popular[0], tag: "Your usual", usual: true }, popular[1]] }} />);
+    expect(member).toContain("Add my usual");
+    expect(member.match(/Your usual/g)!.length).toBeGreaterThanOrEqual(1);
+  });
+
   it("keeps wallet payment review on its explicit confirmation step", () => {
     const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "payment", meta: { requiresSheet: false, method: "VOX_CREDIT" }, items: [{ filmTitle: "The Journey", tickets: [], totalCents: 8000 }], actions: [{ label: "Confirm payment", value: "confirm:wallet", style: "primary" }] }} />);
     expect(html).toContain("Confirm payment");

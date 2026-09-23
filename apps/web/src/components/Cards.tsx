@@ -689,11 +689,13 @@ function OfferCard({ o, lang, act }: { o: any; lang: Lang; act: CardActions }) {
   );
 }
 
+/** Only items the server marks as the signed-in member's own past order; a "Popular" tag is not "usual". */
+const isUsual = (m: any) => m.usual === true || m.why === "your usual" || m.why === "طلبك المعتاد";
+
 /** Food & drinks — sticky category tabs and square image tiles, as on the real "Food & Drinks" step. */
 function Menu({ items, lang, act, hasSkip }: { items: any[]; lang: Lang; act: CardActions; hasSkip?: boolean }) {
   const ar = lang === "ar";
   const [browse, setBrowse] = useState(false);
-  const isUsual = (m: any) => !!m.tag || m.why === "your usual" || m.why === "طلبك المعتاد";
   const ranked = [...items].sort((a, b) => Number(isUsual(b)) * 2 + Number(!!b.isBestSeller) - (Number(isUsual(a)) * 2 + Number(!!a.isBestSeller)));
   const shown = browse ? ranked : ranked.slice(0, 4);
   const usual = items.filter(isUsual);
@@ -725,7 +727,7 @@ function MenuItem({ m, lang, act }: { m: any; lang: Lang; act: CardActions }) {
   return (
     <div className="fnbcard">
       <div className="img" style={{ backgroundImage: m.imageUrl ? `url(${m.imageUrl})` : undefined }}>
-        <Badges items={[...(m.tag || m.why === "your usual" || m.why === "طلبك المعتاد" ? [{ kind: "usual" as const, label: lang === "ar" ? "طلبك المعتاد" : "Your usual" }] : []), ...(m.isBestSeller ? [{ kind: "pop" as const, label: lang === "ar" ? "الأكثر طلباً" : "Popular" }] : []), ...(m.badges ?? [])]} />
+        <Badges items={[...(isUsual(m) ? [{ kind: "usual" as const, label: lang === "ar" ? "طلبك المعتاد" : "Your usual" }] : []), ...(m.isBestSeller ? [{ kind: "pop" as const, label: lang === "ar" ? "الأكثر طلباً" : "Popular" }] : []), ...(m.badges ?? [])]} />
       </div>
       <div className="b">
         <b title={m.description}>{m.name}</b>
