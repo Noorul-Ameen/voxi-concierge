@@ -149,6 +149,13 @@ describe("authoritative widget state", () => {
   it("deduplicates duplicate delivery of a currently visible card", () => {
     expect(appendTranscript([seats], { ...seats, id: "duplicate" })).toEqual([seats]);
   });
+  it("deduplicates the same card when the event stream returns it with re-ordered keys", () => {
+    // The click reply carries the card as built; the SSE copy comes back from jsonb with sorted keys.
+    const reply: TranscriptItem = { id: "reply", kind: "cards", ui: { type: "order", title: "Your booking", items: [{ userSessionId: "usid_1", state: "seats_selected", seats: "E3–E5" }], meta: { userSessionId: "usid_1", stage: "seats", offerHint: { title: "ENBD", offerId: "BANK-ENBD-BOGO" } } } };
+    const stream: TranscriptItem = { id: "stream", kind: "cards", ui: { meta: { offerHint: { offerId: "BANK-ENBD-BOGO", title: "ENBD" }, stage: "seats", userSessionId: "usid_1" }, items: [{ seats: "E3–E5", state: "seats_selected", userSessionId: "usid_1" }], title: "Your booking", type: "order" } as Extract<TranscriptItem, { kind: "cards" }>["ui"] };
+    expect(appendTranscript([reply], stream)).toEqual([reply]);
+    expect(appendTranscript([stream], reply)).toEqual([stream]);
+  });
   it("adds an updated order as a new card below the frozen earlier one", () => {
     const changed = { ...seats, id: "update", ui: { ...seats.ui, items: [{ seats: "D5–D6" }] } };
     expect(appendTranscript([seats], changed)).toEqual([{ ...seats, archived: true }, changed]);
