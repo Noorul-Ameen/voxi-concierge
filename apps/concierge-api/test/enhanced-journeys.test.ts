@@ -12,16 +12,18 @@ afterAll(async () => {
   await h.stop();
 });
 const conversation = () => `conv_journey_${randomUUID()}`;
-async function memberOrder() {
+type Show = Awaited<ReturnType<typeof h.catalog.sessions>>[number];
+const bookable = (s: Show) =>
+  s.experience === "Standard" &&
+  s.allowTicketSales &&
+  !s.soldOut &&
+  Date.parse(`${s.showtime}Z`) > nowLocalDate().getTime() + 90 * 60_000;
+
+async function memberOrder(pick: (s: Show, all: Show[]) => boolean = () => true) {
   const c = conversation();
   expect((await h.login(c, "SARA")).ok).toBe(true);
-  const show = (await h.catalog.sessions("0005")).find(
-    (s) =>
-      s.experience === "Standard" &&
-      s.allowTicketSales &&
-      !s.soldOut &&
-      Date.parse(`${s.showtime}Z`) > nowLocalDate().getTime() + 90 * 60_000,
-  )!;
+  const all = await h.catalog.sessions("0005");
+  const show = all.find((s) => bookable(s) && pick(s, all))!;
   expect(show).toBeTruthy();
   const proposal = await h.tool("propose_booking", c, { sessionKey: show.key, tickets: 1 });
   expect(proposal.ok, JSON.stringify(proposal)).toBe(true);
@@ -36,8 +38,8 @@ async function memberOrder() {
   expect(orderId).toEqual(expect.any(String));
   return { c, session, orderId, show };
 }
-async function paidBooking() {
-  const state = await memberOrder();
+async function paidBooking(pick?: (s: Show, all: Show[]) => boolean) {
+  const state = await memberOrder(pick);
   const prepared = await h.tool("prepare_payment", state.c, {
     userSessionId: state.orderId,
     method: "CARD",
@@ -235,7 +237,20 @@ it("requires an allowed refund choice before confirmation and binds the chosen o
   expect(selected.speech).toMatch(/same original card.*5–10 days/);
 });
 it("finds closest same-cinema swap choices and quotes the exact difference without touching the original booking", async () => {
-  const { c, bookingId } = await paidBooking();
+  // The seeded schedule (and the clock-relative demo filler) can make the first bookable
+  // show the last screening of its film that day; pick one with a later same-day screening.
+  const { c, bookingId } = await paidBooking((s, all) =>
+    all.some(
+      (o) =>
+        o.hoCode === s.hoCode &&
+        o.sessionId !== s.sessionId &&
+        o.allowTicketSales &&
+        !o.soldOut &&
+        o.showtime.slice(0, 10) === s.showtime.slice(0, 10) &&
+        o.showtime > s.showtime &&
+        s.showtime.slice(11, 16) < "23:30",
+    ),
+  );
   const original = (await h.ctx.vista.getBooking(bookingId)).Booking;
   const later = new Date(`${original.Showtime}Z`);
   later.setUTCMinutes(later.getUTCMinutes() + 30);
