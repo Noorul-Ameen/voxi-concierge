@@ -164,6 +164,13 @@ export function appendTranscript(items: TranscriptItem[], item: TranscriptItem):
   const fingerprint = cardFingerprint(item.ui);
   if (items.some((entry) => entry.kind === "cards" && !entry.archived && cardFingerprint(entry.ui) === fingerprint)) return items;
   const key = journeyKey(item.ui);
+  // The same basket step can be rendered twice with different chrome: the widget's own action result
+  // (e.g. select_seats: no title, "Add food / Pay") and the agent's follow-up get_order ("Your order",
+  // "Pay now / Add food"). Same basket, same card type, same contents → the visible card already says it all.
+  if (key) {
+    const contents = cardFingerprint({ items: item.ui.items ?? [], meta: item.ui.meta ?? {} });
+    if (items.some((entry) => entry.kind === "cards" && !entry.archived && entry.ui.type === item.ui.type && journeyKey(entry.ui) === key && cardFingerprint({ items: entry.ui.items ?? [], meta: entry.ui.meta ?? {} }) === contents)) return items;
+  }
   const rank = STEP_RANK[item.ui.type] ?? 0;
   const next = key
     ? items.map((entry) => entry.kind === "cards" && !entry.archived && journeyKey(entry.ui) === key && (STEP_RANK[entry.ui.type] ?? 0) <= rank ? { ...entry, archived: true } : entry)

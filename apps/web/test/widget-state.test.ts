@@ -156,6 +156,18 @@ describe("authoritative widget state", () => {
     expect(appendTranscript([reply], stream)).toEqual([reply]);
     expect(appendTranscript([stream], reply)).toEqual([stream]);
   });
+  it("treats the agent's re-render of the same basket step as the card already on screen", () => {
+    const summary = { userSessionId: "usid_1", state: "seats_selected", seats: "F4–F5", totalCents: 22900, concessions: [{ description: "Large Popcorn and Drink Combo", quantity: 1 }] };
+    const fromAction: TranscriptItem = { id: "action", kind: "cards", ui: { type: "order", items: [summary], actions: [{ label: "Add food & drinks", value: "menu:open" }, { label: "Pay", value: "pay:start" }] } };
+    const fromAgent: TranscriptItem = { id: "agent", kind: "cards", ui: { type: "order", title: "Your order", items: [{ ...summary }], actions: [{ label: "Pay now", value: "pay:start" }, { label: "Add food & drinks", value: "menu:open" }] } };
+    expect(appendTranscript([fromAction], fromAgent)).toEqual([fromAction]);
+    // A real change to the basket is still a new card that freezes the earlier one.
+    const changed: TranscriptItem = { ...fromAgent, id: "changed", ui: { ...fromAgent.ui, items: [{ ...summary, seats: "G4–G5" }] } };
+    expect(appendTranscript([fromAction], changed)).toEqual([{ ...fromAction, archived: true }, changed]);
+    // Cards without a basket (lists, films) keep the exact-match rule only.
+    const list: TranscriptItem = { id: "list", kind: "cards", ui: { type: "booking", items: [{ bookingId: "A" }, { bookingId: "B" }] } };
+    expect(appendTranscript([list], { ...list, id: "titled", ui: { ...list.ui, title: "Your bookings" } })).toHaveLength(2);
+  });
   it("adds an updated order as a new card below the frozen earlier one", () => {
     const changed = { ...seats, id: "update", ui: { ...seats.ui, items: [{ seats: "D5–D6" }] } };
     expect(appendTranscript([seats], changed)).toEqual([{ ...seats, archived: true }, changed]);
