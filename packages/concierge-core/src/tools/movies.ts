@@ -10,7 +10,7 @@ import {
 } from "@voxi/domain";
 import { evaluateAdmission } from "../services/admission.js";
 import type { Film, Session } from "../services/catalog.js";
-import { fmtDate, fmtDateTime, fmtMinutes, fmtTime, joinList, t } from "../services/format.js";
+import { fmtDate, fmtDateTime, fmtMinutes, fmtTime, joinList, kmLabel, t } from "../services/format.js";
 import { type ToolCtx, type ToolHandlers, err, ok } from "./types.js";
 
 /** Arabic count phrases: dual, 3–10 plural, 11+ singular accusative ("و20 موعداً آخر"). */
@@ -456,7 +456,7 @@ export const movieTools: Pick<
         const take = its.slice(0, Math.min(2, 3 - used));
         used += take.length;
         parts.push(
-          `${cn}${its[0]?.distanceKm != null ? ` (${its[0].distanceKm} ${ar ? "كم" : "km"})` : ""} ${take[0]!.dateLabel} ${joinList(
+          `${cn}${its[0]?.distanceKm != null ? ` (${kmLabel(its[0].distanceKm, ar ? "ar" : "en")})` : ""} ${take[0]!.dateLabel} ${joinList(
             take.map((i) => slot(i, multiExp)),
             ctx.lang,
           )}`,
@@ -485,14 +485,14 @@ export const movieTools: Pick<
           `${day} ${joinList(
             take.map(
               (i) =>
-                `${slot(i, multiExp)}${multiCinema ? ` ${ar ? "في" : "at"} ${i.cinemaName}${i.distanceKm != null ? ` (${i.distanceKm} ${ar ? "كم" : "km"})` : ""}` : ""}`,
+                `${slot(i, multiExp)}${multiCinema ? ` ${ar ? "في" : "at"} ${i.cinemaName}${i.distanceKm != null ? ` (${kmLabel(i.distanceKm, ar ? "ar" : "en")})` : ""}` : ""}`,
             ),
             ctx.lang,
           )}`,
         );
       }
       remaining = items.length - used;
-      spoken = `${film.title}${!multiCinema ? ` ${ar ? "في" : "at"} ${cinemasUsed[0]}${items[0]?.distanceKm != null ? ` (${items[0].distanceKm} ${ar ? "كم" : "km"})` : ""}` : nearby.length ? ` ${cinemaLabel}` : ""} — ${parts.join(ar ? "؛ " : "; ")}`;
+      spoken = `${film.title}${!multiCinema ? ` ${ar ? "في" : "at"} ${cinemasUsed[0]}${items[0]?.distanceKm != null ? ` (${kmLabel(items[0].distanceKm, ar ? "ar" : "en")})` : ""}` : nearby.length ? ` ${cinemaLabel}` : ""} — ${parts.join(ar ? "؛ " : "; ")}`;
     } else {
       // many films (cinema/time query): "Tomorrow at City Centre Deira after 8 pm: Immortal 10:50 pm, Insidious 8:00 pm GOLD, …"
       // per film, lead with a daytime/evening slot; late-night prints (before 6 am) come last — and films whose
@@ -516,7 +516,7 @@ export const movieTools: Pick<
         ([title, its]) =>
           `${title} ${slot(its[0]!, false)}${its[0]!.dateLabel !== items[0]!.dateLabel ? ` ${its[0]!.dateLabel}` : ""}${
             cinemasUsed.length > 1
-              ? ` ${ar ? "في" : "at"} ${its[0]!.cinemaName}${its[0]!.distanceKm != null ? ` (${its[0]!.distanceKm} ${ar ? "كم" : "km"})` : ""}`
+              ? ` ${ar ? "في" : "at"} ${its[0]!.cinemaName}${its[0]!.distanceKm != null ? ` (${kmLabel(its[0]!.distanceKm, ar ? "ar" : "en")})` : ""}`
               : ""
           }`,
       );

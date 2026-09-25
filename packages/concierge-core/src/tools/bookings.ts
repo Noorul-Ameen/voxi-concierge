@@ -100,8 +100,19 @@ export function verifyOwnership(
 ): { ok: true } | { ok: false; message: string } {
   if (ctx.conversation.customerId && b.Customer?.ID === ctx.conversation.customerId) return { ok: true };
   if (ctx.conversation.memberId && b.Customer?.MemberId === ctx.conversation.memberId) return { ok: true };
+  // Bookings paid in this conversation, or already verified in it, need no second identity check.
+  const meta = (ctx.conversation.metadata ?? {}) as Record<string, unknown>;
+  const verified = Array.isArray(meta.verifiedBookings) ? (meta.verifiedBookings as string[]) : [];
+  if (
+    b.VistaBookingId &&
+    (verified.includes(b.VistaBookingId) ||
+      meta.lastBookingId === b.VistaBookingId ||
+      meta.lastFnbBookingId === b.VistaBookingId)
+  )
+    return { ok: true };
   const phone = String(b.Customer?.Phone ?? "").replace(/\D/g, "");
-  if (verification?.phoneLast4 && phone.endsWith(verification.phoneLast4)) return { ok: true };
+  const last4 = String(verification?.phoneLast4 ?? "").replace(/\D/g, "");
+  if (last4.length >= 4 && phone.endsWith(last4.slice(-4))) return { ok: true };
   if (
     verification?.email &&
     String(b.Customer?.Email ?? "").toLowerCase() === verification.email.toLowerCase()
@@ -115,6 +126,29 @@ export function verifyOwnership(
       "لحماية هذا الحجز، يرجى تأكيد آخر أربعة أرقام من رقم الهاتف المسجل أو البريد الإلكتروني المستخدم.",
     ),
   };
+}
+
+/** Ownership check that remembers a successful guest verification for the rest of this conversation. */
+export async function checkOwner(
+  ctx: ToolCtx,
+  b: VistaBooking,
+  verification?: { phoneLast4?: string; email?: string },
+) {
+  const result = verifyOwnership(ctx, b, verification);
+  if (result.ok && (verification?.email || verification?.phoneLast4))
+    await rememberVerified(ctx, b.VistaBookingId);
+  return result;
+}
+
+async function rememberVerified(ctx: ToolCtx, bookingId: string) {
+  const meta = (ctx.conversation.metadata ?? {}) as Record<string, unknown>;
+  const list = Array.isArray(meta.verifiedBookings) ? (meta.verifiedBookings as string[]) : [];
+  if (list.includes(bookingId)) return;
+  const next = { ...meta, verifiedBookings: [...list.slice(-19), bookingId] };
+  ctx.conversation.metadata = next as typeof ctx.conversation.metadata;
+  // Best effort: a failed save only means the guest is asked to verify again later.
+  if (ctx.db)
+    await updateConversation(ctx.db, ctx.conversation.id, { metadata: next }).catch(() => undefined);
 }
 
 async function loadBooking(ctx: ToolCtx, bookingId: string): Promise<VistaBooking | null> {
@@ -368,7 +402,7 @@ export const bookingTools: Pick<
           `لم أجد الحجز ${input.bookingId.toUpperCase()}.`,
         ),
       );
-    const owner = verifyOwnership(ctx, b, input.verification);
+    const owner = await checkOwner(ctx, b, input.verification);
     if (!owner.ok) return err("VERIFICATION_REQUIRED", owner.message, false, { needs: "verification" });
     if (!["confirmed", "collected", "partially_refunded", "swapped"].includes(String(b.Status)))
       return err(
@@ -423,28 +457,81 @@ export const bookingTools: Pick<
     );
   },
   async find_booking(ctx, input) {
-    const customerId =
-      input.customerId ??
-      (input.bookingId || input.email || input.phone || input.memberId
-        ? undefined
-        : (ctx.conversation.customerId ?? undefined));
+    const ownLookup = !input.bookingId && !input.email && !input.phone && !input.memberId;
+    const customerId = ownLookup ? (input.customerId ?? ctx.conversation.customerId ?? undefined) : undefined;
+    const digits = (v?: string) => String(v ?? "").replace(/\D/g, "");
+    const proof = {
+      email: input.email?.trim() || undefined,
+      phoneLast4: digits(input.phone).length >= 4 ? digits(input.phone).slice(-4) : undefined,
+    };
+    const hasProof = !!(proof.email || proof.phoneLast4);
+    // Contact details alone are not enough to list someone's bookings: ask for the reference too.
+    if (!input.bookingId && !ownLookup && !input.memberId && !(proof.email && proof.phoneLast4)) {
+      return ok(
+        { bookings: [], needs: "booking_reference" },
+        t(
+          ctx.lang,
+          "To keep bookings private, could you give me the booking reference from your confirmation email too? Or sign in to see all your bookings.",
+          "للحفاظ على خصوصية الحجوزات، هل يمكنك إعطائي الرقم المرجعي من بريد التأكيد أيضاً؟ أو سجّل الدخول لرؤية جميع حجوزاتك.",
+        ),
+        undefined,
+        { name: "booking_lookup", status: "started" },
+      );
+    }
     let bookings: VistaBooking[];
     try {
       bookings = (
-        await ctx.vista.searchBookings({
-          BookingId: input.bookingId,
-          Email: input.email,
-          Phone: input.phone,
-          MemberId: input.memberId,
-          CustomerId: customerId,
-          UpcomingOnly: input.upcomingOnly,
-          Limit: 10,
-        })
+        await ctx.vista.searchBookings(
+          input.bookingId
+            ? { BookingId: input.bookingId, Limit: 10 }
+            : {
+                Email: proof.email,
+                Phone: proof.email ? undefined : input.phone,
+                MemberId: input.memberId,
+                CustomerId: customerId,
+                UpcomingOnly: input.upcomingOnly,
+                Limit: 10,
+              },
+        )
       ).Bookings;
     } catch (e) {
       if (e instanceof VistaClientError && e.kind === "result") bookings = [];
       else throw e;
     }
+    // Only bookings this person can prove are theirs are described.
+    const mine: VistaBooking[] = [];
+    let unverified: VistaBooking | undefined;
+    for (const b of bookings) {
+      const owner = input.bookingId
+        ? await checkOwner(ctx, b, hasProof ? proof : undefined)
+        : input.email && input.phone
+          ? verifyOwnership(ctx, b, { phoneLast4: proof.phoneLast4 }).ok &&
+            verifyOwnership(ctx, b, { email: proof.email }).ok
+            ? { ok: true as const }
+            : verifyOwnership(ctx, b)
+          : verifyOwnership(ctx, b);
+      if (owner.ok) mine.push(b);
+      else unverified ??= b;
+    }
+    if (!mine.length && unverified && input.bookingId) {
+      return ok(
+        { bookings: [{ bookingId: unverified.VistaBookingId, verified: false }], needs: "verification" },
+        hasProof
+          ? t(
+              ctx.lang,
+              `Those details don't match booking ${unverified.VistaBookingId}. Could you check the email address, or the last four digits of the phone number, used for the booking?`,
+              `هذه البيانات لا تطابق الحجز ${unverified.VistaBookingId}. هل يمكنك التحقق من البريد الإلكتروني أو آخر أربعة أرقام من رقم الهاتف المستخدم للحجز؟`,
+            )
+          : t(
+              ctx.lang,
+              `I have reference ${unverified.VistaBookingId}. To keep it private, what's the email address, or the last four digits of the phone number, used for the booking?`,
+              `لدي الرقم المرجعي ${unverified.VistaBookingId}. للحفاظ على الخصوصية، ما البريد الإلكتروني أو آخر أربعة أرقام من رقم الهاتف المستخدم للحجز؟`,
+            ),
+        undefined,
+        { name: "booking_lookup", status: "started" },
+      );
+    }
+    bookings = mine;
     if (!bookings.length) {
       return ok(
         { bookings: [] },
@@ -467,7 +554,7 @@ export const bookingTools: Pick<
     const withElig = bookings.map((b, i) => ({
       ...cards[i]!,
       eligibility: evaluateCancellation(toSnapshot(b), ctx.nowLocal, undefined, ctx.cfg.policy),
-      verified: verifyOwnership(ctx, b).ok,
+      verified: true,
     }));
     const first = withElig[0]!;
     const firstRaw = bookings[0] as VistaBooking & { SwappedToBookingId?: string | null };
@@ -544,6 +631,8 @@ export const bookingTools: Pick<
           `لم أجد الحجز ${input.bookingId.toUpperCase()}.`,
         ),
       );
+    const owner = await checkOwner(ctx, b, input.verification);
+    if (!owner.ok) return err("VERIFICATION_REQUIRED", owner.message, false, { needs: "verification" });
     const e = evaluateCancellation(toSnapshot(b), ctx.nowLocal, input.ticketIds, ctx.cfg.policy);
     const card = bookingCard(b, ctx.lang, ctx.nowLocal, await cinemaName(ctx, b.CinemaId));
     return ok(
@@ -590,7 +679,7 @@ export const bookingTools: Pick<
         throw error;
       }
     }
-    const v = ctx.refundChoiceProof ? { ok: true as const } : verifyOwnership(ctx, b, input.verification);
+    const v = ctx.refundChoiceProof ? { ok: true as const } : await checkOwner(ctx, b, input.verification);
     if (!v.ok) return err("VERIFICATION_REQUIRED", v.message);
     const e = evaluateCancellation(toSnapshot(b), ctx.nowLocal, input.ticketIds, ctx.cfg.policy);
     if (!e.eligible)
@@ -616,19 +705,21 @@ export const bookingTools: Pick<
             ? `${input.refundMethod ? "That refund destination is not available for this payment. " : ""}Your refund is ${money(e.amounts.totalCents, ctx.lang)}. As a guest booking it goes back to the original card${e.refundMethods[0]?.cardLast4 ? ` ending ${e.refundMethods[0].cardLast4}` : ""} in 5–10 days. If you sign in and link the booking to your VOX account, you can take VOX Credit instead, in your wallet within 30 minutes.`
             : e.recommendedMethod !== "VOX_CREDIT"
               ? `${input.refundMethod ? "That refund destination is not available for this payment. " : ""}Your refund is ${money(e.amounts.totalCents, ctx.lang)}. Choose ${e.refundMethods.map((m) => (m.method === "ORIGINAL_PAYMENT" ? `the same original card${m.cardLast4 ? ` ending ${m.cardLast4}` : ""}, in 5–10 days` : "SHARE Points")).join(" or ")}.`
-              : `${input.refundMethod ? "That refund destination is not available for this payment. " : ""}Your refund is ${money(e.amounts.totalCents, ctx.lang)}. I'd suggest VOX Credit: it's faster, in your wallet within 30 minutes and valid for 90 days. Or ${
-                  e.refundMethods
+              : e.refundMethods.every((m) => m.method === "VOX_CREDIT")
+                ? `${input.refundMethod ? "That refund destination is not available for this payment. " : ""}Your refund is ${money(e.amounts.totalCents, ctx.lang)}, back to your VOX Credit, in your wallet within 30 minutes and valid for 90 days. Shall I go ahead?`
+                : `${input.refundMethod ? "That refund destination is not available for this payment. " : ""}Your refund is ${money(e.amounts.totalCents, ctx.lang)}. I'd suggest VOX Credit: it's faster, in your wallet within 30 minutes and valid for 90 days. Or ${e.refundMethods
                     .filter((m) => m.method !== "VOX_CREDIT")
                     .map((m) =>
                       m.method === "ORIGINAL_PAYMENT"
                         ? `the same original card${m.cardLast4 ? ` ending ${m.cardLast4}` : ""}, in 5–10 days`
                         : "SHARE Points",
                     )
-                    .join(" or ") || "another destination"
-                }. Which would you like?`,
+                    .join(" or ")}. Which would you like?`,
           e.canLinkForCredit
             ? `مبلغ الاسترداد ${money(e.amounts.totalCents, "ar")}. لأنه حجز ضيف يعود إلى البطاقة الأصلية خلال 5–10 أيام. إذا سجلت الدخول وربطت الحجز بحسابك يمكنك اختيار رصيد VOX خلال 30 دقيقة.`
-            : `مبلغ الاسترداد ${money(e.amounts.totalCents, "ar")}. أقترح رصيد VOX: أسرع، يصل إلى محفظتك خلال 30 دقيقة وصالح 90 يوماً، أو البطاقة الأصلية خلال 5–10 أيام. ماذا تفضّل؟`,
+            : e.refundMethods.every((m) => m.method === "VOX_CREDIT")
+              ? `مبلغ الاسترداد ${money(e.amounts.totalCents, "ar")}، يعود إلى رصيد VOX في محفظتك خلال 30 دقيقة وصالح 90 يوماً. هل أتابع؟`
+              : `مبلغ الاسترداد ${money(e.amounts.totalCents, "ar")}. أقترح رصيد VOX: أسرع، يصل إلى محفظتك خلال 30 دقيقة وصالح 90 يوماً، أو البطاقة الأصلية خلال 5–10 أيام. ماذا تفضّل؟`,
         ),
         {
           type: "refund_options",

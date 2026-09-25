@@ -226,6 +226,51 @@ export async function refundBooking(db: Db, req: RefundReq) {
         });
       }
     }
+    // Take back the SHARE points this booking earned, in proportion to the amount refunded.
+    if (memberId) {
+      const ledger = await tx
+        .select({ delta: S.loyaltyLedger.delta, reason: S.loyaltyLedger.reason })
+        .from(S.loyaltyLedger)
+        .where(
+          and(
+            eq(S.loyaltyLedger.memberId, memberId),
+            eq(S.loyaltyLedger.balanceType, "SHARE_POINTS"),
+            or(
+              eq(S.loyaltyLedger.reason, `Earned on booking ${booking.vistaBookingId}`),
+              eq(S.loyaltyLedger.reason, `Points reversed for refunded booking ${booking.vistaBookingId}`),
+            ),
+          ),
+        );
+      const earned = ledger.filter((l) => l.reason.startsWith("Earned")).reduce((a, l) => a + l.delta, 0);
+      const reversed = -ledger.filter((l) => l.reason.startsWith("Points")).reduce((a, l) => a + l.delta, 0);
+      const refundedAfter = booking.refundedValueCents + amount;
+      const due =
+        refundedAfter >= booking.totalValueCents
+          ? earned - reversed
+          : Math.round((earned * refundedAfter) / Math.max(1, booking.totalValueCents)) - reversed;
+      const acct = (
+        await tx.select().from(S.loyaltyAccounts).where(eq(S.loyaltyAccounts.memberId, memberId))
+      )[0];
+      const take = acct ? Math.min(Math.max(0, due), acct.sharePointsBalance) : 0;
+      if (take > 0) {
+        await tx
+          .update(S.loyaltyAccounts)
+          .set({
+            sharePointsBalance: sql`${S.loyaltyAccounts.sharePointsBalance} - ${take}`,
+            version: sql`${S.loyaltyAccounts.version} + 1`,
+            updatedAt: new Date(),
+          })
+          .where(eq(S.loyaltyAccounts.memberId, memberId));
+        await tx.insert(S.loyaltyLedger).values({
+          id: shortId(12),
+          memberId,
+          balanceType: "SHARE_POINTS",
+          delta: -take,
+          reason: `Points reversed for refunded booking ${booking.vistaBookingId}`,
+          reference: `${booking.vistaBookingId}:rev:${shortId(6)}`,
+        });
+      }
+    }
     const [refund] = await tx
       .insert(S.refunds)
       .values({

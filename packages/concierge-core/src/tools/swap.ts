@@ -4,7 +4,7 @@ import { createConfirmation } from "../services/confirmations.js";
 import { fmtDateTime, money, t } from "../services/format.js";
 import { signRefundChoice, verifyRefundChoice } from "../services/refund-choice-proof.js";
 import { previewSeats } from "../services/seat-preview.js";
-import { bookingCard, refundHeader, toSnapshot, verifyOwnership } from "./bookings.js";
+import { bookingCard, checkOwner, refundHeader, toSnapshot } from "./bookings.js";
 import { loadCustomer } from "./customer.js";
 import { sessionCard } from "./movies.js";
 import { type ToolCtx, err, ok } from "./types.js";
@@ -28,7 +28,7 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
   }
   const ownership = ctx.refundChoiceProof
     ? { ok: true as const }
-    : verifyOwnership(ctx, b, input.verification);
+    : await checkOwner(ctx, b, input.verification);
   if (!ownership.ok) return err("VERIFICATION_REQUIRED", ownership.message);
   const eligibility = evaluateCancellation(toSnapshot(b), ctx.nowLocal, undefined, ctx.cfg.policy);
   if (!eligibility.eligible || b.Status !== "confirmed")
@@ -467,7 +467,7 @@ export async function prepareSwap(ctx: ToolCtx, input: ToolInput<"prepare_swap">
           : "رصيد VOX الصالح لمدة 90 يوماً";
   const speech = t(
     ctx.lang,
-    `Move ${originalTickets.length} tickets for ${b.FilmTitle} to ${fmtDateTime(target.showtime, ctx.lang, ctx.nowLocal)}, ${target.experience} at ${cinemaName}, seats ${seats.map((s) => s.Row + s.Number).join(", ")}. ${food.length ? "Your existing food transfers unchanged. " : ""}${financialText} Shall I confirm this exchange?`,
+    `Move ${originalTickets.length === 1 ? "1 ticket" : `${originalTickets.length} tickets`} for ${b.FilmTitle} to ${fmtDateTime(target.showtime, ctx.lang, ctx.nowLocal)}, ${target.experience} at ${cinemaName}, seats ${seats.map((s) => s.Row + s.Number).join(", ")}. ${food.length ? "Your existing food transfers unchanged. " : ""}${financialText} Shall I confirm this exchange?`,
     `أنقل ${originalTickets.length} تذكرة لفيلم ${b.FilmTitle} إلى ${fmtDateTime(target.showtime, "ar", ctx.nowLocal)}، ${target.experience} في ${cinemaName}، المقاعد ${seats.map((s) => s.Row + s.Number).join("، ")}. ${food.length ? "تنتقل وجباتك الحالية دون تغيير. " : ""}${differenceCents === 0 ? "لا يوجد خصم أو استرداد جديد." : `${differenceCents > 0 ? "يُخصم فقط" : "يُسترد"} ${money(Math.abs(differenceCents), "ar")} ${differenceCents > 0 ? "من" : "إلى"} ${arabicMethod}.`} هل تؤكد التبديل؟`,
   );
   const confirmation = await createConfirmation(ctx.db, {
