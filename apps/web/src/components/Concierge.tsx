@@ -181,7 +181,11 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const [items, setItems] = useState<Item[]>([]);
   const itemsRef = useRef<Item[]>([]);
   itemsRef.current = items;
-  const [mode, setMode] = useState<"idle" | "voice" | "text">("idle");
+  const [mode, setModeState] = useState<"idle" | "voice" | "text">("idle");
+  // Live transport mode for callbacks that may run before React re-renders (e.g. the first typed message,
+  // which starts the text session and then sends itself in the same call).
+  const modeRef = useRef<"idle" | "voice" | "text">("idle");
+  const setMode = useCallback((m: "idle" | "voice" | "text") => { modeRef.current = m; setModeState(m); }, []);
   // ---- booking v2: the live order (seat hold timer), mute, inactivity ----
   type LiveOrder = { userSessionId: string; expiresAtUtc?: string; totalCents?: number; filmTitle?: string; seats?: string; paid?: boolean };
   const [order, setOrder] = useState<LiveOrder | null>(null);
@@ -838,10 +842,11 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         activityRef.current.lastUserAt = Date.now();
         flushPendingCards();
         conversation.sendUserMessage(text);
-        if (mode === "text") push({ kind: "msg", role: "user", text });
+        // Voice mode echoes the user's words through onMessage; text mode must render them itself.
+        if (modeRef.current === "text") push({ kind: "msg", role: "user", text });
       } else push({ kind: "note", text: lang === "ar" ? "ابدأ المحادثة أولاً" : "Start the conversation first" });
     },
-    [conversation, humanMode, session, mode, lang, push, flushPendingCards],
+    [conversation, humanMode, session, lang, push, flushPendingCards],
   );
 
   const ask = async (text: string, proposalRef?: string) => {
