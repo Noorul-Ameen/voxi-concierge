@@ -3,7 +3,7 @@
  * All state changes go through the agent/concierge; the widget never talks to Vista directly.
  */
 import { type DisconnectionDetails, useConversation } from "@elevenlabs/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { type BookingHistory, type CustomerProfile, type Customer, type Lang, type Session, type UiHint, type WidgetEvent, createSession, devTool, getCustomerProfile, getSignedUrl, getState, isAuthorizationError, linkConversation, sendCommand, sessionExpiryHandler, subscribe, widgetLogin, widgetLogout } from "../lib/api";
 import { stripDeliveryTags } from "../lib/delivery-tags";
@@ -13,7 +13,7 @@ import { BrandLogo } from "./BrandLogo";
 import { ArchMark, Icon } from "./V3";
 import { type Loc, LocationBar } from "./LocationBar";
 import { ACCOUNT_ACTIVITY_EVENT, AUTH_CHANGE_SIGNAL, notifyPageAuthChange, pageSession, usePageSession, type PageSessionRuntime } from "../lib/page-session";
-import { acceptWidgetEvent, actionContext, appendTranscript, decisionSummary, directSeatMapFeedback, holdSeconds, isCurrentHold, recordUserActivity, renderVerifiedSeatMap, verifyHoldNotice, type HoldNoticeSnapshot, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
+import { acceptWidgetEvent, actionContext, appendTranscript, directSeatMapFeedback, holdSeconds, isCurrentHold, recordUserActivity, renderVerifiedSeatMap, verifyHoldNotice, type HoldNoticeSnapshot, type TranscriptBody as ItemBody, type TranscriptItem as Item } from "../lib/widget-state";
 import widgetAcknowledgement from "../lib/widget-acknowledgement.json";
 import { receiptCompletesCurrentOrder, renderVerifiedReceipt } from "../lib/receipt";
 import { connectionVariables, isCurrentConnection, nextWelcomeVariant, type ConnectionSnapshot } from "../lib/welcome";
@@ -22,6 +22,15 @@ import { cancelledCurrentOrder, isCancelledOrderUi, removeCancelledOrderCards } 
 
 
 const nid = () => crypto.randomUUID();
+/** How long agent-triggered cards wait for the agent's text before showing anyway. */
+const CARD_REPLY_GRACE_MS = 6000;
+
+/** Earlier step: the card stays visible as a record, but nothing inside it can be pressed. */
+function FrozenCards({ label, children }: { label: string; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { const el = ref.current; if (el) (el as HTMLDivElement & { inert: boolean }).inert = true; }, []);
+  return <div ref={ref} className="cards-frozen" aria-disabled="true"><span className="frozen-tag" aria-hidden="true">{label}</span>{children}</div>;
+}
 
 /** How long a saved widget session may be resumed on this device: 30 minutes for a guest, 6 hours for a member. */
 export function sessionResumeMs(saved: { loggedIn?: boolean }) {
@@ -170,6 +179,8 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     finally { authBusyRef.current = false; setAuthBusy(false); }
   };
   const [items, setItems] = useState<Item[]>([]);
+  const itemsRef = useRef<Item[]>([]);
+  itemsRef.current = items;
   const [mode, setMode] = useState<"idle" | "voice" | "text">("idle");
   // ---- booking v2: the live order (seat hold timer), mute, inactivity ----
   type LiveOrder = { userSessionId: string; expiresAtUtc?: string; totalCents?: number; filmTitle?: string; seats?: string; paid?: boolean };
@@ -246,11 +257,27 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   const [devInput, setDevInput] = useState('{"query":"spider"}');
   const bodyRef = useRef<HTMLDivElement>(null);
   const statusRef = useRef<string>("disconnected"); // live connection status for callbacks that outlive a render
-  const push = useCallback((it: ItemBody) => {
+  const pushNow = useCallback((it: ItemBody) => {
     if (it.kind === "cards" && it.ui.type === "login") { pageSession.requestLogin(); return; }
     if (it.kind === "cards" && isCancelledOrderUi(it.ui, cancelledOrdersRef.current)) return;
     setItems((xs) => appendTranscript(xs, { ...it, id: nid() } as Item));
   }, []);
+  // Cards produced by the agent's tool calls wait for the agent's reply, so the text always comes first.
+  // They still show after a short grace period, on the next user message, or when the connection ends.
+  const pendingCardsRef = useRef<{ items: ItemBody[]; timer: ReturnType<typeof setTimeout> | null }>({ items: [], timer: null });
+  const flushPendingCards = useCallback(() => {
+    const pending = pendingCardsRef.current;
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.timer = null;
+    for (const it of pending.items.splice(0)) pushNow(it);
+  }, [pushNow]);
+  const push = useCallback((it: ItemBody, options?: { afterReply?: boolean }) => {
+    if (!options?.afterReply || it.kind !== "cards" || statusRef.current !== "connected") { pushNow(it); return; }
+    const pending = pendingCardsRef.current;
+    pending.items.push(it);
+    if (!pending.timer) pending.timer = setTimeout(flushPendingCards, CARD_REPLY_GRACE_MS);
+  }, [pushNow, flushPendingCards]);
+  useEffect(() => () => { if (pendingCardsRef.current.timer) clearTimeout(pendingCardsRef.current.timer); }, []);
   const acknowledge = (context: string) => {
     ackQueueRef.current.push(context);
     if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
@@ -287,7 +314,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
         if (!s) return JSON.stringify({ ok: false, rendered: false, error: "The widget is not ready." });
         return JSON.stringify(await renderVerifiedSeatMap(
           () => sendCommand(s, { type: "seat.plan", sessionKey: p.sessionKey, userSessionId: p.userSessionId }),
-          (ui) => { if (isCancelledOrderUi(ui, cancelledOrdersRef.current)) throw new Error("Order cancelled"); push({ kind: "cards", ui }); },
+          (ui) => { if (isCancelledOrderUi(ui, cancelledOrdersRef.current)) throw new Error("Order cancelled"); push({ kind: "cards", ui }, { afterReply: true }); },
           () => sessionRef.current?.token === s.token,
         ));
       },
@@ -301,7 +328,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           p?.bookingId,
           (bookingId) => sendCommand(s, { type: "booking.receipt", bookingId }),
           createTicketQr,
-          (ui) => { flushSync(() => push({ kind: "cards", ui })); },
+          (ui) => { flushSync(() => push({ kind: "cards", ui }, { afterReply: true })); },
           () => sessionRef.current?.token === s.token && authEpochRef.current === epoch && !authBusyRef.current,
         ));
       },
@@ -356,6 +383,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     micMuted: muted,
     onConnect: () => { if (!expiredConnectionRef.current) push({ kind: "note", text: langRef.current === "ar" ? "متصل" : "Connected" }); },
     onDisconnect: (d?: DisconnectionDetails) => {
+      flushPendingCards();
       if (switchingRef.current || expiredConnectionRef.current) return;
       setMode("idle");
       const why = d?.reason === "error" ? d.message : d?.reason === "agent" && d.context?.code && d.context.code !== 1000 ? `${d.context.code} ${d.context.reason ?? ""}`.trim() : "";
@@ -372,9 +400,10 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     onMessage: (m: { source: string; message: string }) => {
       if (!m.message || expiredConnectionRef.current) return;
       if (m.source === "user" && m.message.startsWith("[widget]")) return; // hidden widget → agent notes
-      if (m.source === "user") activityRef.current.lastUserAt = Date.now();
+      if (m.source === "user") { activityRef.current.lastUserAt = Date.now(); flushPendingCards(); }
       // Delivery markers steer the voice only; they never belong in the visible transcript.
       push({ kind: "msg", role: m.source === "user" ? "user" : "agent", text: m.source === "user" ? m.message : stripDeliveryTags(m.message) });
+      if (m.source !== "user") flushPendingCards();
     },
   });
 
@@ -497,7 +526,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       if (!acceptWidgetEvent(eventSeqRef.current, eventIdsRef.current, session.conversationId, e)) return;
       switch (e.type) {
         case "ui.render":
-          if (e.ui?.type) push({ kind: "cards", ui: e.ui });
+          if (e.ui?.type) push({ kind: "cards", ui: e.ui }, { afterReply: e.origin === "agent" });
           trackOrderFromUi(e.ui);
           break;
         case "action.completed": {
@@ -515,7 +544,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
             commitOrder(null); setHoldLeft(null); warnedRef.current = {}; holdCheckRef.current = null;
             setItems(xs => removeCancelledOrderCards(xs, cancelled));
           }
-          if (e.ui?.type) push({ kind: "cards", ui: e.ui });
+          if (e.ui?.type) push({ kind: "cards", ui: e.ui }, { afterReply: e.action.requestedBy === "agent" });
           else if (e.action.status !== "succeeded" && e.action.error?.message) push({ kind: "note", text: `⚠️ ${e.action.error.message}` });
           trackOrderFromUi(e.ui);
           break;
@@ -526,15 +555,13 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           if (sm?.expiresAtUtc !== orderRef.current?.expiresAtUtc) warnedRef.current = {};
           if (sm && (sm.state === "paid" || sm.state === "cancelled")) commitOrder(null);
           else commitOrder({ userSessionId: e.userSessionId, expiresAtUtc: sm?.expiresAtUtc, totalCents: sm?.totalCents, filmTitle: sm?.filmTitle, seats: sm?.seats });
-          // keep an open Review & Pay sheet for this order in sync (offer applied, points redeemed, F&B added)
-          if (sm)
-            setItems((xs) =>
-              xs.map((it) =>
-                it.kind === "cards" && it.ui.type === "payment" && it.ui.meta?.userSessionId === e.userSessionId
-                  ? { ...it, ui: { ...it.ui, items: [{ ...(it.ui.items?.[0] ?? {}), ...sm }], meta: { ...it.ui.meta, amountCents: sm.totalCents, expiresAtUtc: sm.expiresAtUtc ?? it.ui.meta?.expiresAtUtc, vat: { beforeVatCents: (sm.totalCents ?? 0) + (sm.loyaltyRedeemedCents ?? 0) - (sm.taxCents ?? 0), vatCents: sm.taxCents ?? 0, rate: 5 } } } }
-                  : it,
-              ),
-            );
+          // An open Review & Pay sheet is never edited in place: the change (offer applied, points redeemed,
+          // F&B added) produces a fresh sheet with the new totals and the earlier one stays as a record.
+          if (sm && sm.state !== "paid" && sm.state !== "cancelled") {
+            const sheet = [...itemsRef.current].reverse().find((it) => it.kind === "cards" && !it.archived && it.ui.type === "payment" && it.ui.meta?.userSessionId === e.userSessionId);
+            if (sheet && sheet.kind === "cards")
+              push({ kind: "cards", ui: { ...sheet.ui, items: [{ ...(sheet.ui.items?.[0] ?? {}), ...sm }], meta: { ...sheet.ui.meta, amountCents: sm.totalCents, expiresAtUtc: sm.expiresAtUtc ?? sheet.ui.meta?.expiresAtUtc, vat: { beforeVatCents: (sm.totalCents ?? 0) + (sm.loyaltyRedeemedCents ?? 0) - (sm.taxCents ?? 0), vatCents: sm.taxCents ?? 0, rate: 5 } } } }, { afterReply: true });
+          }
           break;
         }
         case "transfer.status":
@@ -809,11 +836,12 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       }
       if (statusRef.current === "connected") {
         activityRef.current.lastUserAt = Date.now();
+        flushPendingCards();
         conversation.sendUserMessage(text);
         if (mode === "text") push({ kind: "msg", role: "user", text });
       } else push({ kind: "note", text: lang === "ar" ? "ابدأ المحادثة أولاً" : "Start the conversation first" });
     },
-    [conversation, humanMode, session, mode, lang, push],
+    [conversation, humanMode, session, mode, lang, push, flushPendingCards],
   );
 
   const ask = async (text: string, proposalRef?: string) => {
@@ -1025,7 +1053,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
               </div>
             </div>
           ) : it.kind === "cards" ? (
-            <div key={it.id}>{it.archived ? <div className="replaced" role="note"><span>{decisionSummary(it.ui, lang)}</span><small>{lang === "ar" ? "تم الاستبدال" : "replaced"}</small></div> : <Cards ui={it.ui} lang={lang} act={act} />}</div>
+            <div key={it.id}>{it.archived ? <FrozenCards label={lang === "ar" ? "خطوة سابقة" : "Earlier step"}><Cards ui={it.ui} lang={lang} act={act} frozen /></FrozenCards> : <Cards ui={it.ui} lang={lang} act={act} />}</div>
           ) : it.kind === "feedback" ? (
             <div key={it.id} className="cards">
               <Feedback lang={lang} act={act} />

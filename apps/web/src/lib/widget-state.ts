@@ -102,34 +102,50 @@ export function decisionSummary(ui: UiHint, lang: Lang): string {
   return labels[ui.type]?.[ar ? 1 : 0] ?? (ar ? "اختيارات سابقة" : "Earlier choices");
 }
 
-function retainSelection(previous: UiHint, next: UiHint): UiHint {
-  const meta = next.meta ?? {};
-  const summary = next.items?.[0];
-  if (previous.type === "showtimes" && meta.sessionKey) {
-    const selectedSession = previous.items.find((show) => show.sessionKey === meta.sessionKey);
-    if (selectedSession) return { ...previous, meta: { ...previous.meta, selectedSession } };
-  }
-  if (["movie", "recommendation"].includes(previous.type)) {
-    const title = meta.film?.title ?? summary?.filmTitle;
-    const hoCode = meta.film?.hoCode ?? summary?.hoCode;
-    const hasCode = typeof hoCode === "string" && !!hoCode.trim();
-    const selectedFilm = previous.items.find((movie) => hasCode
-      ? movie.hoCode === hoCode
-      : typeof title === "string" && !!title.trim() && [movie.title, movie.titleEn, movie.filmTitle].includes(title));
-    if (selectedFilm) return { ...previous, meta: { ...previous.meta, selectedFilm } };
-  }
-  if (["quantity", "seatmap", "menu"].includes(previous.type) && Array.isArray(summary?.tickets)) return { ...previous, meta: { ...previous.meta, selectedSummary: summary } };
-  return previous;
-}
-
 export type TranscriptBody =
   | { kind: "msg"; role: "user" | "agent" | "human"; text: string; who?: string }
+  /** `archived` cards stay on screen as a record of that step; their controls are switched off. */
   | { kind: "cards"; ui: UiHint; archived?: boolean }
   | { kind: "note"; text: string; polite?: boolean }
   | { kind: "feedback" };
 export type TranscriptItem = TranscriptBody & { id: string };
 
-/** Server results are the only source of cards. Replays never revive old controls. */
+/** Booking steps in order. A later (or repeated) step freezes the earlier cards of the same basket. */
+const STEP_RANK: Record<string, number> = {
+  quantity: 1,
+  booking_proposal: 1,
+  seatmap: 2,
+  menu: 3,
+  order: 3,
+  payment_switch: 4,
+  payment_switch_confirmation: 4,
+  balance_split_confirmation: 4,
+  balance_reset_confirmation: 4,
+  payment: 4,
+  qr: 5,
+  refund_options: 2,
+  booking: 2,
+};
+
+/** Cards that belong to one basket (order) or one booking share a journey key; lists and discovery cards have none. */
+export function journeyKey(ui: UiHint): string | undefined {
+  const meta = ui.meta ?? {};
+  const first = ui.items?.[0] ?? {};
+  const order = meta.userSessionId ?? first.userSessionId;
+  if (typeof order === "string" && order) return `order:${order}`;
+  if (["booking", "refund_options"].includes(ui.type) && !meta.pickList && ui.items?.length === 1) {
+    const bookingId = meta.bookingId ?? first.bookingId ?? meta.film?.bookingId;
+    if (typeof bookingId === "string" && bookingId) return `booking:${bookingId}`;
+  }
+  return undefined;
+}
+
+/**
+ * Transcript cards are append-only: every result adds a card and nothing above it changes.
+ * A new step of the same journey freezes the earlier cards of that journey (same or earlier step),
+ * so a stale seat map or ticket-quantity card can't act on a basket that has moved on.
+ * Cards from other journeys (booking lists, films, offers) stay active.
+ */
 export function appendTranscript(items: TranscriptItem[], item: TranscriptItem): TranscriptItem[] {
   const last = items.at(-1);
   if (item.kind === "msg" && last?.kind === "msg" && last.role === item.role && last.text === item.text) return items;
@@ -137,10 +153,17 @@ export function appendTranscript(items: TranscriptItem[], item: TranscriptItem):
   if (item.kind !== "cards") return [...items, item];
   const fingerprint = JSON.stringify(item.ui);
   if (items.some((entry) => entry.kind === "cards" && !entry.archived && JSON.stringify(entry.ui) === fingerprint)) return items;
-  const active = items.findIndex((entry) => entry.kind === "cards" && !entry.archived && entry.ui.type === item.ui.type &&
-    entry.ui.meta?.userSessionId === item.ui.meta?.userSessionId && entry.ui.meta?.sessionKey === item.ui.meta?.sessionKey);
-  if (active >= 0) return items.map((entry, index) => index === active ? { ...item, id: entry.id } : entry);
-  return [...items.map((entry) => entry.kind === "cards" ? { ...entry, ui: entry.archived ? entry.ui : retainSelection(entry.ui, item.ui), archived: true } : entry), item];
+  const key = journeyKey(item.ui);
+  const rank = STEP_RANK[item.ui.type] ?? 0;
+  const next = key
+    ? items.map((entry) => entry.kind === "cards" && !entry.archived && journeyKey(entry.ui) === key && (STEP_RANK[entry.ui.type] ?? 0) <= rank ? { ...entry, archived: true } : entry)
+    : items;
+  return [...next, item];
+}
+
+/** Everything shown so far becomes read-only (a conversation ended or a basket was cancelled). */
+export function freezeCards(items: TranscriptItem[], select: (ui: UiHint) => boolean = () => true): TranscriptItem[] {
+  return items.map((entry) => entry.kind === "cards" && !entry.archived && select(entry.ui) ? { ...entry, archived: true } : entry);
 }
 
 export function holdSeconds(expiresAt: string | undefined, now = Date.now()): number | null {

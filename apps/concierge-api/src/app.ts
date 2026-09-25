@@ -16,6 +16,7 @@ import {
   appendEvent,
   ensureConversation,
   eventsSince,
+  format,
   ledger,
   proposalSummary,
   relinkConversationWork,
@@ -39,7 +40,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { streamSSE } from "hono/streaming";
 import { SignJWT, jwtVerify } from "jose";
-import { greetings } from "./greetings.js";
+import { NAMED_GREETING_COUNT, greetings, nextGreetingVariant } from "./greetings.js";
 import { buildOpenApi } from "./openapi.js";
 import { reportingRoutes } from "./reporting.js";
 import { ingestPostCall, verifyElevenLabsSignature } from "./webhooks.js";
@@ -288,7 +289,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         app.events,
         conversationId,
         "ui.render",
-        { ui: { type: "login", items: [] }, tool: name },
+        { ui: { type: "login", items: [] }, tool: name, origin: "agent" },
         "agent",
         Number(conversation.metadata?.widgetAuthGeneration ?? 0),
       );
@@ -320,7 +321,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         app.events,
         conversationId,
         "ui.render",
-        { ui: result.ui, tool: name },
+        { ui: result.ui, tool: name, origin: "agent" },
         "agent",
         Number(conversation.metadata?.widgetAuthGeneration ?? 0),
       );
@@ -1387,6 +1388,62 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
   api.route("/reporting", reportingRoutes(app));
 
   /** Signed URL for private agents (requires ELEVENLABS_API_KEY); falls back to the public agent id. */
+  /**
+   * Every visit opens with a different line. Members rotate through the pool without repeating any of
+   * their last five conversations (stored on the conversation row); guests rotate on the counter their
+   * browser sends. Time of day and a booking later today shape the wording.
+   */
+  const chooseGreeting = async (
+    current: typeof S.conversations.$inferSelect,
+    customer: { firstName?: string | null } | null,
+    requestedVariant: string | undefined,
+  ) => {
+    const requested = Number(requestedVariant);
+    const preferred = Number.isSafeInteger(requested) && requested >= 0 ? requested : undefined;
+    const nowLocal = nowLocalIso(app.cfg.timeZone);
+    const hour = Number(nowLocal.slice(11, 13));
+    if (!customer || !current.isLoggedIn || !current.customerId)
+      return greetings(null, preferred ?? 0, { hour });
+    const rows = await app.db
+      .select({ id: S.conversations.id, metadata: S.conversations.metadata })
+      .from(S.conversations)
+      .where(eq(S.conversations.customerId, current.customerId))
+      .orderBy(desc(S.conversations.startedAt))
+      .limit(8);
+    const recent = [current, ...rows.filter((row) => row.id !== current.id)]
+      .map((row) => Number((row.metadata as Record<string, unknown> | null)?.welcomeVariant))
+      .filter((n) => Number.isSafeInteger(n) && n >= 0);
+    const variant = nextGreetingVariant(recent, NAMED_GREETING_COUNT, preferred);
+    await app.db
+      .update(S.conversations)
+      .set({
+        metadata: sql`coalesce(${S.conversations.metadata}, '{}'::jsonb) || jsonb_build_object('welcomeVariant', ${variant}::int)`,
+      })
+      .where(eq(S.conversations.id, current.id));
+    const todayBooking = await app.vista
+      .searchBookings({ CustomerId: current.customerId, UpcomingOnly: true, Limit: 10 })
+      .then((found) => {
+        const today = nowLocal.slice(0, 10);
+        const booking = (found.Bookings ?? [])
+          .filter(
+            (b) =>
+              ["confirmed", "collected"].includes(String(b.Status)) &&
+              String(b.Showtime ?? "").slice(0, 10) === today &&
+              String(b.Showtime) > nowLocal,
+          )
+          .sort((a, b) => String(a.Showtime).localeCompare(String(b.Showtime)))[0];
+        return booking?.FilmTitle
+          ? {
+              filmTitle: String(booking.FilmTitle),
+              timeEn: format.fmtTime(String(booking.Showtime), "en"),
+              timeAr: format.fmtTime(String(booking.Showtime), "ar"),
+            }
+          : null;
+      })
+      .catch(() => null);
+    return greetings(customer.firstName, variant, { hour, todayBooking });
+  };
+
   api.get("/widget/signed-url", async (c) => {
     c.header("Cache-Control", "no-store");
     const w = await verifyWidget(c);
@@ -1405,6 +1462,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
         current.isLoggedIn && current.customerId
           ? await app.vista.customer(current.customerId).catch(() => null)
           : null;
+      const greeting = await chooseGreeting(current, customer, c.req.query("welcomeVariant"));
       // Account lookup and provider URL creation are asynchronous: recheck revocation before returning identity.
       if (!(await verifyWidget(c))) return c.json({ error: "unauthorized" }, 401);
       return c.json({
@@ -1418,7 +1476,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
           channel: current.channel,
           customerId: current.isLoggedIn ? (current.customerId ?? "") : "",
           memberId: current.isLoggedIn ? (current.memberId ?? "") : "",
-          ...greetings(customer?.firstName, Number(c.req.query("welcomeVariant") ?? 0)),
+          ...greeting,
         },
       });
     };

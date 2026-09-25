@@ -123,6 +123,7 @@ export const ActionRef = z.object({
   status: ActionStatus,
   result: z.record(z.unknown()).optional(),
   error: z.object({ code: z.string(), message: z.string(), retryable: z.boolean() }).optional(),
+  requestedBy: z.enum(["agent", "widget", "system"]).optional(),
 });
 export type ActionRef = z.infer<typeof ActionRef>;
 

@@ -10,6 +10,9 @@ import { assertSwapRefundSelection } from "../services/swap-refund.js";
 import { prepareSwap } from "./swap.js";
 import { type ToolCtx, type ToolHandlers, type ToolResult, err, ok } from "./types.js";
 
+/** Statuses a guest can still act on (resend, cancel, swap). */
+const ACTIVE_BOOKING_STATUSES = new Set(["confirmed", "collected", "partially_refunded"]);
+
 export type VistaBooking = Record<string, any>;
 
 export function toSnapshot(b: VistaBooking): BookingSnapshot {
@@ -531,7 +534,13 @@ export const bookingTools: Pick<
         { name: "booking_lookup", status: "started" },
       );
     }
-    bookings = mine;
+    // A list lookup shows only bookings the guest can still act on; a quoted reference or a history
+    // request also shows refunded, cancelled and swapped ones so they can be explained.
+    const listing = !input.bookingId;
+    bookings =
+      listing && input.upcomingOnly
+        ? mine.filter((b) => ACTIVE_BOOKING_STATUSES.has(String(b.Status)))
+        : mine;
     if (!bookings.length) {
       return ok(
         { bookings: [] },
@@ -591,17 +600,44 @@ export const bookingTools: Pick<
               .map((b) => `${b.filmTitle} ${b.showtimeLabel} (${b.bookingId})`)
               .join("؛ ")}. أيها؟`,
           );
+    const purpose = input.purpose ?? "browse";
+    const pickList = purpose !== "browse" && withElig.length > 1;
+    const pickSpeech = t(
+      ctx.lang,
+      `I found ${withElig.length} upcoming bookings: ${withElig
+        .map((b) => `${b.filmTitle} ${b.showtimeLabel}`)
+        .join("; ")}. Which one would you like to ${purpose === "swap" ? "move" : "cancel"}?`,
+      `وجدت ${withElig.length} حجوزات قادمة: ${withElig
+        .map((b) => `${b.filmTitle} ${b.showtimeLabel}`)
+        .join("؛ ")}. أيها تريد ${purpose === "swap" ? "تبديله" : "إلغاءه"}؟`,
+    );
     return ok(
-      { bookings: withElig },
-      speech,
-      {
-        type: "booking",
-        title: t(ctx.lang, "Your bookings", "حجوزاتك"),
-        items: withElig,
-        actions: withElig
-          .slice(0, 3)
-          .map((b) => ({ label: `${b.filmTitle} · ${b.showtimeLabel}`, value: `booking:${b.bookingId}` })),
-      },
+      { bookings: withElig, purpose },
+      pickList ? pickSpeech : speech,
+      pickList
+        ? {
+            type: "booking",
+            title: t(
+              ctx.lang,
+              purpose === "swap"
+                ? "Which booking would you like to move?"
+                : "Which booking would you like to cancel?",
+              purpose === "swap" ? "أي حجز تريد تبديله؟" : "أي حجز تريد إلغاءه؟",
+            ),
+            items: withElig,
+            meta: { pickList: true, purpose },
+            actions: withElig.map((b) => ({
+              label: `${b.filmTitle} · ${b.showtimeLabel}`,
+              value: `${purpose}:${b.bookingId}`,
+              style: b.eligibility.eligible ? "primary" : "secondary",
+            })),
+          }
+        : {
+            type: "booking",
+            title: t(ctx.lang, "Your bookings", "حجوزاتك"),
+            items: withElig,
+            meta: { purpose },
+          },
       { name: "booking_lookup", status: "completed" },
     );
   },
@@ -617,7 +653,11 @@ export const bookingTools: Pick<
           "يرجى تسجيل الدخول أولاً أو إعطائي الرقم المرجعي أو البريد الإلكتروني أو رقم الهاتف.",
         ),
       );
-    return bookingTools.find_booking(ctx, { customerId, upcomingOnly: !input.includePast });
+    return bookingTools.find_booking(ctx, {
+      customerId,
+      upcomingOnly: !input.includePast,
+      purpose: input.purpose,
+    });
   },
 
   async check_cancellation_eligibility(ctx, input) {

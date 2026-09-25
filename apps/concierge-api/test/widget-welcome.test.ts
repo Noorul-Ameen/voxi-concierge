@@ -31,23 +31,24 @@ describe("verified connection greetings", () => {
     const result = (await response.json()) as WelcomeResponse;
     expect(result.isLoggedIn).toBe(false);
     expect(result.dynamicVariables).toMatchObject({ firstName: "", customerId: "", memberId: "" });
-    expect(result.dynamicVariables.greetingEn).toBe(
-      "Hi, welcome to VOX Cinemas. What are you in the mood to watch?",
-    );
+    expect(result.dynamicVariables.greetingEn).toContain("welcome to VOX Cinemas");
+    expect(result.dynamicVariables.greetingEn).not.toMatch(/back|again/);
     expect(JSON.stringify(result.dynamicVariables)).not.toContain("Sara");
+    // Guests rotate on the counter their browser sends, so consecutive visits open differently.
+    const other = (await (await welcome(session.token, 3)).json()) as WelcomeResponse;
+    expect(other.dynamicVariables.greetingEn).not.toBe(result.dynamicVariables.greetingEn);
   });
 
   it("returns varied paired welcomes from the verified account without profile or credentials", async () => {
     const session = await harness.session();
     const login = await harness.login(session.conversationId, "SARA");
     expect(login.ok).toBe(true);
-    const responses = await Promise.all(
-      [0, 1, 2, 3].map(async (variant) => {
-        const response = await welcome(login.token, variant);
-        expect(response.status).toBe(200);
-        return (await response.json()) as WelcomeResponse;
-      }),
-    );
+    const responses: WelcomeResponse[] = [];
+    for (const variant of [0, 1, 2, 3]) {
+      const response = await welcome(login.token, variant);
+      expect(response.status).toBe(200);
+      responses.push((await response.json()) as WelcomeResponse);
+    }
     expect(new Set(responses.map((result) => result.dynamicVariables.greetingEn)).size).toBe(4);
     expect(new Set(responses.map((result) => result.dynamicVariables.greetingAr)).size).toBe(4);
     for (const result of responses) {
@@ -72,6 +73,22 @@ describe("verified connection greetings", () => {
       expect(JSON.stringify(result).includes(process.env.DEMO_SARA_PASSWORD!)).toBe(false);
       expect(JSON.stringify(result)).not.toContain("sara.almansoori@example.com");
     }
+  });
+
+  it("never repeats a member's recent greeting across new conversations, even without a client counter", async () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 6; i++) {
+      const session = await harness.session();
+      const login = await harness.login(session.conversationId, "SARA");
+      const response = await api.request("/widget/signed-url", {
+        headers: { authorization: `Bearer ${login.token}` },
+      });
+      expect(response.status).toBe(200);
+      const result = (await response.json()) as WelcomeResponse;
+      expect(result.dynamicVariables.greetingEn).toContain("Sara");
+      seen.add(result.dynamicVariables.greetingEn);
+    }
+    expect(seen.size).toBe(6);
   });
 
   it("uses only the new account after a switch and removes the name after logout", async () => {

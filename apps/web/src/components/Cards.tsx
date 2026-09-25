@@ -32,7 +32,7 @@ export function seatRange(seats?: string) {
   return run ? `${row}${nums[0]}–${row}${nums[nums.length - 1]}` : parts.join(", ");
 }
 
-export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActions }) {
+export function Cards({ ui, lang, act, frozen }: { ui: UiHint; lang: Lang; act: CardActions; frozen?: boolean }) {
   const items = ui.items ?? [];
   const expired = ui.type === "order" && !!ui.meta?.expired;
   const inlineSnacks = ui.type === "order" && !expired && !!ui.items?.[0] && "tickets" in ui.items[0] && !(ui.items[0].concessions ?? []).length && !ui.items[0].fnbOnly;
@@ -63,6 +63,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
       case "menu":
         return <Menu items={items} lang={lang} act={act} hasSkip={!!ui.actions?.some((a) => a.value.startsWith("fnb_skip"))} />;
       case "booking":
+        if (ui.meta?.pickList) return <BookingPickList items={items} lang={lang} act={act} purpose={ui.meta.purpose === "swap" ? "swap" : "cancel"} />;
         return items.map((b, i) => <BookingCard key={i} b={b} lang={lang} act={act} confirmationId={ui.meta?.confirmationId} parentActions={actionValues} />);
       case "order":
         if (expired) return <div className="order expired-choices"><p className="muted">{lang === "ar" ? "احتفظنا باختياراتك. سنتحقق من التوفر قبل حجز المقاعد مجدداً." : "Your choices are kept. We'll check availability before holding seats again."}</p>{items[0] ? <><p>{decisionSummary(ui, lang)}</p>{items[0].concessions?.length ? <p>{items[0].concessions.map((food: any) => `${food.quantity}× ${lang === "ar" ? food.descriptionAlt || food.description : food.description}`).join(" · ")}</p> : null}{Number.isFinite(Number(items[0].totalCents)) ? <div className="line"><span>{lang === "ar" ? "الإجمالي السابق" : "Previous total"}</span><b>{money(Number(items[0].totalCents), lang)}</b></div> : null}</> : null}</div>;
@@ -70,7 +71,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
       case "seatmap":
         return <SeatMap rows={items} meta={ui.meta ?? {}} lang={lang} act={act} />;
       case "payment":
-        return <PaymentSheet o={items[0] ?? {}} meta={ui.meta ?? {}} lang={lang} act={act} />;
+        return <PaymentSheet o={items[0] ?? {}} meta={ui.meta ?? {}} lang={lang} act={act} frozen={frozen} />;
       case "qr":
         return items.map((b, i) => <QRTicket key={i} b={b} lang={lang} qr={ui.meta?.qrPayload ?? b.qrPayload} preparedQr={ui.meta?.preparedQr} />);
       case "loyalty":
@@ -101,7 +102,7 @@ export function Cards({ ui, lang, act }: { ui: UiHint; lang: Lang; act: CardActi
     <div className="cards" data-type={ui.type}>
       {expired ? <h4>{lang === "ar" ? "انتهى الحجز المؤقت" : "Seat hold expired"}</h4> : ui.title && ui.type !== "showtimes" && <h4>{ui.title}</h4>}
       {body}
-      {!["quantity", "booking_proposal", "refund_options", "cinema"].includes(ui.type) && !(ui.type === "showtimes" && ui.meta?.journey === "swap") && actions?.length ? (
+      {!["quantity", "booking_proposal", "refund_options", "cinema"].includes(ui.type) && !(ui.type === "showtimes" && ui.meta?.journey === "swap") && !(ui.type === "booking" && ui.meta?.pickList) && actions?.length ? (
         <div className="actionsrow">
           {actions.map((a, i) => (
             <button key={i} className={`btn ${a.style === "primary" ? "primary" : a.style === "danger" ? "danger" : "ghost"}`} disabled={isSeatMapAction(a.value) && !seatPlanCommand(ui)} onClick={() => routeAction(a.value, a.label, act, lang, ui)}>
@@ -750,6 +751,37 @@ function MenuItem({ m, lang, act }: { m: any; lang: Lang; act: CardActions }) {
   );
 }
 
+/** Cancel/swap intent: one compact row per active booking; the full card with its controls follows the guest's choice. */
+function BookingPickList({ items, lang, act, purpose }: { items: any[]; lang: Lang; act: CardActions; purpose: "cancel" | "swap" }) {
+  const ar = lang === "ar";
+  return (
+    <div className="booking-picklist" role="list">
+      {items.map((b, i) => {
+        const eligible = !!b.eligibility?.eligible;
+        const reason = b.eligibility?.reasons?.[0];
+        return (
+          <div key={b.bookingId ?? i} className="pick" role="listitem">
+            {b.posterUrl ? <img className="pick-poster" src={b.posterUrl} alt="" loading="lazy" /> : <div className="pick-poster empty" aria-hidden="true">VOX</div>}
+            <div className="pick-text">
+              <b className="pick-title">{b.filmTitle}</b>
+              <span className="pick-meta">{[b.showtimeLabel, b.experience, b.cinemaName, b.seats ? seatRange(b.seats) : null].filter(Boolean).join(" · ")}</span>
+              <span className="pick-ref"><span className="ref">{b.bookingId}</span>{eligible ? <span className="badge ok">{t(lang, "eligible")}</span> : <span className="badge danger" title={reason}>{t(lang, "notEligible")}</span>}</span>
+              {!eligible && reason ? <small className="pick-reason">{reason}</small> : null}
+            </div>
+            <button
+              type="button"
+              className={`btn ${eligible ? (purpose === "cancel" ? "danger" : "primary") : "ghost"}`}
+              onClick={() => routeAction(`${purpose}:${b.bookingId}`, "", act, lang)}
+            >
+              {purpose === "cancel" ? (ar ? "إلغاء هذا" : "Cancel this") : ar ? "تبديل هذا" : "Move this"}
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function BookingCard({ b, lang, act, confirmationId, parentActions }: { b: any; lang: Lang; act: CardActions; confirmationId?: string; parentActions?: Set<string> }) {
   const e = b.eligibility;
   const showCancel = !parentActions?.has(`cancel:${b.bookingId}`);
@@ -1099,7 +1131,7 @@ function CardBrand({ brand }: { brand: string }) {
  * then "Choose your payment method" (saved cards, ADCB TouchPoints, Credit and Debit Cards, Apple Pay).
  * Card numbers are tokenised in the browser; only a token reaches the server.
  */
-function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any>; lang: Lang; act: CardActions }) {
+function PaymentSheet({ o, meta, lang, act, frozen }: { o: any; meta: Record<string, any>; lang: Lang; act: CardActions; frozen?: boolean }) {
   const ar = lang === "ar";
   const saved: any[] = meta.savedCards ?? [];
   const bankOffers: any[] = meta.bankOffers ?? [];
@@ -1124,9 +1156,10 @@ function PaymentSheet({ o, meta, lang, act }: { o: any; meta: Record<string, any
     if (!meta.expiresAtUtc) return;
     const tick = () => setLeft(Math.max(0, Math.round((new Date(meta.expiresAtUtc).getTime() - Date.now()) / 1000)));
     tick();
+    if (frozen) return; // an earlier sheet keeps the time it showed; only the live sheet counts down
     const iv = setInterval(tick, 1000);
     return () => clearInterval(iv);
-  }, [meta.expiresAtUtc]);
+  }, [meta.expiresAtUtc, frozen]);
   const [pan, setPan] = useState("");
   const [exp, setExp] = useState("");
   const [cvv, setCvv] = useState("");

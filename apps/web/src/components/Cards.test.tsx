@@ -18,6 +18,27 @@ describe("concierge decision cards", () => {
     expect(withoutActions.split("Swap showtime").length - 1).toBe(1);
   });
 
+  it("shows a cancel pick-list without per-booking controls until the guest chooses", () => {
+    const items = [
+      { bookingId: "WRNS8ET", status: "confirmed", filmTitle: "Avengers Endgame", showtimeLabel: "today at 7:30 pm", experience: "4DX", eligibility: { eligible: false, reasons: ["This booking used a bank offer"] } },
+      { bookingId: "WERW88H", status: "confirmed", filmTitle: "Red Flag", showtimeLabel: "today at 7:00 pm", experience: "Premier", eligibility: { eligible: true } },
+    ];
+    const actions = items.map((b) => ({ label: `${b.filmTitle} · ${b.showtimeLabel}`, value: `cancel:${b.bookingId}` }));
+    const html = renderToStaticMarkup(<Cards lang="en" act={act} ui={{ type: "booking", title: "Which booking would you like to cancel?", items, meta: { pickList: true, purpose: "cancel" }, actions }} />);
+    expect(html.split("Cancel this").length - 1).toBe(2);
+    expect(html).not.toContain("Cancel &amp; refund");
+    expect(html).not.toContain("Swap showtime");
+    expect(html).not.toContain("actionsrow");
+    expect(html).toContain("Not refundable");
+    expect(html).toContain("Refundable");
+    const said: string[] = [];
+    const clicks: CardActions = { ...act, say: (text) => { said.push(text); } };
+    routeAction("cancel:WERW88H", "", clicks, "en");
+    expect(said).toEqual(["I'd like to cancel booking WERW88H and get a refund"]);
+    const ar = renderToStaticMarkup(<Cards lang="ar" act={act} ui={{ type: "booking", items, meta: { pickList: true, purpose: "swap" }, actions }} />);
+    expect(ar.split("تبديل هذا").length - 1).toBe(2);
+  });
+
   it("keeps exchange refund selection separate from cancellation and final exchange consent", () => {
     const meta = { journey: "swap", bookingId: "BOOK", targetSessionKey: "cinema-new", keepSeatsIfPossible: true, refundChoiceProof: "scoped-proof",
       summary: { filmTitle: "The Journey", targetCinemaName: "Cinema", targetShowtimeLabel: "Tomorrow 7 pm", targetExperience: "Premier", selectedSeats: [{Row:"E",Number:"9"},{Row:"E",Number:"10"}], originalTotalCents:12000,newTotalCents:10000,refundCents:2000 } };

@@ -30,6 +30,13 @@ describe("fresh connection welcomes", () => {
     expect(JSON.stringify(value)).not.toContain("old-account");
   });
 
+  it("uses the server's nameless guest greeting so guests also get a varied welcome", () => {
+    const guest = connectionVariables(session, { agentId: "agent", isLoggedIn: false, dynamicVariables: { firstName: "", customerId: "", memberId: "", welcomeEn: "Good evening, welcome to VOX Cinemas.", welcomeAr: "مساء الخير، أهلاً بك في فوكس سينما.", greetingEn: "Good evening, welcome to VOX Cinemas. How can I help you today?", greetingAr: "مساء الخير، أهلاً بك في فوكس سينما. كيف أساعدك اليوم؟" } }, "en");
+    expect(guest.greetingEn).toBe("Good evening, welcome to VOX Cinemas. How can I help you today?");
+    expect(guest.firstName).toBe("");
+    expect(JSON.stringify(guest)).not.toContain("Previous");
+  });
+
   it.each([{}, { isLoggedIn: false, dynamicVariables: details.dynamicVariables }, { isLoggedIn: true }])("never falls back to a cached member greeting without fresh account data: %j", (value) => {
     const result = connectionVariables(session, { agentId: "agent", ...value }, "en");
     expect(result.firstName).toBe("");

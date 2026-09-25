@@ -233,6 +233,28 @@
 
 /* film art bleeds to the card edge on booking-stage cards; the card title is then redundant */
 .cards > :is(.order, .booking, .booking-proposal) > .filmhead:first-child { margin: -16px -16px 14px; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+/* several bookings in one card: only the first header bleeds to the top edge; the rest sit below a divider */
+.cards > .booking + .booking { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); }
+.cards > .booking + .booking > .filmhead:first-child { margin: 0 -16px 14px; border-radius: 0; }
+.cards > .booking:last-child { margin-bottom: 0; }
+/* cancel / swap pick-list */
+.booking-picklist { display: flex; flex-direction: column; gap: 10px; }
+.booking-picklist .pick { display: grid; grid-template-columns: 40px 1fr; grid-template-rows: auto auto; column-gap: 12px; row-gap: 8px; align-items: start; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--panel-2); }
+.booking-picklist .pick-poster { grid-row: 1 / span 2; }
+.booking-picklist .pick > .btn { grid-column: 2; justify-self: start; }
+.booking-picklist .pick-poster { width: 40px; height: 58px; object-fit: cover; border-radius: var(--radius); flex: 0 0 auto; background: #26262a; }
+.booking-picklist .pick-poster.empty { display: grid; place-items: center; font-size: 8px; letter-spacing: 0.12em; color: rgba(255, 255, 255, 0.5); }
+.booking-picklist .pick-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1 1 auto; }
+.booking-picklist .pick-title { font-size: 14px; line-height: 1.25; }
+.booking-picklist .pick-meta { font-size: 12px; color: var(--muted); }
+.booking-picklist .pick-ref { display: flex; align-items: center; gap: 8px; }
+.booking-picklist .pick-ref .ref { font-family: var(--mono); font-weight: 800; letter-spacing: 0.1em; color: var(--vox-blue); font-size: 12px; }
+.booking-picklist .pick-reason { font-size: 11px; color: var(--muted); }
+.booking-picklist .btn { min-height: 34px; font-size: 12px; padding: 0 14px; }
+/* earlier cards stay on screen as a record of the step, but their controls are switched off */
+.widget .cards-frozen { position: relative; opacity: 0.78; }
+.widget .cards-frozen :is(button, input, select, textarea, a) { pointer-events: none; opacity: 0.55; }
+.widget .cards-frozen .frozen-tag { position: absolute; top: 8px; inset-inline-end: 10px; z-index: 2; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; }
 .cards:has(> :is(.order, .booking, .booking-proposal) > .filmhead:first-child) > h4 { display: none; }
 .cards:has(> .movie-list.v3) { padding: 0; background: transparent; border: 0; }
 .cards:has(> .movie-list.v3) > h4, .cards:has(> .showtimes.v3) > h4 { display: none; }
