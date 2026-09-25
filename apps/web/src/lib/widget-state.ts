@@ -140,6 +140,16 @@ export function journeyKey(ui: UiHint): string | undefined {
   return undefined;
 }
 
+/** Key-order-independent serialisation: the same card arrives via the HTTP reply and via the event stream
+ * (stored as jsonb, which re-orders object keys), and both must fingerprint identically. */
+export function cardFingerprint(value: unknown): string {
+  return JSON.stringify(value, (_key, v) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(Object.keys(v as Record<string, unknown>).sort().map((k) => [k, (v as Record<string, unknown>)[k]]))
+      : v,
+  );
+}
+
 /**
  * Transcript cards are append-only: every result adds a card and nothing above it changes.
  * A new step of the same journey freezes the earlier cards of that journey (same or earlier step),
@@ -151,8 +161,8 @@ export function appendTranscript(items: TranscriptItem[], item: TranscriptItem):
   if (item.kind === "msg" && last?.kind === "msg" && last.role === item.role && last.text === item.text) return items;
   if (item.kind === "feedback" && items.some((entry) => entry.kind === "feedback")) return items;
   if (item.kind !== "cards") return [...items, item];
-  const fingerprint = JSON.stringify(item.ui);
-  if (items.some((entry) => entry.kind === "cards" && !entry.archived && JSON.stringify(entry.ui) === fingerprint)) return items;
+  const fingerprint = cardFingerprint(item.ui);
+  if (items.some((entry) => entry.kind === "cards" && !entry.archived && cardFingerprint(entry.ui) === fingerprint)) return items;
   const key = journeyKey(item.ui);
   const rank = STEP_RANK[item.ui.type] ?? 0;
   const next = key
