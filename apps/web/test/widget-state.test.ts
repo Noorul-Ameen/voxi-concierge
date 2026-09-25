@@ -95,32 +95,24 @@ describe("authoritative widget state", () => {
     expect(acceptWidgetEvent(sequences, identities, "third", { ...oldCard, seq: 2, eventId: "new-request-same-card" })).toBe(true);
   });
 
-  it("summarizes the show actually selected when prior showtime choices collapse", () => {
+  it("keeps discovery cards active when the guest moves on to a booking step", () => {
     const options: TranscriptItem = { id: "shows", kind: "cards", ui: { type: "showtimes", items: [{ sessionKey: "private-one", filmTitle: "Early Movie", cinemaName: "Other cinema", time: "2 PM" }, { sessionKey: "private-two", filmTitle: "The Journey", cinemaName: "Mall of the Emirates", time: "7:15 PM" }] } };
     const progressed = appendTranscript([options], { id: "quantity", kind: "cards", ui: { type: "quantity", items: [], meta: { sessionKey: "private-two" } } });
-    const archived = progressed[0];
-    expect(archived.kind).toBe("cards");
-    if (archived.kind !== "cards") return;
-    const text = decisionSummary(archived.ui, "en");
-    expect(text).toContain("The Journey"); expect(text).toContain("7:15 PM"); expect(text).not.toContain("Early Movie"); expect(text).not.toContain("private-two");
+    expect(progressed).toHaveLength(2);
+    expect(progressed[0]).toEqual(options);
+    expect(progressed[1]).toMatchObject({ id: "quantity" });
+    expect(progressed.every((item) => item.kind === "cards" && !item.archived)).toBe(true);
     const booking = { type: "order", title: "Your booking", items: [{ filmTitle: "The Journey", cinemaName: "Mall of the Emirates", tickets: [{ seat: "G8" }, { seat: "G9" }], userSessionId: "private-order" }] };
     expect(decisionSummary(booking, "en")).toContain("2 tickets · Seats G8, G9");
     expect(decisionSummary(booking, "ar")).toContain("2 تذاكر · المقاعد G8, G9");
     expect(decisionSummary(booking, "en")).not.toContain("private-order");
   });
 
-  it("archives only a known matching film, never the first option because both IDs are missing", () => {
+  it("never rewrites an earlier card: a film list stays exactly as shown after a proposal", () => {
     const options: TranscriptItem = { id: "movies", kind: "cards", ui: { type: "recommendation", items: [{ title: "Red Flag" }, { title: "Spider-Man" }] } };
-    const archive = (next: { type: string; items: Record<string, unknown>[] }) => {
-      const result = appendTranscript([options], { id: "next", kind: "cards", ui: next })[0];
-      if (result.kind !== "cards") throw new Error("Expected archived movie options");
-      return result.ui;
-    };
-    expect(archive({ type: "payment", items: [] }).meta?.selectedFilm).toBeUndefined();
-    expect(archive({ type: "booking_proposal", items: [{ filmTitle: "Spider-Man" }] }).meta?.selectedFilm?.title).toBe("Spider-Man");
-    options.ui.items = [{ hoCode: "first", title: "Same title" }, { hoCode: "second", title: "Same title" }];
-    expect(archive({ type: "booking_proposal", items: [{ hoCode: "second", filmTitle: "Same title" }] }).meta?.selectedFilm?.hoCode).toBe("second");
-    expect(archive({ type: "booking_proposal", items: [{ hoCode: "unknown", filmTitle: "Same title" }] }).meta?.selectedFilm).toBeUndefined();
+    const result = appendTranscript([options], { id: "next", kind: "cards", ui: { type: "booking_proposal", items: [{ filmTitle: "Spider-Man" }] } });
+    expect(result[0]).toEqual(options);
+    expect(result[0]?.kind === "cards" ? result[0].ui.meta : "set").toBeUndefined();
   });
 
   it("translates fixed controls after a language switch while preserving dynamic names", () => {
@@ -130,21 +122,36 @@ describe("authoritative widget state", () => {
   });
 
   const seats: TranscriptItem = { id: "seat-result", kind: "cards", ui: { type: "order", title: "Your seats", items: [], meta: { userSessionId: "a", expiresAtUtc: "2026-09-10T16:00:00Z" } } };
-  it("collapses earlier controls but lets a new user request reopen identical choices", () => {
+  it("freezes the earlier steps of the same basket and keeps every card on screen", () => {
     const payment: TranscriptItem = { id: "payment", kind: "cards", ui: { type: "payment", items: [], meta: { userSessionId: "a" } } };
     const progressed = appendTranscript([seats], payment);
-    expect(progressed[0]).toMatchObject({ archived: true });
-    const reopened = appendTranscript(progressed, { ...seats, id: "reopened" });
-    expect(reopened.at(-1)).toMatchObject({ id: "reopened", ui: seats.ui });
-    expect(reopened[1]).toMatchObject({ archived: true });
-    expect(reopened.filter((item) => item.kind === "cards" && !item.archived)).toHaveLength(1);
+    expect(progressed).toHaveLength(2);
+    expect(progressed[0]).toMatchObject({ id: "seat-result", archived: true, ui: seats.ui });
+    expect(progressed[1]).toEqual(payment);
+    // A later change to the basket (offer applied) is a new order card; the open payment sheet is a later step and stays active.
+    const changed: TranscriptItem = { id: "changed", kind: "cards", ui: { ...seats.ui, items: [{ seats: "D5–D6" }] } };
+    const updated = appendTranscript(progressed, changed);
+    expect(updated.map((item) => item.kind === "cards" && !item.archived ? item.id : null).filter(Boolean)).toEqual(["payment", "changed"]);
+    // A fresh payment sheet freezes the earlier sheet and the order card before it.
+    const sheet = appendTranscript(updated, { ...payment, id: "sheet-two", ui: { ...payment.ui, meta: { userSessionId: "a", amountCents: 1 } } });
+    expect(sheet.map((item) => item.kind === "cards" && !item.archived ? item.id : null).filter(Boolean)).toEqual(["sheet-two"]);
+    // Another basket is untouched.
+    const other: TranscriptItem = { id: "other", kind: "cards", ui: { type: "seatmap", items: [], meta: { userSessionId: "b" } } };
+    expect(appendTranscript(sheet, other).find((item) => item.id === "sheet-two")).toEqual(expect.not.objectContaining({ archived: true }));
+  });
+  it("freezes an earlier card for the same booking once the next step for it arrives", () => {
+    const card: TranscriptItem = { id: "card", kind: "cards", ui: { type: "booking", items: [{ bookingId: "WERW88H", filmTitle: "Red Flag" }] } };
+    const refund: TranscriptItem = { id: "refund", kind: "cards", ui: { type: "refund_options", items: [{ method: "ORIGINAL_PAYMENT" }], meta: { bookingId: "WERW88H" } } };
+    const list: TranscriptItem = { id: "list", kind: "cards", ui: { type: "booking", items: [{ bookingId: "WERW88H" }, { bookingId: "WRNS8ET" }] } };
+    const result = appendTranscript(appendTranscript([list, card], refund), { ...card, id: "done", ui: { ...card.ui, items: [{ bookingId: "WERW88H", status: "refunded" }] } });
+    expect(result.map((item) => [item.id, item.kind === "cards" && !!item.archived])).toEqual([["list", false], ["card", true], ["refund", true], ["done", false]]);
   });
   it("deduplicates duplicate delivery of a currently visible card", () => {
     expect(appendTranscript([seats], { ...seats, id: "duplicate" })).toEqual([seats]);
   });
-  it("updates an active order without multiplying cards", () => {
+  it("adds an updated order as a new card below the frozen earlier one", () => {
     const changed = { ...seats, id: "update", ui: { ...seats.ui, items: [{ seats: "D5–D6" }] } };
-    expect(appendTranscript([seats], changed)).toEqual([{ ...changed, id: seats.id }]);
+    expect(appendTranscript([seats], changed)).toEqual([{ ...seats, archived: true }, changed]);
   });
   it("deduplicates SDK echoes of text typed by the user", () => {
     const message: TranscriptItem = { id: "one", kind: "msg", role: "user", text: "Two tickets" };

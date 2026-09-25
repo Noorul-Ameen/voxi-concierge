@@ -165,6 +165,9 @@ export function toWidgetEvent(
         seq,
         eventId,
         ui: payload.ui as WidgetEvent extends { ui: infer U } ? U : never,
+        ...(payload.origin === "agent" || payload.origin === "user" || payload.origin === "system"
+          ? { origin: payload.origin }
+          : {}),
       } as WidgetEvent;
     case "action.queued":
       return { type: "action.queued", seq, eventId, action: payload.action } as WidgetEvent;

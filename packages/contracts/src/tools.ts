@@ -175,6 +175,12 @@ export const FindBookingInput = z
     memberId: z.string().optional(),
     customerId: z.string().optional().describe("Logged-in customer id from context"),
     upcomingOnly: z.boolean().default(true),
+    purpose: z
+      .enum(["browse", "cancel", "swap"])
+      .default("browse")
+      .describe(
+        "Why the guest wants the booking: 'cancel' or 'swap' when they asked to cancel, refund or move a booking (shows a pick-list without action buttons until they choose), 'browse' otherwise.",
+      ),
   })
   .refine(
     (v) => v.bookingId || v.email || v.phone || v.memberId || v.customerId,
@@ -614,6 +620,12 @@ export const LoginCustomerInput = z.object({});
 export const ListMyBookingsInput = z.object({
   customerId: z.string().optional(),
   includePast: z.boolean().default(false),
+  purpose: z
+    .enum(["browse", "cancel", "swap"])
+    .default("browse")
+    .describe(
+      "'cancel' or 'swap' when the guest asked to cancel, refund or move a booking (shows a pick-list without action buttons until they choose), 'browse' otherwise.",
+    ),
 });
 
 export const SubmitFeedbackInput = z.object({

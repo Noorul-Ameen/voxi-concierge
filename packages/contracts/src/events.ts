@@ -5,7 +5,14 @@ import { LinkBookingInput, ProposeBookingInput } from "./tools.js";
 /** Server-sent events pushed to the widget over /events/{conversationId}. */
 const identity = { eventId: z.string().optional() };
 export const WidgetEvent = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("ui.render"), seq: z.number(), ...identity, ui: UiHint }),
+  z.object({
+    type: z.literal("ui.render"),
+    seq: z.number(),
+    ...identity,
+    ui: UiHint,
+    /** Who triggered the card: the agent's tool call (the widget shows it after the agent's reply) or a widget action. */
+    origin: z.enum(["agent", "user", "system"]).optional(),
+  }),
   z.object({ type: z.literal("action.queued"), seq: z.number(), ...identity, action: ActionRef }),
   z.object({
     type: z.literal("action.completed"),

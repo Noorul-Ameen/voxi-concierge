@@ -27,6 +27,9 @@ export function toRef(a: ActionRow): ActionRef {
     error: a.error
       ? { code: a.error.code, message: a.error.message, retryable: a.error.retryable }
       : undefined,
+    ...(a.requestedBy === "agent" || a.requestedBy === "widget" || a.requestedBy === "system"
+      ? { requestedBy: a.requestedBy }
+      : {}),
   };
 }
 

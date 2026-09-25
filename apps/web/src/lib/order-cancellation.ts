@@ -27,8 +27,8 @@ export function isCancelledOrderUi(ui: UiHint, cancelledOrders: ReadonlySet<stri
   return id !== undefined && ids.every(value => value === id) && cancelledOrders.has(id);
 }
 
-/** Keep conversation history and unrelated/paid receipts; remove only this basket's active controls. */
+/** Keep every card on screen; only this basket's controls are switched off once it is cancelled. */
 export function removeCancelledOrderCards(items: TranscriptItem[], orderId: string): TranscriptItem[] {
   const cancelled = new Set([orderId]);
-  return items.filter(item => item.kind !== "cards" || item.archived || !isCancelledOrderUi(item.ui, cancelled));
+  return items.map(item => item.kind === "cards" && !item.archived && isCancelledOrderUi(item.ui, cancelled) ? { ...item, archived: true } : item);
 }

@@ -12,7 +12,7 @@ export function configureApiBase(value: string) { API_BASE = value.replace(/\/$/
 
 export type UiHint = { type: string; title?: string; items: Record<string, any>[]; actions?: { label: string; value: string; style?: string }[]; meta?: Record<string, any> };
 export type WidgetEvent = (
-  | { type: "ui.render"; seq: number; ui: UiHint }
+  | { type: "ui.render"; seq: number; ui: UiHint; origin?: "agent" | "user" | "system" }
   | { type: "action.queued"; seq: number; action: ActionRef }
   | { type: "action.completed"; seq: number; action: ActionRef; ui?: UiHint }
   | { type: "order.updated"; seq: number; userSessionId: string; summary: Record<string, any> }
@@ -20,7 +20,7 @@ export type WidgetEvent = (
   | { type: "human.message"; seq: number; transferId: string; text: string; agentName?: string }
   | { type: "language.changed"; seq: number; language: Lang }
   | { type: "heartbeat"; seq: number; at: string }) & { eventId?: string };
-export type ActionRef = { actionId: string; type: string; status: string; result?: Record<string, any>; error?: { code: string; message: string } };
+export type ActionRef = { actionId: string; type: string; status: string; result?: Record<string, any>; error?: { code: string; message: string }; requestedBy?: "agent" | "widget" | "system" };
 
 export type Session = { conversationId: string; token: string; language: Lang; mode: "bot" | "human"; isLoggedIn: boolean; agentId: string; dynamicVariables: Record<string, string> };
 

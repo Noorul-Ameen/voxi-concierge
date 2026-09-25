@@ -17,7 +17,7 @@ describe("cancelled basket presentation", () => {
     const note: TranscriptItem = { id: "note", kind: "note", text: "Earlier hold expired" };
     const matched = cancelledCurrentOrder(success, orderId, identity, identity);
     expect(matched).toBe(orderId);
-    expect(removeCancelledOrderCards([history, expired, payment, unrelated, receipt, note], matched!)).toEqual([history, unrelated, receipt, note]);
+    expect(removeCancelledOrderCards([history, expired, payment, unrelated, receipt, note], matched!)).toEqual([history, { ...expired, archived: true }, { ...payment, archived: true }, unrelated, receipt, note]);
     // The same terminal order must not return through a later UI read/replayed card.
     expect(isCancelledOrderUi(expired.ui, new Set([matched!]))).toBe(true);
     expect(isCancelledOrderUi(payment.ui, new Set([matched!]))).toBe(true);
@@ -32,7 +32,7 @@ describe("cancelled basket presentation", () => {
   it("removes the cancelled order's actual offer-switch confirmation and rejects its late replay", () => {
     const switchCard: TranscriptItem = { id: "switch", kind: "cards", ui: { type: "payment_switch", items: [{ userSessionId: orderId, currentTotalCents: 9550, totalAfterCents: 14550, nextPaymentMethod: "VOX_CREDIT" }], meta: { userSessionId: orderId, confirmationId: "switch-proof" }, actions: [{ label: "Remove offer and switch", value: "confirm:switch-proof" }] } };
     const unrelated: TranscriptItem = { ...switchCard, id: "other-switch", ui: { ...switchCard.ui, items: [{ userSessionId: "other-order" }], meta: { userSessionId: "other-order", confirmationId: "other-proof" } } };
-    expect(removeCancelledOrderCards([switchCard, unrelated], orderId)).toEqual([unrelated]);
+    expect(removeCancelledOrderCards([switchCard, unrelated], orderId)).toEqual([{ ...switchCard, archived: true }, unrelated]);
     expect(isCancelledOrderUi(switchCard.ui, new Set([orderId]))).toBe(true);
     expect(isCancelledOrderUi(unrelated.ui, new Set([orderId]))).toBe(false);
   });
