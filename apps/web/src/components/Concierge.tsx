@@ -23,6 +23,11 @@ import { cancelledCurrentOrder, isCancelledOrderUi, removeCancelledOrderCards } 
 
 const nid = () => crypto.randomUUID();
 
+/** How long a saved widget session may be resumed on this device: 30 minutes for a guest, 6 hours for a member. */
+export function sessionResumeMs(saved: { loggedIn?: boolean }) {
+  return saved.loggedIn ? 6 * 60 * 60000 : 30 * 60000;
+}
+
 export function Concierge({ initialLang = "en", initialOpen = true, onExpand, onAuth, onLanguage }: { initialLang?: Lang; initialOpen?: boolean; onExpand?: (b: boolean) => void; onAuth?: (c: Customer | null) => void; onLanguage?: (language: Lang) => void }) {
   const [lang, setLang] = useState<Lang>(initialLang);
   const [session, setSession] = useState<Session | null>(null);
@@ -443,16 +448,20 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
       if (receiptCompletesCurrentOrder(ui)) commitOrder(null);
       return;
     }
+    // A new proposal replaces an expired hold: drop the stale "Seat hold expired" bar.
+    const previousOrder = orderRef.current;
+    if (ui.type === "booking_proposal" && previousOrder && !previousOrder.paid && previousOrder.expiresAtUtc && holdSeconds(previousOrder.expiresAtUtc) === 0) commitOrder(null);
     const m = ui.meta ?? {};
     if ((ui.type === "payment" || ui.type === "order") && m.userSessionId && m.expiresAtUtc)
       commitOrder((o) => ({ ...(o ?? {}), userSessionId: String(m.userSessionId), expiresAtUtc: String(m.expiresAtUtc), totalCents: Number(m.amountCents ?? o?.totalCents ?? 0) }));
   };
 
-  // Same-device resume: remember the conversation so a reload/return within 30 minutes picks the booking back up.
+  // Same-device resume: a guest's reload within 30 minutes picks the booking back up; a later visit starts fresh.
+  // A signed-in member's session is kept for up to 6 hours.
   useEffect(() => {
     if (!session) return;
     try {
-      localStorage.setItem("voxi.session", JSON.stringify({ conversationId: session.conversationId, token: session.token, language: session.language, at: Date.now() }));
+      localStorage.setItem("voxi.session", JSON.stringify({ conversationId: session.conversationId, token: session.token, language: session.language, loggedIn: !!session.isLoggedIn, at: Date.now() }));
     } catch {}
   }, [session]);
 
@@ -461,8 +470,8 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     let disposed = false;
     const epoch = authEpochRef.current;
     try {
-      const saved = JSON.parse(localStorage.getItem("voxi.session") ?? "null") as { conversationId: string; token: string; at: number; language?: Lang } | null;
-      if (saved?.token && Date.now() - saved.at < 6 * 60 * 60000) {
+      const saved = JSON.parse(localStorage.getItem("voxi.session") ?? "null") as { conversationId: string; token: string; at: number; language?: Lang; loggedIn?: boolean } | null;
+      if (saved?.token && Date.now() - saved.at < sessionResumeMs(saved)) {
         restoreRef.current = createSession({ language: saved.language === "ar" ? "ar" : saved.language === "en" ? "en" : initialLang, modality: "text", conversationId: saved.conversationId, token: saved.token })
           .then((restored) => { if (!disposed && epoch === authEpochRef.current && !sessionRef.current) { commitSession(restored); setLang(restored.language); langRef.current = restored.language; void refreshProfile(restored); } })
           .catch(() => { if (!disposed && epoch === authEpochRef.current) try { localStorage.removeItem("voxi.session"); } catch {} });
@@ -656,6 +665,24 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
     const timer = setInterval(tick, 1000);
     return () => { disposed = true; clearInterval(timer); };
   }, [order?.userSessionId, order?.expiresAtUtc, session?.token, lang]);
+
+  // Guest "New chat": end the current conversation and start clean, with nothing carried over.
+  const newChat = async () => {
+    if (authBusyRef.current || sessionRef.current?.isLoggedIn) return;
+    ++authEpochRef.current;
+    ++connectionAttemptRef.current;
+    startingRef.current = false;
+    switchingRef.current = true;
+    try { await conversation.endSession(); } catch { /* Nothing to end. */ } finally { switchingRef.current = false; }
+    try { localStorage.removeItem("voxi.session"); } catch { /* Storage unavailable. */ }
+    commitSession(null);
+    setSessionExpired(false);
+    commitOrder(null); setHoldLeft(null); warnedRef.current = {}; holdCheckRef.current = null;
+    setItems([]); setInput(""); clearHumanMode(); setMode("idle"); setSseStatus("closed");
+    pendingAckRef.current.clear(); completedActionsRef.current.clear(); cancelledOrdersRef.current.clear(); ackQueueRef.current = [];
+    eventSeqRef.current.clear(); eventIdsRef.current.clear();
+    if (ackTimerRef.current) clearTimeout(ackTimerRef.current);
+  };
 
   const endChat = async () => {
     if (endingChat) return;
@@ -865,6 +892,16 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
   // ---------- presentation-only state (launcher, unread badge, typing indicator, suggestions) ----------
   const [open, setOpen] = useState(initialOpen);
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (event: Event) => {
+      if (event instanceof KeyboardEvent ? event.key === "Escape" : !event.composedPath().includes(menuRef.current as EventTarget)) setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", close, true);
+    document.addEventListener("keydown", close, true);
+    return () => { document.removeEventListener("pointerdown", close, true); document.removeEventListener("keydown", close, true); };
+  }, [menuOpen]);
   const [unread, setUnread] = useState(0);
   const lastItem = items[items.length - 1];
   useEffect(() => {
@@ -919,7 +956,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="8" r="4" /><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" /></svg>
           {customer ? <span className="sr-only">{lang === "ar" ? "تم الدخول" : "Signed in"}</span> : null}
         </button>
-        <div className="headmenu">
+        <div className="headmenu" ref={menuRef}>
           <button type="button" className="iconbtn" aria-haspopup="menu" aria-expanded={menuOpen} aria-label={lang === "ar" ? "المزيد" : "More"} onClick={() => setMenuOpen((x) => !x)}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.7" /><circle cx="12" cy="12" r="1.7" /><circle cx="19" cy="12" r="1.7" /></svg>
           </button>
@@ -927,6 +964,7 @@ export function Concierge({ initialLang = "en", initialOpen = true, onExpand, on
             <div className="headmenu-list" role="menu" onClick={() => setMenuOpen(false)}>
               <button type="button" role="menuitem" onClick={() => setExpanded((x) => !x)}>{expanded ? (lang === "ar" ? "تصغير النافذة" : "Smaller window") : lang === "ar" ? "توسيع النافذة" : "Bigger window"}</button>
               {customer ? <button type="button" role="menuitem" onClick={() => void doLogout()}>{lang === "ar" ? "تسجيل الخروج" : "Sign out"}</button> : <button type="button" role="menuitem" onClick={() => setAuthOpen(true)}>{lang === "ar" ? "تسجيل الدخول" : "Sign in"}</button>}
+              {!customer && !humanMode && items.some((item) => item.kind !== "note") ? <button type="button" role="menuitem" onClick={() => void newChat()}>{lang === "ar" ? "محادثة جديدة" : "New chat"}</button> : null}
               {connected || humanMode ? <button type="button" role="menuitem" className="danger" disabled={endingChat} onClick={() => void endChat()}>{t(lang, "end")}</button> : null}
             </div>
           ) : null}

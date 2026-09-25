@@ -1186,8 +1186,8 @@ const quickHandlers: Pick<
         held.order,
         t(
           lang,
-          `${seats!.length} seats held. ${hint ? "Your saved card has an eligible offer; shall I show the saving?" : "Would you like your usual snacks before payment?"}`,
-          `حجزت ${seats!.length} مقاعد مؤقتاً. ${hint ? "لبطاقتك المحفوظة عرض مؤهل؛ هل أعرض التوفير؟" : "هل تريد وجباتك المعتادة قبل الدفع؟"}`,
+          `${seats!.length === 1 ? "1 seat" : `${seats!.length} seats`} held. ${hint ? "Your saved card has an eligible offer; shall I show the saving?" : customer ? "Would you like your usual snacks before payment?" : "Would you like any snacks before payment?"}`,
+          `حجزت ${seats!.length === 1 ? "مقعداً واحداً" : `${seats!.length} مقاعد`} مؤقتاً. ${hint ? "لبطاقتك المحفوظة عرض مؤهل؛ هل أعرض التوفير؟" : customer ? "هل تريد وجباتك المعتادة قبل الدفع؟" : "هل تريد وجبات خفيفة قبل الدفع؟"}`,
         ),
         { offerHint: hint, holdMinutes: ctx.cfg.orderExpiryMinutes },
       );
@@ -1301,8 +1301,8 @@ const quickHandlers: Pick<
       held.order,
       t(
         lang,
-        `${count} seats held — ${seats}. ${hint ? "Your saved card has an eligible offer; shall I show the saving?" : "Snacks before payment?"}`,
-        `حجزت ${count} مقاعد — ${seats}. ${hint ? "لبطاقتك المحفوظة عرض مؤهل؛ هل أعرض التوفير؟" : "هل تريد وجبات خفيفة قبل الدفع؟"}`,
+        `${count === 1 ? "1 seat" : `${count} seats`} held — ${seats}. ${hint ? "Your saved card has an eligible offer; shall I show the saving?" : "Snacks before payment?"}`,
+        `حجزت ${count === 1 ? "مقعداً واحداً" : `${count} مقاعد`} — ${seats}. ${hint ? "لبطاقتك المحفوظة عرض مؤهل؛ هل أعرض التوفير؟" : "هل تريد وجبات خفيفة قبل الدفع؟"}`,
       ),
       { offerHint: hint, holdMinutes: ctx.cfg.orderExpiryMinutes },
     );

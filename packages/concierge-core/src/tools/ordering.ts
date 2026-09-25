@@ -129,30 +129,37 @@ export async function savedCardOfferHint(
       ticketCount,
     })
     .catch(() => ({ offers: [] as Record<string, any>[] }));
-  for (const o of offers) {
-    if (requestedOfferId && o.id !== requestedOfferId) continue;
-    const bins: string[] = o.rules?.bankBins ?? [];
-    const card = cards.find((c) => bins.some((b) => c.first6.startsWith(b)));
-    if (!card) continue;
-    // eligible apart from the card check itself
-    const elig = await ctx.vista
-      .offerEligibility(o.id, {
-        sessionKey,
-        memberId: ctx.conversation.memberId,
+  // The guest's default card is considered first, so its offer is suggested ahead of other saved cards.
+  const ordered = [...cards].sort(
+    (a, b) =>
+      Number((b as { default?: boolean }).default === true) -
+      Number((a as { default?: boolean }).default === true),
+  );
+  for (const card of ordered) {
+    for (const o of offers) {
+      if (requestedOfferId && o.id !== requestedOfferId) continue;
+      const bins: string[] = o.rules?.bankBins ?? [];
+      if (!bins.some((b) => card.first6.startsWith(b))) continue;
+      // eligible apart from the card check itself
+      const elig = await ctx.vista
+        .offerEligibility(o.id, {
+          sessionKey,
+          memberId: ctx.conversation.memberId,
+          cardBin: card.first6,
+          ticketCount,
+        })
+        .catch(() => null);
+      if (!elig?.eligible) continue;
+      return {
+        offerId: o.id,
+        title: o.title,
+        benefit: describeBenefit(o.benefit, ctx.lang),
+        cardLabel: `${o.rules?.bankName ?? ""} ${brandName(card.brand)} ending ${card.last4}`.trim(),
+        cardToken: card.token,
         cardBin: card.first6,
-        ticketCount,
-      })
-      .catch(() => null);
-    if (!elig?.eligible) continue;
-    return {
-      offerId: o.id,
-      title: o.title,
-      benefit: describeBenefit(o.benefit, ctx.lang),
-      cardLabel: `${o.rules?.bankName ?? ""} ${brandName(card.brand)} ending ${card.last4}`.trim(),
-      cardToken: card.token,
-      cardBin: card.first6,
-      cardLast4: card.last4,
-    };
+        cardLast4: card.last4,
+      };
+    }
   }
   return null;
 }

@@ -161,14 +161,18 @@ export const investigationTools: Pick<ToolHandlers, "investigate_payment"> = {
             ? "I found the confirmed booking; its details and QR are on screen."
             : status === "processing"
               ? "The payment request is still processing. I'll check its result before any next step."
-              : "I couldn't match this to a confirmed booking. This check cannot confirm a bank debit. Shall I pass the order and payment reference to Customer Care?",
+              : input.transactionReference || input.bookingId || input.userSessionId
+                ? "I couldn't match this to a confirmed booking. This check cannot confirm a bank debit. Shall I pass the details you gave me to Customer Care?"
+                : "I couldn't match this to a confirmed booking. This check cannot confirm a bank debit. If you have the payment reference from your bank message, or the card's last four digits, share it and I'll check again. Or I can pass this to Customer Care.",
         candidateBookings.length
           ? "وجدت حجوزات حديثة في حسابك. هل أحدها هو الحجز المقصود بالدفع؟"
           : status === "found"
             ? "وجدت الحجز المؤكد؛ تفاصيله ورمز QR على الشاشة."
             : status === "processing"
               ? "طلب الدفع قيد المعالجة. سأتحقق من نتيجته قبل الخطوة التالية."
-              : "لم أجد حجزاً مؤكداً مطابقاً. هذا الفحص لا يؤكد الخصم البنكي. هل أحيل الطلب ومرجع الدفع إلى خدمة العملاء؟",
+              : input.transactionReference || input.bookingId || input.userSessionId
+                ? "لم أجد حجزاً مؤكداً مطابقاً. هذا الفحص لا يؤكد الخصم البنكي. هل أحيل التفاصيل التي ذكرتها إلى خدمة العملاء؟"
+                : "لم أجد حجزاً مؤكداً مطابقاً. هذا الفحص لا يؤكد الخصم البنكي. إن كان لديك مرجع الدفع من رسالة البنك أو آخر أربعة أرقام من البطاقة، شاركه وسأتحقق مجدداً، أو أحيل الأمر إلى خدمة العملاء.",
       ),
       {
         type: "payment_investigation",

@@ -147,16 +147,58 @@ describe("Phase 1 — information", () => {
 
 describe("Phase 1 — booking lookup, cancellation, refund", () => {
   it("finds by reference, phone and email with eligibility", async () => {
-    const byRef = await h.tool("find_booking", conv("b1"), { bookingId: "wxa7k2m" });
+    const email = async (id: string) => (await h.ctx.vista.getBooking(id)).Booking.Customer.Email as string;
+    const byRef = await h.tool("find_booking", conv("b1"), {
+      bookingId: "wxa7k2m",
+      email: await email("WXA7K2M"),
+    });
     expect(byRef.data.bookings[0].bookingId).toBe("WXA7K2M");
     expect(byRef.data.bookings[0].eligibility.eligible).toBe(true);
-    const cutoff = await h.tool("find_booking", conv("b2"), { bookingId: "WM3PQ9X" });
+    const cutoff = await h.tool("find_booking", conv("b2"), {
+      bookingId: "WM3PQ9X",
+      email: await email("WM3PQ9X"),
+    });
     expect(cutoff.data.bookings[0].eligibility.code).toBe("CUTOFF_PASSED");
-    const bank = await h.tool("check_cancellation_eligibility", conv("b3"), { bookingId: "WMB6GQ2" });
+    const bank = await h.tool("check_cancellation_eligibility", conv("b3"), {
+      bookingId: "WMB6GQ2",
+      verification: { email: await email("WMB6GQ2") },
+    });
     expect(bank.data.eligibility.eligible).toBe(false);
     expect(bank.speech).toMatch(/bank/i);
-    const collected = await h.tool("check_cancellation_eligibility", conv("b4"), { bookingId: "WK4DXC9" });
+    const collected = await h.tool("check_cancellation_eligibility", conv("b4"), {
+      bookingId: "WK4DXC9",
+      verification: { email: await email("WK4DXC9") },
+    });
     expect(collected.data.eligibility.code).toBe("TICKETS_USED");
+  });
+  it("keeps booking details private until the guest proves the booking is theirs", async () => {
+    const booking = (await h.ctx.vista.getBooking("WXA7K2M")).Booking;
+    const c = conv("privacy");
+    const refOnly = await h.tool("find_booking", c, { bookingId: "WXA7K2M" });
+    expect(refOnly.ok).toBe(true);
+    expect(refOnly.data.needs).toBe("verification");
+    expect(JSON.stringify(refOnly)).not.toContain(booking.FilmTitle);
+    expect(refOnly.ui).toBeUndefined();
+    const wrong = await h.tool("find_booking", c, {
+      bookingId: "WXA7K2M",
+      email: "someone.else@example.com",
+    });
+    expect(wrong.data.needs).toBe("verification");
+    expect(wrong.speech).toMatch(/don't match/);
+    expect(JSON.stringify(wrong)).not.toContain(booking.FilmTitle);
+    const emailOnly = await h.tool("find_booking", conv("privacy-email"), { email: booking.Customer.Email });
+    expect(emailOnly.data.needs).toBe("booking_reference");
+    expect(emailOnly.data.bookings).toHaveLength(0);
+    const eligibility = await h.tool("check_cancellation_eligibility", conv("privacy-elig"), {
+      bookingId: "WXA7K2M",
+    });
+    expect(eligibility.ok).toBe(false);
+    expect(eligibility.error.code).toBe("VERIFICATION_REQUIRED");
+    const right = await h.tool("find_booking", c, { bookingId: "WXA7K2M", email: booking.Customer.Email });
+    expect(right.data.bookings[0].filmTitle).toBe(booking.FilmTitle);
+    // Verified once in this conversation: follow-up steps don't ask again.
+    const again = await h.tool("check_cancellation_eligibility", c, { bookingId: "WXA7K2M" });
+    expect(again.ok).toBe(true);
   });
   it("requires guest verification, then cancels with confirmation and refunds to VOX credit; duplicates are idempotent", async () => {
     const c = conv("cancel");
@@ -509,6 +551,23 @@ describe("Booking v2 — one-shot booking, recovery, quick F&B", () => {
     return sessions.data.sessions.find((s: any) => s.seatsAvailable > 12 && s.showtime > soon);
   };
 
+  it("tells a guest about snacks without mentioning 'usual', with singular grammar for one seat", async () => {
+    const c = conv("qb-guest");
+    const show = await pickShow(c, "Burjuman");
+    if (!show) return;
+    const proposal = await h.tool("propose_booking", c, {
+      title: show.filmTitle,
+      cinemaName: "Burjuman",
+      date: show.date,
+      time: show.showtime.slice(11, 16),
+      tickets: 1,
+    });
+    expect(proposal.ok, JSON.stringify(proposal).slice(0, 400)).toBe(true);
+    const r = await h.tool("quick_book", c, { proposalToken: proposal.data.proposalToken });
+    expect(r.error, JSON.stringify(r).slice(0, 600)).toBeUndefined();
+    expect(r.speech).toMatch(/\b1 seat held/);
+    expect(r.speech).not.toMatch(/usual/i);
+  });
   it("proposes the usual cinema, asks only unknown quantity, then holds an accepted proposal", async () => {
     const c = conv("qb");
     await h.login(c, "RAHUL");

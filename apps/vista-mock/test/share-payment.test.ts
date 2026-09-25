@@ -90,5 +90,17 @@ it("uses10points per AED and debits/refunds once under concurrent retries", asyn
     .select()
     .from(S.loyaltyAccounts)
     .where(eq(S.loyaltyAccounts.memberId, memberId));
-  expect(after?.sharePointsBalance).toBe(initialPoints + Math.round(total / 100));
+  // Points earned on the booking are taken back once when it is fully refunded.
+  expect(after?.sharePointsBalance).toBe(initialPoints);
+  const reversals = await app.db
+    .select()
+    .from(S.loyaltyLedger)
+    .where(
+      and(
+        eq(S.loyaltyLedger.memberId, memberId),
+        eq(S.loyaltyLedger.reason, `Points reversed for refunded booking ${first.json.VistaBookingId}`),
+      ),
+    );
+  expect(reversals).toHaveLength(1);
+  expect(reversals[0]?.delta).toBe(-Math.round(total / 100));
 });

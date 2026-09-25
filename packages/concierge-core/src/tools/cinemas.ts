@@ -1,5 +1,5 @@
 import type { Cinema } from "../services/catalog.js";
-import { joinList, t } from "../services/format.js";
+import { joinList, kmLabel, t } from "../services/format.js";
 import { locationAreas, resolveLocationArea } from "../services/location-areas.js";
 import { type ToolHandlers, err, ok } from "./types.js";
 
@@ -161,8 +161,8 @@ export const cinemaTools: Pick<ToolHandlers, "list_cinemas" | "get_cinema" | "ne
     const where = label ? ` to ${label}` : "";
     const speech = t(
       ctx.lang,
-      `${area ? `Using the approximate ${label} area reference, the` : "The"} nearest VOX cinema${area ? "" : where} is ${near[0]!.name} (${near[0]!.distanceKm} km). Distances are straight-line estimates.`,
-      `${area ? `بالاعتماد على نقطة تقريبية لمنطقة ${label}، ` : ""}أقرب سينما فوكس هي ${near[0]!.nameAlt || near[0]!.name} (${near[0]!.distanceKm} كم). المسافات تقديرية بخط مستقيم.`,
+      `${area ? `Using the approximate ${label} area reference, the` : "The"} nearest VOX cinema${area ? "" : where} is ${near[0]!.name} (${kmLabel(near[0]!.distanceKm, "en")}). Distances are straight-line estimates.`,
+      `${area ? `بالاعتماد على نقطة تقريبية لمنطقة ${label}، ` : ""}أقرب سينما فوكس هي ${near[0]!.nameAlt || near[0]!.name} (${kmLabel(near[0]!.distanceKm, "ar")}). المسافات تقديرية بخط مستقيم.`,
     );
     return ok(
       { cinemas: items, origin },

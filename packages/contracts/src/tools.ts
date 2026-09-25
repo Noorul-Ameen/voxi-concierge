@@ -160,8 +160,18 @@ export const HowToBookInput = z.object({
 export const FindBookingInput = z
   .object({
     bookingId: z.string().optional().describe("Vista booking id / reference, e.g. WL59LFJ"),
-    email: z.string().optional(),
-    phone: z.string().optional(),
+    email: z
+      .string()
+      .optional()
+      .describe(
+        "Email used for the booking. For a guest, pass it WITH the reference so the booking can be verified.",
+      ),
+    phone: z
+      .string()
+      .optional()
+      .describe(
+        "Phone number (or its last 4 digits) used for the booking. For a guest, pass it WITH the reference.",
+      ),
     memberId: z.string().optional(),
     customerId: z.string().optional().describe("Logged-in customer id from context"),
     upcomingOnly: z.boolean().default(true),
@@ -201,16 +211,17 @@ export const ResendTicketInput = z.object({
     .object({ phoneLast4: z.string().length(4).optional(), email: z.string().optional() })
     .optional(),
 });
-export const CheckCancellationEligibilityInput = z.object({
-  bookingId: z.string(),
-  ticketIds: z.array(z.string()).optional().describe("Subset for partial cancellation"),
-});
-
 export const Verification = z
   .object({ phoneLast4: z.string().length(4).optional(), email: z.string().optional() })
   .describe(
     "Identity check for guests: last 4 digits of the phone on the booking, or the booking email. Not needed when the logged-in customer owns the booking.",
   );
+
+export const CheckCancellationEligibilityInput = z.object({
+  bookingId: z.string(),
+  ticketIds: z.array(z.string()).optional().describe("Subset for partial cancellation"),
+  verification: Verification.optional(),
+});
 
 export const PrepareCancellationInput = z.object({
   bookingId: z.string(),

@@ -280,7 +280,9 @@ it("preserves guest verification for an exact refund choice without exposing con
   const proof = ui?.meta.refundChoiceProof;
   expect(proof).toEqual(expect.any(String));
   expect(JSON.stringify(ui)).not.toContain(original.Customer.Email);
-  const missing = await h.widget("command", session.token, {
+  // A different visitor with no proof and no verification of their own is refused.
+  const stranger = await h.session(conversation());
+  const missing = await h.widget("command", stranger.token, {
     type: "refund.choose",
     bookingId,
     ticketIds,

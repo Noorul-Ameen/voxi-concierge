@@ -154,10 +154,16 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
           ? Number(v)
           : undefined;
     const str = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? v : undefined);
+    // resend_ticket has its own `channel` argument (email | sms): it is the delivery channel, not the
+    // conversation channel, so it must reach the tool instead of being stripped as context.
+    const deliveryChannel =
+      name === "resend_ticket" && (body.channel === "email" || body.channel === "sms")
+        ? body.channel
+        : undefined;
     const ctxParsed = ConversationContext.safeParse({
       conversationId: body.conversationId ?? body.system__conversation_id ?? body.conversation_id,
       language: isLang(body.language) ? body.language : undefined,
-      channel: str(body.channel),
+      channel: deliveryChannel ? undefined : str(body.channel),
       modality: str(body.modality),
       customerId: str(body.customerId),
       memberId: str(body.memberId),
@@ -193,6 +199,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
             ].includes(k) && !k.startsWith("system__"),
         ),
       );
+    if (deliveryChannel && !body.input) input.channel = deliveryChannel;
     if (
       name === "propose_booking" &&
       c.req.header("x-voxi-proposal-context") === "explicit" &&
@@ -222,7 +229,7 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       // Schema defaults apply only when creating a conversation. Omitted tool
       // context must not replace the widget's saved language or voice modality.
       language: isLang(body.language) ? language : undefined,
-      channel: str(body.channel) ? channel : undefined,
+      channel: !deliveryChannel && str(body.channel) ? channel : undefined,
       modality: str(body.modality) ? modality : undefined,
       lat,
       lng,
@@ -944,25 +951,29 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
       case "booking.receipt": {
         // The generic search tool can offer a guest identity challenge. A direct receipt
         // must have an already verified owner before emitting any booking or QR event.
-        const result = await runTool(
-          "find_booking",
-          {
-            ...app,
-            catalog,
-            conversation: conv,
-            lang: conv.language as "en" | "ar",
-            nowLocal: nowLocalIso(app.cfg.timeZone),
-            toolCallId: prefixedId("tc", 8),
-            correlationId: prefixedId("corr", 8),
-          },
-          { bookingId: cmd.bookingId, upcomingOnly: false },
-        );
-        const bookings = result.data?.bookings as
-          | { bookingId: string; verified: boolean; status: string; qrPayload?: string }[]
-          | undefined;
-        const booking = bookings?.find((item) => item.bookingId === cmd.bookingId.toUpperCase());
-        let verified = booking?.verified === true;
-        if (booking && !verified) {
+        const lookup = () =>
+          runTool(
+            "find_booking",
+            {
+              ...app,
+              catalog,
+              conversation: conv,
+              lang: conv.language as "en" | "ar",
+              nowLocal: nowLocalIso(app.cfg.timeZone),
+              toolCallId: prefixedId("tc", 8),
+              correlationId: prefixedId("corr", 8),
+            },
+            { bookingId: cmd.bookingId, upcomingOnly: false },
+          );
+        type Found = { bookingId: string; verified: boolean; status: string; qrPayload?: string };
+        const pick = (r: Awaited<ReturnType<typeof lookup>>) =>
+          (r.data?.bookings as Found[] | undefined)?.find(
+            (item) => item.bookingId === cmd.bookingId.toUpperCase(),
+          );
+        let result = await lookup();
+        let booking = pick(result);
+        if (booking && !booking.verified) {
+          // A booking paid in this conversation (same sign-in generation) counts as verified.
           const [payment] = await app.db
             .select({ input: S.actions.input })
             .from(S.actions)
@@ -975,12 +986,21 @@ export function createApp(app: AppContext, opts: ApiOptions = {}) {
               ),
             )
             .limit(1);
-          verified =
-            !!payment &&
+          if (
+            payment &&
             Number(payment.input._widgetAuthGeneration ?? 0) ===
-              Number(conv.metadata?.widgetAuthGeneration ?? 0);
+              Number(conv.metadata?.widgetAuthGeneration ?? 0)
+          ) {
+            const meta = (conv.metadata ?? {}) as Record<string, unknown>;
+            const list = Array.isArray(meta.verifiedBookings) ? (meta.verifiedBookings as string[]) : [];
+            const metadata = { ...meta, verifiedBookings: [...list.slice(-19), booking.bookingId] };
+            await updateConversation(app.db, conv.id, { metadata });
+            conv.metadata = metadata as typeof conv.metadata;
+            result = await lookup();
+            booking = pick(result);
+          }
         }
-        if (!result.ok || !booking || !verified)
+        if (!result.ok || !booking || booking.verified !== true)
           return c.json({ ok: false, error: "That booking isn't verified for this session." }, 403);
         booking.verified = true;
         if (!["confirmed", "collected"].includes(booking.status) || !booking.qrPayload?.trim())

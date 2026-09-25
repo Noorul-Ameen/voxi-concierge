@@ -95,3 +95,9 @@ export const seatLabels = (tickets: { SeatRowId?: string | null; SeatNumber?: st
     .map((t) => (t.SeatRowId ? `${t.SeatRowId}${t.SeatNumber}` : ""))
     .filter(Boolean)
     .join(", ");
+
+/** Spoken distance: very short straight-line distances read as "under 1 km", never "0 km". */
+export function kmLabel(km: number, lang: "en" | "ar") {
+  if (km < 1) return lang === "ar" ? "أقل من 1 كم" : "under 1 km";
+  return lang === "ar" ? `${km} كم` : `${km} km`;
+}
