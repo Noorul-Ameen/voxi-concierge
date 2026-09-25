@@ -841,7 +841,7 @@ export const bookingTools: Pick<
         title: t(ctx.lang, "Confirm cancellation", "تأكيد الإلغاء"),
         items: [
           {
-            ...bookingCard(b, ctx.lang, ctx.nowLocal),
+            ...bookingCard(b, ctx.lang, ctx.nowLocal, await cinemaName(ctx, b.CinemaId)),
             refund: {
               method: method.method,
               amountCents: method.amountCents,

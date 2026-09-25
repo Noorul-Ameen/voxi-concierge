@@ -234,6 +234,11 @@ it("requires an allowed refund choice before confirmation and binds the chosen o
   });
   expect(selected.ok).toBe(true);
   expect(selected.data.summary).toMatchObject({ refundMethod: "ORIGINAL_PAYMENT", cardLast4: "4242" });
+  // The confirmation card names the cinema rather than showing its Vista id.
+  expect(selected.ui).toMatchObject({
+    type: "booking",
+    items: [expect.objectContaining({ cinemaId: "0005", cinemaName: "City Centre Mirdif" })],
+  });
   expect(selected.speech).toMatch(/same original card.*5–10 days/);
 });
 it("finds closest same-cinema swap choices and quotes the exact difference without touching the original booking", async () => {
