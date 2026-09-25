@@ -22,8 +22,8 @@ import { cancelledCurrentOrder, isCancelledOrderUi, removeCancelledOrderCards } 
 
 
 const nid = () => crypto.randomUUID();
-/** How long agent-triggered cards wait for the agent's text before showing anyway. */
-const CARD_REPLY_GRACE_MS = 6000;
+/** How long agent-triggered cards wait for the agent's text before showing anyway (the reply after a tool call can take ~10 s). */
+const CARD_REPLY_GRACE_MS = 15000;
 
 /** Earlier step: the card stays visible as a record, but nothing inside it can be pressed. */
 function FrozenCards({ label, children }: { label: string; children: ReactNode }) {
